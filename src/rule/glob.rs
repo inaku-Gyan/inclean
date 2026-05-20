@@ -80,7 +80,6 @@ impl PathMatcher {
         }
         self.extensions.iter().any(|e| e == &dotted)
     }
-
 }
 
 fn compile(pattern: &str) -> Result<CompiledGlob> {

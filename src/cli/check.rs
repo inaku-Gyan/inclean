@@ -136,9 +136,7 @@ fn print_full_report(summary: &Summary) {
                     "  L{:>4} keep    \"{}\"   (rule: {rule})",
                     r.include.line, r.include.content
                 ),
-                IncludeOutcome::Rewritten {
-                    rule, new_text, ..
-                } => println!(
+                IncludeOutcome::Rewritten { rule, new_text, .. } => println!(
                     "  L{:>4} rewrite \"{}\"  ->  {new_text}   (rule: {rule})",
                     r.include.line, r.include.content
                 ),

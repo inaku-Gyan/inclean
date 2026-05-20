@@ -145,7 +145,9 @@ pub fn load_all_configs(project_root: &Path) -> Result<Vec<LoadedConfig>> {
     // semantics that pipeline::run wants reversed when evaluating rules.
     configs.sort_by(|a, b| {
         let depth = |p: &Path| p.components().count();
-        depth(&a.path).cmp(&depth(&b.path)).then(a.path.cmp(&b.path))
+        depth(&a.path)
+            .cmp(&depth(&b.path))
+            .then(a.path.cmp(&b.path))
     });
 
     Ok(configs)
@@ -192,12 +194,21 @@ mod tests {
     #[test]
     fn load_all_collects_root_and_nested_configs() {
         let proj = build_tree(&[
-            ("inclean.toml", r#"[[rule]]
-name = "base""#),
-            ("src/inclean.toml", r#"[[rule]]
-name = "src-only""#),
-            ("src/internal/inclean.toml", r#"[[rule]]
-name = "internal""#),
+            (
+                "inclean.toml",
+                r#"[[rule]]
+name = "base""#,
+            ),
+            (
+                "src/inclean.toml",
+                r#"[[rule]]
+name = "src-only""#,
+            ),
+            (
+                "src/internal/inclean.toml",
+                r#"[[rule]]
+name = "internal""#,
+            ),
         ]);
         let mut configs = load_all_configs(proj.path()).unwrap();
         assert_eq!(configs.len(), 3);
@@ -216,10 +227,16 @@ name = "internal""#),
         // unconditionally; `.gitignore` only inside an actual git repo.
         let proj = build_tree(&[
             (".ignore", "ignored/\n"),
-            ("inclean.toml", r#"[[rule]]
-name = "base""#),
-            ("ignored/inclean.toml", r#"[[rule]]
-name = "should-not-load""#),
+            (
+                "inclean.toml",
+                r#"[[rule]]
+name = "base""#,
+            ),
+            (
+                "ignored/inclean.toml",
+                r#"[[rule]]
+name = "should-not-load""#,
+            ),
         ]);
         let configs = load_all_configs(proj.path()).unwrap();
         assert_eq!(configs.len(), 1, "ignored/ should be skipped");
@@ -311,12 +328,21 @@ name = "should-not-load""#),
     #[test]
     fn load_all_skips_target_and_node_modules() {
         let proj = build_tree(&[
-            ("inclean.toml", r#"[[rule]]
-name = "base""#),
-            ("target/inclean.toml", r#"[[rule]]
-name = "in-target""#),
-            ("node_modules/inclean.toml", r#"[[rule]]
-name = "in-nm""#),
+            (
+                "inclean.toml",
+                r#"[[rule]]
+name = "base""#,
+            ),
+            (
+                "target/inclean.toml",
+                r#"[[rule]]
+name = "in-target""#,
+            ),
+            (
+                "node_modules/inclean.toml",
+                r#"[[rule]]
+name = "in-nm""#,
+            ),
         ]);
         let configs = load_all_configs(proj.path()).unwrap();
         assert_eq!(configs.len(), 1);

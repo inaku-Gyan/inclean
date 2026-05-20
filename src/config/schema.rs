@@ -237,7 +237,10 @@ mod tests {
         )
         .unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("sources"), "should mention rejected field: {msg}");
+        assert!(
+            msg.contains("sources"),
+            "should mention rejected field: {msg}"
+        );
     }
 
     #[test]

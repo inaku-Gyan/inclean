@@ -48,7 +48,11 @@ impl<'a> CompiledRule<'a> {
             .with_context(|| format!("rule `{}`: layer 1/2 glob compile", rule.name))?;
         let regex = Regex::new(&rule.match_regex)
             .with_context(|| format!("rule `{}`: layer 4 regex compile", rule.name))?;
-        let resolved_regex = match rule.match_resolved.as_ref().and_then(|m| m.path_regex.as_ref()) {
+        let resolved_regex = match rule
+            .match_resolved
+            .as_ref()
+            .and_then(|m| m.path_regex.as_ref())
+        {
             Some(s) => Some(
                 Regex::new(s)
                     .with_context(|| format!("rule `{}`: layer 5 regex compile", rule.name))?,
@@ -311,7 +315,7 @@ fn trial_for<'a>(
     }
 
     // Layer 3
-    let form_ok = r.rule.forms.iter().any(|f| *f == include.form);
+    let form_ok = r.rule.forms.contains(&include.form);
     let layer3 = LayerTrace {
         passed: form_ok,
         detail: format!(
@@ -351,7 +355,11 @@ fn trial_for<'a>(
         detail: format!(
             "regex `{}` {} `{}`",
             r.rule.match_regex,
-            if layer4_passed { "matched" } else { "did not match" },
+            if layer4_passed {
+                "matched"
+            } else {
+                "did not match"
+            },
             include.content
         ),
     };
@@ -448,7 +456,7 @@ fn evaluate_rule(
         return RuleEval::NotMatched;
     }
     // Layer 3.
-    if !r.rule.forms.iter().any(|f| *f == include.form) {
+    if !r.rule.forms.contains(&include.form) {
         return RuleEval::NotMatched;
     }
     // Layer 4.
@@ -476,11 +484,7 @@ fn evaluate_rule(
     }
 }
 
-fn evaluate_layer5(
-    r: &CompiledRule<'_>,
-    include: &Include,
-    project_root: &Path,
-) -> Layer5 {
+fn evaluate_layer5(r: &CompiledRule<'_>, include: &Include, project_root: &Path) -> Layer5 {
     let Some(spec) = r.rule.match_resolved.as_ref() else {
         return Layer5::Skipped;
     };
@@ -501,8 +505,7 @@ fn evaluate_layer5(
 
     if let Some(under) = &spec.under {
         let norm_under = under.trim_end_matches('/');
-        let starts = rel_str == norm_under
-            || rel_str.starts_with(&format!("{norm_under}/"));
+        let starts = rel_str == norm_under || rel_str.starts_with(&format!("{norm_under}/"));
         if !starts {
             return Layer5::FailedConstraint {
                 resolved: relpath,
@@ -554,7 +557,9 @@ mod tests {
         }
     }
 
-    fn compile<'a>(rules: &'a std::collections::BTreeMap<String, ResolvedRule>) -> Vec<CompiledRule<'a>> {
+    fn compile<'a>(
+        rules: &'a std::collections::BTreeMap<String, ResolvedRule>,
+    ) -> Vec<CompiledRule<'a>> {
         let root = PathBuf::from("/proj");
         rules
             .values()
@@ -598,7 +603,12 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let m = find_match(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), Path::new(DUMMY));
+        let m = find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            Path::new(DUMMY),
+        );
         assert!(m.is_some());
         assert_eq!(m.unwrap().rule.rule.name, "base");
     }
@@ -617,7 +627,13 @@ mod tests {
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
         // file outside src/
-        assert!(find_match(&compiled, Path::new("lib/main.c"), &quote_inc("x.h"), Path::new(DUMMY)).is_none());
+        assert!(find_match(
+            &compiled,
+            Path::new("lib/main.c"),
+            &quote_inc("x.h"),
+            Path::new(DUMMY)
+        )
+        .is_none());
     }
 
     #[test]
@@ -633,7 +649,13 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        assert!(find_match(&compiled, Path::new("src/main.c"), &angle_inc("foo.h"), Path::new(DUMMY)).is_none());
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &angle_inc("foo.h"),
+            Path::new(DUMMY)
+        )
+        .is_none());
     }
 
     #[test]
@@ -650,8 +672,20 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        assert!(find_match(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), Path::new(DUMMY)).is_none());
-        assert!(find_match(&compiled, Path::new("src/main.c"), &quote_inc("old_foo.h"), Path::new(DUMMY)).is_some());
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            Path::new(DUMMY)
+        )
+        .is_none());
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("old_foo.h"),
+            Path::new(DUMMY)
+        )
+        .is_some());
     }
 
     #[test]
@@ -668,7 +702,13 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let m = find_match(&compiled, Path::new("src/main.c"), &quote_inc("old_foo.h"), Path::new(DUMMY)).unwrap();
+        let m = find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("old_foo.h"),
+            Path::new(DUMMY),
+        )
+        .unwrap();
         assert_eq!(m.captures.len(), 2);
         assert_eq!(m.captures[0], "old_foo.h");
         assert_eq!(m.captures[1], "foo.h");
@@ -693,7 +733,13 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let m = find_match(&compiled, Path::new("src/main.c"), &quote_inc("old_x.h"), Path::new(DUMMY)).unwrap();
+        let m = find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("old_x.h"),
+            Path::new(DUMMY),
+        )
+        .unwrap();
         assert_eq!(m.rule.rule.name, "specific");
     }
 
@@ -721,7 +767,13 @@ mod tests {
         ];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let m = find_match(&compiled, Path::new("src/foo/main.c"), &quote_inc("x.h"), Path::new(DUMMY)).unwrap();
+        let m = find_match(
+            &compiled,
+            Path::new("src/foo/main.c"),
+            &quote_inc("x.h"),
+            Path::new(DUMMY),
+        )
+        .unwrap();
         assert_eq!(m.rule.rule.name, "deep-rule");
     }
 
@@ -750,7 +802,13 @@ mod tests {
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
         // file outside src/foo/: only root-rule should apply
-        let m = find_match(&compiled, Path::new("lib/baz.c"), &quote_inc("x.h"), Path::new(DUMMY)).unwrap();
+        let m = find_match(
+            &compiled,
+            Path::new("lib/baz.c"),
+            &quote_inc("x.h"),
+            Path::new(DUMMY),
+        )
+        .unwrap();
         assert_eq!(m.rule.rule.name, "root-rule");
     }
 
@@ -767,7 +825,13 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        assert!(find_match(&compiled, Path::new("src/main.c"), &quote_inc("x.h"), Path::new(DUMMY)).is_none());
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("x.h"),
+            Path::new(DUMMY)
+        )
+        .is_none());
     }
 
     #[test]
@@ -805,8 +869,17 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let out = match_all(&compiled, Path::new("src/main.c"), &quote_inc("old_x.h"), Path::new(DUMMY));
-        let names: Vec<_> = out.matched.iter().map(|c| c.rule.rule.name.as_str()).collect();
+        let out = match_all(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("old_x.h"),
+            Path::new(DUMMY),
+        );
+        let names: Vec<_> = out
+            .matched
+            .iter()
+            .map(|c| c.rule.rule.name.as_str())
+            .collect();
         assert_eq!(names, vec!["specific", "fallback"]);
         assert!(out.ambiguities.is_empty());
     }
@@ -829,8 +902,17 @@ mod tests {
         )];
         let rules = resolve(&configs).unwrap();
         let compiled = compile(&rules);
-        let out = match_all(&compiled, Path::new("src/main.c"), &quote_inc("x.h"), Path::new(DUMMY));
-        let names: Vec<_> = out.matched.iter().map(|c| c.rule.rule.name.as_str()).collect();
+        let out = match_all(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("x.h"),
+            Path::new(DUMMY),
+        );
+        let names: Vec<_> = out
+            .matched
+            .iter()
+            .map(|c| c.rule.rule.name.as_str())
+            .collect();
         assert_eq!(names, vec!["quote-only"]);
     }
 
@@ -860,8 +942,17 @@ mod tests {
             raw: parse(body, &root.join("inclean.toml")).unwrap(),
         };
         let resolved = resolve(&[cfg]).unwrap();
-        let compiled: Vec<CompiledRule<'_>> = resolved.values().map(|r| CompiledRule::new(r, &root).unwrap()).collect();
-        let m = find_match(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), &root).unwrap();
+        let compiled: Vec<CompiledRule<'_>> = resolved
+            .values()
+            .map(|r| CompiledRule::new(r, &root).unwrap())
+            .collect();
+        let m = find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            &root,
+        )
+        .unwrap();
         assert_eq!(m.rule.rule.name, "internal-only");
         assert_eq!(m.resolved.as_deref(), Some(Path::new("src/internal/foo.h")));
         fs::remove_dir_all(&root).ok();
@@ -884,8 +975,16 @@ mod tests {
             raw: parse(body, &root.join("inclean.toml")).unwrap(),
         };
         let resolved = resolve(&[cfg]).unwrap();
-        let compiled: Vec<CompiledRule<'_>> = resolved.values().map(|r| CompiledRule::new(r, &root).unwrap()).collect();
-        let m = find_match(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), &root);
+        let compiled: Vec<CompiledRule<'_>> = resolved
+            .values()
+            .map(|r| CompiledRule::new(r, &root).unwrap())
+            .collect();
+        let m = find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            &root,
+        );
         assert!(m.is_none());
         fs::remove_dir_all(&root).ok();
     }
@@ -907,8 +1006,17 @@ mod tests {
             raw: parse(body, &root.join("inclean.toml")).unwrap(),
         };
         let resolved = resolve(&[cfg]).unwrap();
-        let compiled: Vec<CompiledRule<'_>> = resolved.values().map(|r| CompiledRule::new(r, &root).unwrap()).collect();
-        assert!(find_match(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), &root).is_some());
+        let compiled: Vec<CompiledRule<'_>> = resolved
+            .values()
+            .map(|r| CompiledRule::new(r, &root).unwrap())
+            .collect();
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            &root
+        )
+        .is_some());
         fs::remove_dir_all(&root).ok();
     }
 
@@ -931,8 +1039,16 @@ mod tests {
         };
         touch(&root, "src/main.c");
         let resolved = resolve(&[cfg]).unwrap();
-        let compiled: Vec<CompiledRule<'_>> = resolved.values().map(|r| CompiledRule::new(r, &root).unwrap()).collect();
-        let out = match_all(&compiled, Path::new("src/main.c"), &quote_inc("foo.h"), &root);
+        let compiled: Vec<CompiledRule<'_>> = resolved
+            .values()
+            .map(|r| CompiledRule::new(r, &root).unwrap())
+            .collect();
+        let out = match_all(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("foo.h"),
+            &root,
+        );
         assert!(out.matched.is_empty());
         assert_eq!(out.ambiguities.len(), 1);
         assert_eq!(out.ambiguities[0].rule.rule.name, "ambiguous");
@@ -956,8 +1072,17 @@ mod tests {
             raw: parse(body, &root.join("inclean.toml")).unwrap(),
         };
         let resolved = resolve(&[cfg]).unwrap();
-        let compiled: Vec<CompiledRule<'_>> = resolved.values().map(|r| CompiledRule::new(r, &root).unwrap()).collect();
-        assert!(find_match(&compiled, Path::new("src/main.c"), &quote_inc("missing.h"), &root).is_none());
+        let compiled: Vec<CompiledRule<'_>> = resolved
+            .values()
+            .map(|r| CompiledRule::new(r, &root).unwrap())
+            .collect();
+        assert!(find_match(
+            &compiled,
+            Path::new("src/main.c"),
+            &quote_inc("missing.h"),
+            &root
+        )
+        .is_none());
         fs::remove_dir_all(&root).ok();
     }
 }

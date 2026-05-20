@@ -207,7 +207,8 @@ const C11_ADDED: &[&str] = &[
 ];
 const C23_ADDED: &[&str] = &["stdbit.h", "stdckdint.h"];
 
-static C95_HEADERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| concat(&[C89_HEADERS, C95_ADDED]));
+static C95_HEADERS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| concat(&[C89_HEADERS, C95_ADDED]));
 static C99_HEADERS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| concat(&[C89_HEADERS, C95_ADDED, C99_ADDED]));
 static C11_HEADERS: LazyLock<Vec<&'static str>> =
@@ -480,11 +481,7 @@ mod tests {
 
     #[test]
     fn expand_list_spreads_known_constant_and_keeps_literals() {
-        let out = expand_list(&[
-            "@std.c_extensions".to_string(),
-            ".inl".to_string(),
-        ])
-        .unwrap();
+        let out = expand_list(&["@std.c_extensions".to_string(), ".inl".to_string()]).unwrap();
         assert!(out.contains(&".c".to_string()));
         assert!(out.contains(&".h".to_string()));
         assert!(out.contains(&".inl".to_string()));
@@ -535,7 +532,6 @@ mod tests {
         let s = substitute_in_string(r"^([^/]+\.h)$").unwrap();
         assert_eq!(s, r"^([^/]+\.h)$");
     }
-
 
     #[test]
     fn cpp_version_inheritance_is_cumulative() {

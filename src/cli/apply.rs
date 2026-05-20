@@ -36,9 +36,7 @@ pub fn run(dir: PathBuf) -> Result<u8> {
                 })
         })
         .count();
-    println!(
-        "wrote {written} file(s); {skipped_for_errors} file(s) skipped due to errors"
-    );
+    println!("wrote {written} file(s); {skipped_for_errors} file(s) skipped due to errors");
     Ok(code)
 }
 

@@ -69,11 +69,8 @@ mod tests {
     use std::fs;
 
     fn tmp() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "inclean-hi-{}-{}",
-            std::process::id(),
-            rand_u64()
-        ));
+        let p =
+            std::env::temp_dir().join(format!("inclean-hi-{}-{}", std::process::id(), rand_u64()));
         fs::create_dir_all(&p).unwrap();
         p
     }
@@ -109,12 +106,7 @@ mod tests {
         let root = tmp();
         write(&root, "a/foo.h", "first");
         write(&root, "b/foo.h", "second");
-        let r = resolve_in_dirs(
-            &root,
-            &["a".to_string(), "b".to_string()],
-            "foo.h",
-        )
-        .unwrap();
+        let r = resolve_in_dirs(&root, &["a".to_string(), "b".to_string()], "foo.h").unwrap();
         assert_eq!(r, root.join("a/foo.h"));
         fs::remove_dir_all(&root).ok();
     }
@@ -123,12 +115,7 @@ mod tests {
     fn supports_subdir_paths_in_include_text() {
         let root = tmp();
         write(&root, "src/internal/sub/bar.h", "");
-        let r = resolve_in_dirs(
-            &root,
-            &["src/internal".to_string()],
-            "sub/bar.h",
-        )
-        .unwrap();
+        let r = resolve_in_dirs(&root, &["src/internal".to_string()], "sub/bar.h").unwrap();
         assert_eq!(r, root.join("src/internal/sub/bar.h"));
         fs::remove_dir_all(&root).ok();
     }
@@ -179,12 +166,7 @@ mod tests {
     fn skips_dirs_that_dont_exist() {
         let root = tmp();
         write(&root, "real/foo.h", "");
-        let r = resolve_in_dirs(
-            &root,
-            &["nope".to_string(), "real".to_string()],
-            "foo.h",
-        )
-        .unwrap();
+        let r = resolve_in_dirs(&root, &["nope".to_string(), "real".to_string()], "foo.h").unwrap();
         assert_eq!(r, root.join("real/foo.h"));
         fs::remove_dir_all(&root).ok();
     }

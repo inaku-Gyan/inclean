@@ -145,21 +145,19 @@ pub enum ConflictKindOwned {
         missing_ancestor: String,
     },
     /// Two rules matched but neither is an ancestor of the other.
-    CrossChain {
-        a: String,
-        b: String,
-    },
+    CrossChain { a: String, b: String },
 }
 
 impl ConflictKindOwned {
     fn from_kind(k: ConflictKind<'_>) -> Self {
         match k {
-            ConflictKind::ChildWiderThanParent { child, missing_ancestor } => {
-                ConflictKindOwned::ChildWiderThanParent {
-                    child: child.rule.name.clone(),
-                    missing_ancestor: missing_ancestor.rule.name.clone(),
-                }
-            }
+            ConflictKind::ChildWiderThanParent {
+                child,
+                missing_ancestor,
+            } => ConflictKindOwned::ChildWiderThanParent {
+                child: child.rule.name.clone(),
+                missing_ancestor: missing_ancestor.rule.name.clone(),
+            },
             ConflictKind::CrossChain { a, b } => ConflictKindOwned::CrossChain {
                 a: a.rule.name.clone(),
                 b: b.rule.name.clone(),
@@ -339,19 +337,18 @@ fn source_files(root: &Path) -> impl Iterator<Item = Result<PathBuf>> {
             )
         })
         .build();
-    walker
-        .filter_map(|res| match res {
-            Ok(entry) => {
-                if entry.file_type().is_some_and(|ft| ft.is_file())
-                    && entry.file_name() != CONFIG_FILENAME
-                {
-                    Some(Ok(entry.into_path()))
-                } else {
-                    None
-                }
+    walker.filter_map(|res| match res {
+        Ok(entry) => {
+            if entry.file_type().is_some_and(|ft| ft.is_file())
+                && entry.file_name() != CONFIG_FILENAME
+            {
+                Some(Ok(entry.into_path()))
+            } else {
+                None
             }
-            Err(e) => Some(Err(anyhow::anyhow!(e))),
-        })
+        }
+        Err(e) => Some(Err(anyhow::anyhow!(e))),
+    })
 }
 
 fn any_rule_eligible(rules: &[CompiledRule<'_>], file_relpath: &Path) -> bool {
@@ -438,35 +435,33 @@ fn process_file<'a>(
             }
         };
 
-        let deepest_match: Option<&CandidateMatch<'_>> = deepest.and_then(|d| {
-            outcome_all
-                .matched
-                .iter()
-                .find(|c| std::ptr::eq(c.rule, d))
-        });
+        let deepest_match: Option<&CandidateMatch<'_>> =
+            deepest.and_then(|d| outcome_all.matched.iter().find(|c| std::ptr::eq(c.rule, d)));
 
-        let (outcome, matched_rule_for_validation): (IncludeOutcome, Option<&inherit::ResolvedRule>) =
-            match (mode, deepest_match) {
-                (_, None) => (IncludeOutcome::NoMatch, None),
-                (CheckMode::Rules, Some(cm)) => (
-                    IncludeOutcome::Matched {
-                        rule: cm.rule.rule.name.clone(),
-                    },
-                    None,
-                ),
-                (CheckMode::Full, Some(cm)) => evaluate_with_action(
-                    cm,
-                    &include,
-                    relpath,
-                    project_root,
-                    original,
-                    &mut edits,
-                ),
-                (CheckMode::Syntax, _) => unreachable!("syntax mode returns before file processing"),
-            };
+        let (outcome, matched_rule_for_validation): (
+            IncludeOutcome,
+            Option<&inherit::ResolvedRule>,
+        ) = match (mode, deepest_match) {
+            (_, None) => (IncludeOutcome::NoMatch, None),
+            (CheckMode::Rules, Some(cm)) => (
+                IncludeOutcome::Matched {
+                    rule: cm.rule.rule.name.clone(),
+                },
+                None,
+            ),
+            (CheckMode::Full, Some(cm)) => {
+                evaluate_with_action(cm, &include, relpath, project_root, original, &mut edits)
+            }
+            (CheckMode::Syntax, _) => unreachable!("syntax mode returns before file processing"),
+        };
 
         let validation_error = if mode == CheckMode::Full {
-            run_validation(&include, &outcome, matched_rule_for_validation, project_root)
+            run_validation(
+                &include,
+                &outcome,
+                matched_rule_for_validation,
+                project_root,
+            )
         } else {
             None
         };
@@ -507,10 +502,7 @@ fn evaluate_with_action<'a>(
     let rule_name = rule.rule.name.clone();
     let rule_ref = rule.rule;
     match action::evaluate(&m, include, relpath, project_root) {
-        Ok(Outcome::Keep) => (
-            IncludeOutcome::Keep { rule: rule_name },
-            Some(rule_ref),
-        ),
+        Ok(Outcome::Keep) => (IncludeOutcome::Keep { rule: rule_name }, Some(rule_ref)),
         Ok(Outcome::Rewrite {
             argument_range,
             new_text,
@@ -520,10 +512,7 @@ fn evaluate_with_action<'a>(
                 .map(|s| s == new_text)
                 .unwrap_or(false);
             if unchanged {
-                (
-                    IncludeOutcome::Keep { rule: rule_name },
-                    Some(rule_ref),
-                )
+                (IncludeOutcome::Keep { rule: rule_name }, Some(rule_ref))
             } else {
                 edits.push((argument_range.clone(), new_text.clone()));
                 (
@@ -915,7 +904,10 @@ mod tests {
         let summary = run(&root, CheckMode::Rules).unwrap();
         assert_eq!(summary.conflicts.len(), 1);
         match &summary.conflicts[0].kind {
-            ConflictKindOwned::ChildWiderThanParent { child, missing_ancestor } => {
+            ConflictKindOwned::ChildWiderThanParent {
+                child,
+                missing_ancestor,
+            } => {
                 assert_eq!(child, "child");
                 assert_eq!(missing_ancestor, "parent");
             }
