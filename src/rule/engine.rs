@@ -63,6 +63,29 @@ pub struct Match<'a> {
     pub captures: Vec<String>,
 }
 
+/// Per-rule trial record used by `inclean explain`. Captures the layer
+/// outcomes that find_match would have evaluated.
+#[derive(Debug)]
+pub struct RuleTrial<'a> {
+    pub rule: &'a CompiledRule<'a>,
+    /// Whether the rule's config directory is an ancestor of (or equal to)
+    /// the file's directory. Non-eligible rules are reported but get no
+    /// per-layer detail.
+    pub eligible: bool,
+    pub layer1_paths: Option<LayerTrace>,
+    pub layer2_extensions: Option<LayerTrace>,
+    pub layer3_forms: Option<LayerTrace>,
+    pub layer4_match: Option<LayerTrace>,
+    pub captures: Option<Vec<String>>,
+    pub matched_overall: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayerTrace {
+    pub passed: bool,
+    pub detail: String,
+}
+
 /// Find the first rule matching `include` within `file_relpath`.
 ///
 /// `file_relpath` must be relative to the project root.
@@ -116,6 +139,129 @@ fn is_ancestor_or_self(dir: &Path, descendant: &Path) -> bool {
         .iter()
         .zip(desc_components.iter())
         .all(|(a, b)| a == b)
+}
+
+/// Like `find_match`, but returns the per-rule trial trace used by
+/// `inclean explain`. Iteration stops at the first matched rule so the
+/// trace mirrors first-match-wins semantics.
+pub fn trace_match<'a>(
+    rules: &'a [CompiledRule<'a>],
+    file_relpath: &Path,
+    include: &Include,
+) -> Vec<RuleTrial<'a>> {
+    let ordered = ordered_eligible(rules, file_relpath);
+    let mut out = Vec::with_capacity(ordered.len());
+    for r in ordered {
+        let trial = trial_for(r, file_relpath, include);
+        let matched = trial.matched_overall;
+        out.push(trial);
+        if matched {
+            break;
+        }
+    }
+    out
+}
+
+fn trial_for<'a>(
+    r: &'a CompiledRule<'a>,
+    file_relpath: &Path,
+    include: &Include,
+) -> RuleTrial<'a> {
+    // Layer 1 + 2: PathMatcher decides them together; describe what we know.
+    let layer1_passed = r.path_matcher.matches(file_relpath);
+    let layer1 = LayerTrace {
+        passed: layer1_passed,
+        detail: if layer1_passed {
+            format!("path globs matched `{}`", file_relpath.display())
+        } else {
+            format!(
+                "no path glob matched `{}` (or layer 2 extension filter failed)",
+                file_relpath.display()
+            )
+        },
+    };
+    // Layer 2 detail is folded into layer 1's "or extension filter failed".
+    // We surface the extension list separately so users can see what would be allowed.
+    let ext = file_relpath
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
+    let layer2 = LayerTrace {
+        passed: layer1_passed, // can't tell layer 2 alone from outside
+        detail: format!(
+            "file extension {:?}; rule allows {:?}",
+            ext, r.rule.extensions
+        ),
+    };
+
+    if !layer1_passed {
+        return RuleTrial {
+            rule: r,
+            eligible: true,
+            layer1_paths: Some(layer1),
+            layer2_extensions: Some(layer2),
+            layer3_forms: None,
+            layer4_match: None,
+            captures: None,
+            matched_overall: false,
+        };
+    }
+
+    // Layer 3
+    let form_ok = r.rule.forms.iter().any(|f| *f == include.form);
+    let layer3 = LayerTrace {
+        passed: form_ok,
+        detail: format!(
+            "include form {:?}; rule accepts {:?}",
+            include.form, r.rule.forms
+        ),
+    };
+    if !form_ok {
+        return RuleTrial {
+            rule: r,
+            eligible: true,
+            layer1_paths: Some(layer1),
+            layer2_extensions: Some(layer2),
+            layer3_forms: Some(layer3),
+            layer4_match: None,
+            captures: None,
+            matched_overall: false,
+        };
+    }
+
+    // Layer 4
+    let caps = r.regex.captures(&include.content);
+    let (layer4_passed, captures) = match &caps {
+        Some(c) => {
+            let v: Vec<String> = c
+                .iter()
+                .map(|m| m.map(|s| s.as_str().to_string()).unwrap_or_default())
+                .collect();
+            (true, Some(v))
+        }
+        None => (false, None),
+    };
+    let layer4 = LayerTrace {
+        passed: layer4_passed,
+        detail: format!(
+            "regex `{}` {} `{}`",
+            r.rule.match_regex,
+            if layer4_passed { "matched" } else { "did not match" },
+            include.content
+        ),
+    };
+
+    RuleTrial {
+        rule: r,
+        eligible: true,
+        layer1_paths: Some(layer1),
+        layer2_extensions: Some(layer2),
+        layer3_forms: Some(layer3),
+        layer4_match: Some(layer4),
+        captures,
+        matched_overall: layer4_passed,
+    }
 }
 
 fn try_match(
