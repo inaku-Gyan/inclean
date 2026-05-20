@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use crate::pipeline::run::{self, IncludeOutcome, Summary};
 
-pub fn run(dir: PathBuf, _validate: bool) -> Result<u8> {
-    let summary = run::run(&dir)?;
+pub fn run(dir: PathBuf, validate: bool) -> Result<u8> {
+    let summary = run::run(&dir, validate)?;
     print_report(&summary);
     Ok(run::summary_exit_code(&summary))
 }
@@ -50,6 +50,12 @@ pub(super) fn print_report(summary: &Summary) {
                     "  L{:>4} fail    \"{}\"   (rule: {rule}): {message}",
                     r.include.line, r.include.content
                 ),
+            }
+            if let Some(msg) = &r.validation_error {
+                eprintln!(
+                    "  L{:>4} validate \"{}\":  {msg}",
+                    r.include.line, r.include.content
+                );
             }
         }
     }

@@ -42,7 +42,7 @@ fn copy_dir(src: &Path, dst: &Path) {
 #[test]
 fn flat_library_check_reports_two_rewrites_and_no_errors() {
     let root = fixture_path("flat-library");
-    let summary = pipe::run(&root).unwrap();
+    let summary = pipe::run(&root, true).unwrap();
 
     let main_c = summary
         .files
@@ -81,7 +81,7 @@ fn flat_library_apply_rewrites_files_in_place() {
     let dst = tmp();
     copy_dir(&src, &dst);
 
-    let summary = pipe::run(&dst).unwrap();
+    let summary = pipe::run(&dst, true).unwrap();
     let written = pipe::apply(&summary).unwrap();
     assert_eq!(written, 1, "only src/main.c should be written");
 
@@ -103,13 +103,13 @@ fn flat_library_apply_is_idempotent() {
     copy_dir(&src, &dst);
 
     // First pass: rewrites happen.
-    let first = pipe::run(&dst).unwrap();
+    let first = pipe::run(&dst, true).unwrap();
     let n1 = pipe::apply(&first).unwrap();
     assert_eq!(n1, 1);
 
     // Second pass: nothing should change because the relative include
     // paths already match what `auto` would emit.
-    let second = pipe::run(&dst).unwrap();
+    let second = pipe::run(&dst, true).unwrap();
     let n2 = pipe::apply(&second).unwrap();
     assert_eq!(n2, 0, "second apply must be a no-op (idempotency)");
 
@@ -119,7 +119,7 @@ fn flat_library_apply_is_idempotent() {
 #[test]
 fn flat_library_diff_emits_only_changed_files() {
     let root = fixture_path("flat-library");
-    let summary = pipe::run(&root).unwrap();
+    let summary = pipe::run(&root, true).unwrap();
     let diff = pipe::render_diff(&summary);
     assert!(diff.contains("--- a/src/main.c"));
     assert!(diff.contains("+#include \"mylib/internal/foo.h\""));

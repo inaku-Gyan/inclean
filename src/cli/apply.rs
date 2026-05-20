@@ -8,8 +8,8 @@ use anyhow::Result;
 
 use crate::pipeline::run;
 
-pub fn run(dir: PathBuf, _validate: bool) -> Result<u8> {
-    let summary = run::run(&dir)?;
+pub fn run(dir: PathBuf, validate: bool) -> Result<u8> {
+    let summary = run::run(&dir, validate)?;
     if !is_git_clean(&summary.project_root) {
         eprintln!(
             "warning: working tree at {} is not clean; consider committing first",

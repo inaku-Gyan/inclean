@@ -6,8 +6,8 @@ use anyhow::Result;
 
 use crate::pipeline::run;
 
-pub fn run(dir: PathBuf, _validate: bool) -> Result<u8> {
-    let summary = run::run(&dir)?;
+pub fn run(dir: PathBuf, validate: bool) -> Result<u8> {
+    let summary = run::run(&dir, validate)?;
     for w in &summary.config_warnings {
         eprintln!("warning: {w}");
     }

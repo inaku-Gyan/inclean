@@ -22,9 +22,11 @@ use ignore::WalkBuilder;
 
 use crate::config::discover::{self, CONFIG_FILENAME};
 use crate::config::{inherit, lint};
+use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
 use crate::rule::engine::{self, CompiledRule};
+use crate::validate::allowed as validate_allowed;
 
 /// Outcome for a whole `inclean` invocation against a project root.
 #[derive(Debug)]
@@ -48,6 +50,10 @@ pub struct FileResult {
 pub struct IncludeResult {
     pub include: Include,
     pub outcome: IncludeOutcome,
+    /// Post-action validation message; `Some(_)` when the resulting
+    /// include cannot be resolved under the matched rule's
+    /// `allowed_include_dirs` (or angle-pattern subset thereof).
+    pub validation_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -74,8 +80,10 @@ pub enum IncludeOutcome {
     },
 }
 
-/// Run the full pipeline against `project_root`.
-pub fn run(project_root: &Path) -> Result<Summary> {
+/// Run the full pipeline against `project_root`. When `validate` is true,
+/// each include is also checked against the matched rule's
+/// `allowed_include_dirs` after the action runs.
+pub fn run(project_root: &Path, validate: bool) -> Result<Summary> {
     let project_root_abs = std::fs::canonicalize(project_root)
         .with_context(|| format!("canonicalize {}", project_root.display()))?;
 
@@ -100,7 +108,7 @@ pub fn run(project_root: &Path) -> Result<Summary> {
 
         let original = std::fs::read_to_string(&entry)
             .with_context(|| format!("reading {}", entry.display()))?;
-        let result = process_file(&compiled, &relpath, &original, &project_root_abs);
+        let result = process_file(&compiled, &relpath, &original, &project_root_abs, validate);
         files.push(FileResult {
             relpath,
             original: result.original,
@@ -140,7 +148,7 @@ fn file_has_errors(f: &FileResult) -> bool {
         matches!(
             r.outcome,
             IncludeOutcome::Error { .. } | IncludeOutcome::EvaluationFailure { .. }
-        )
+        ) || r.validation_error.is_some()
     })
 }
 
@@ -232,6 +240,7 @@ fn process_file(
     relpath: &Path,
     original: &str,
     project_root: &Path,
+    validate: bool,
 ) -> FileProcessing {
     let includes = include_line::scan(original);
     let mut include_results = Vec::with_capacity(includes.len());
@@ -239,60 +248,68 @@ fn process_file(
 
     for include in includes {
         let m = engine::find_match(rules, relpath, &include);
-        let result = match m {
-            None => IncludeResult {
-                include,
-                outcome: IncludeOutcome::NoMatch,
-            },
-            Some(matched) => {
-                let rule_name = matched.rule.rule.name.clone();
-                match action::evaluate(&matched, &include, relpath, project_root) {
-                    Ok(Outcome::Keep) => IncludeResult {
-                        include,
-                        outcome: IncludeOutcome::Keep { rule: rule_name },
-                    },
-                    Ok(Outcome::Rewrite { argument_range, new_text }) => {
-                        let unchanged = original
-                            .get(argument_range.clone())
-                            .map(|s| s == new_text)
-                            .unwrap_or(false);
-                        if unchanged {
-                            // The rule produced exactly the existing text.
-                            // Report as Keep so the file isn't dirtied.
-                            IncludeResult {
-                                include,
-                                outcome: IncludeOutcome::Keep { rule: rule_name },
-                            }
-                        } else {
-                            edits.push((argument_range.clone(), new_text.clone()));
-                            IncludeResult {
-                                include,
-                                outcome: IncludeOutcome::Rewritten {
-                                    rule: rule_name,
-                                    argument_range,
-                                    new_text,
-                                },
+        let (outcome, matched_rule_for_validation): (IncludeOutcome, Option<&inherit::ResolvedRule>) =
+            match m {
+                None => (IncludeOutcome::NoMatch, None),
+                Some(matched) => {
+                    let rule_name = matched.rule.rule.name.clone();
+                    let rule_ref = matched.rule.rule;
+                    match action::evaluate(&matched, &include, relpath, project_root) {
+                        Ok(Outcome::Keep) => (
+                            IncludeOutcome::Keep { rule: rule_name },
+                            Some(rule_ref),
+                        ),
+                        Ok(Outcome::Rewrite { argument_range, new_text }) => {
+                            let unchanged = original
+                                .get(argument_range.clone())
+                                .map(|s| s == new_text)
+                                .unwrap_or(false);
+                            if unchanged {
+                                (
+                                    IncludeOutcome::Keep { rule: rule_name },
+                                    Some(rule_ref),
+                                )
+                            } else {
+                                edits.push((argument_range.clone(), new_text.clone()));
+                                (
+                                    IncludeOutcome::Rewritten {
+                                        rule: rule_name,
+                                        argument_range,
+                                        new_text,
+                                    },
+                                    Some(rule_ref),
+                                )
                             }
                         }
+                        Ok(Outcome::Error { message }) => (
+                            IncludeOutcome::Error {
+                                rule: rule_name,
+                                message,
+                            },
+                            None,
+                        ),
+                        Err(err) => (
+                            IncludeOutcome::EvaluationFailure {
+                                rule: rule_name,
+                                message: format!("{err:#}"),
+                            },
+                            None,
+                        ),
                     }
-                    Ok(Outcome::Error { message }) => IncludeResult {
-                        include,
-                        outcome: IncludeOutcome::Error {
-                            rule: rule_name,
-                            message,
-                        },
-                    },
-                    Err(err) => IncludeResult {
-                        include,
-                        outcome: IncludeOutcome::EvaluationFailure {
-                            rule: rule_name,
-                            message: format!("{err:#}"),
-                        },
-                    },
                 }
-            }
+            };
+
+        let validation_error = if validate {
+            run_validation(&include, &outcome, matched_rule_for_validation, project_root)
+        } else {
+            None
         };
-        include_results.push(result);
+
+        include_results.push(IncludeResult {
+            include,
+            outcome,
+            validation_error,
+        });
     }
 
     let rewritten = if edits.is_empty() {
@@ -304,6 +321,38 @@ fn process_file(
         original: original.to_string(),
         rewritten,
         include_results,
+    }
+}
+
+/// Compute the include text as it will exist after the action runs, then
+/// dispatch to `validate::allowed::validate`. Returns `Some(_)` when the
+/// final include cannot resolve under the matched rule's allowed dirs.
+fn run_validation(
+    include: &Include,
+    outcome: &IncludeOutcome,
+    rule: Option<&inherit::ResolvedRule>,
+    project_root: &Path,
+) -> Option<String> {
+    let rule = rule?;
+    let (form, content): (IncludeForm, String) = match outcome {
+        IncludeOutcome::Keep { .. } => (include.form, include.content.clone()),
+        IncludeOutcome::Rewritten { new_text, .. } => parse_argument_text(new_text)?,
+        // NoMatch / Error / EvaluationFailure are not validated.
+        _ => return None,
+    };
+    validate_allowed::validate(form, &content, rule, project_root)
+}
+
+/// Parse a freshly-formatted include argument like `"foo.h"` or `<bar.h>`
+/// into a `(form, content)` pair. Returns `None` for malformed inputs.
+fn parse_argument_text(s: &str) -> Option<(IncludeForm, String)> {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        Some((IncludeForm::Quote, s[1..s.len() - 1].to_string()))
+    } else if bytes.len() >= 2 && bytes[0] == b'<' && bytes[bytes.len() - 1] == b'>' {
+        Some((IncludeForm::Angle, s[1..s.len() - 1].to_string()))
+    } else {
+        Some((IncludeForm::Macro, s.to_string()))
     }
 }
 
@@ -330,6 +379,9 @@ pub fn summary_exit_code(summary: &Summary) -> u8 {
                 IncludeOutcome::Error { .. } => code = code.max(2),
                 IncludeOutcome::EvaluationFailure { .. } => code = code.max(3),
                 _ => {}
+            }
+            if r.validation_error.is_some() {
+                code = code.max(3);
             }
         }
     }
@@ -386,7 +438,7 @@ mod tests {
             "#,
         );
 
-        let summary = run(&root).unwrap();
+        let summary = run(&root, true).unwrap();
         let file = &summary.files[0];
         assert_eq!(file.relpath, PathBuf::from("src/main.c"));
         let rewritten = file.rewritten.as_ref().expect("should be rewritten");
@@ -413,7 +465,7 @@ mod tests {
             action = { type = "error", message = "deprecated: ${1}" }
             "#,
         );
-        let summary = run(&root).unwrap();
+        let summary = run(&root, true).unwrap();
         let outcomes: Vec<_> = summary
             .files
             .iter()
@@ -445,7 +497,7 @@ mod tests {
             original_include_dirs = ["include"]
             "#,
         );
-        let summary = run(&root).unwrap();
+        let summary = run(&root, true).unwrap();
         let written = apply(&summary).unwrap();
         // only main.c is rewritten (no-op for other.c which had no includes)
         assert_eq!(written, 0); // include "foo.h" is already canonical → no edits
@@ -487,7 +539,7 @@ mod tests {
             action = { type = "rewrite", to = "renamed/${1}" }
             "#,
         );
-        let summary = run(&root).unwrap();
+        let summary = run(&root, true).unwrap();
         let written = apply(&summary).unwrap();
         // The file mixes an error and a rewrite → apply skips it entirely.
         assert_eq!(written, 0);
@@ -518,7 +570,7 @@ mod tests {
             action = { type = "rewrite", to = "renamed/${include.text}" }
             "#,
         );
-        let summary = run(&root).unwrap();
+        let summary = run(&root, true).unwrap();
         let d = render_diff(&summary);
         assert!(d.contains("--- a/src/main.c"));
         assert!(!d.contains("other.c"));
