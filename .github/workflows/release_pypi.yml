@@ -1,16 +1,7 @@
-name: pypi
+name: release_pypi
 
 on:
-  push:
-    tags:
-      - v*.*.*
-
-permissions:
-  contents: read
-
-concurrency:
-  group: pypi-${{ github.ref }}
-  cancel-in-progress: false
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always

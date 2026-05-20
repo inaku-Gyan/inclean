@@ -47,6 +47,14 @@ jobs:
       - name: cargo publish
         run: cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
 
+  publish-pypi:
+    name: publish to PyPI
+    needs: verify
+    uses: ./.github/workflows/release_pypi.yml
+    permissions:
+      id-token: write
+      contents: read
+
   build-binaries:
     name: build ${{ matrix.target }}
     needs: publish-crate
