@@ -55,7 +55,7 @@ root = "."
 [[rule]]
 name = "base"
 paths = ["src/**", "include/**"]
-extensions = ["@std.all_extensions"]
+# extensions defaults to ["@std.c_extensions", "@std.cpp_extensions"]
 forms = ["quote"]
 allowed_include_dirs = ["include"]
 original_include_dirs = ["src", "src/internal"]

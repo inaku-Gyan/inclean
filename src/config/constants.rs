@@ -137,9 +137,12 @@ fn is_ident_cont(b: u8) -> bool {
 fn lookup_list(name: &str) -> Option<Vec<&'static str>> {
     let v = match name {
         // ---- file extensions ----
-        "std.c.extensions" => C_EXTENSIONS.to_vec(),
-        "std.cpp.extensions" => CPP_EXTENSIONS.to_vec(),
-        "std.all_extensions" => ALL_EXTENSIONS.clone(),
+        "std.c_header_extensions" => C_HEADER_EXTENSIONS.to_vec(),
+        "std.c_source_extensions" => C_SOURCE_EXTENSIONS.to_vec(),
+        "std.c_extensions" => C_EXTENSIONS.clone(),
+        "std.cpp_header_extensions" => CPP_HEADER_EXTENSIONS.to_vec(),
+        "std.cpp_source_extensions" => CPP_SOURCE_EXTENSIONS.to_vec(),
+        "std.cpp_extensions" => CPP_EXTENSIONS.clone(),
 
         // ---- C system headers (cumulative per version) ----
         "std.c89.system_headers" => C89_HEADERS.to_vec(),
@@ -165,17 +168,20 @@ fn lookup_list(name: &str) -> Option<Vec<&'static str>> {
 
 // ---- extensions ----------------------------------------------------------
 
-const C_EXTENSIONS: &[&str] = &[".c", ".h"];
-const CPP_EXTENSIONS: &[&str] = &[
-    ".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++", ".inl", ".ipp",
-];
+/// Canonical C header extension. `.h` is also a common C++ header extension
+/// in many projects — users targeting such projects can write
+/// `extensions = ["@std.c_extensions", "@std.cpp_extensions"]` (the layer-2
+/// default) to cover both.
+const C_HEADER_EXTENSIONS: &[&str] = &[".h"];
+const C_SOURCE_EXTENSIONS: &[&str] = &[".c"];
+/// Canonical C++ header extensions (excluding `.h`, which is in `c_*`).
+const CPP_HEADER_EXTENSIONS: &[&str] = &[".hh", ".hpp", ".hxx", ".h++"];
+const CPP_SOURCE_EXTENSIONS: &[&str] = &[".cc", ".cpp", ".cxx", ".c++", ".inl", ".ipp"];
 
-static ALL_EXTENSIONS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut v: Vec<&'static str> = Vec::new();
-    v.extend_from_slice(C_EXTENSIONS);
-    v.extend_from_slice(CPP_EXTENSIONS);
-    v
-});
+static C_EXTENSIONS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| concat(&[C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS]));
+static CPP_EXTENSIONS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| concat(&[CPP_HEADER_EXTENSIONS, CPP_SOURCE_EXTENSIONS]));
 
 // ---- C standard headers --------------------------------------------------
 
@@ -399,11 +405,59 @@ mod tests {
 
     #[test]
     fn list_constant_lookup_returns_list() {
-        let v = lookup("std.c.extensions").expect("found");
+        let v = lookup("std.c_extensions").expect("found");
         match v {
             Value::List(list) => assert!(list.contains(&".c") && list.contains(&".h")),
             _ => panic!("expected list"),
         }
+    }
+
+    #[test]
+    fn c_and_cpp_extensions_are_disjoint_pairs_with_h_in_c() {
+        let c = match lookup("std.c_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        let cpp = match lookup("std.cpp_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        assert!(c.contains(&".h"));
+        assert!(c.contains(&".c"));
+        assert!(!cpp.contains(&".h"));
+        assert!(!cpp.contains(&".c"));
+        assert!(cpp.contains(&".cpp"));
+        assert!(cpp.contains(&".hpp"));
+    }
+
+    #[test]
+    fn separate_header_and_source_lists_exist() {
+        let ch = match lookup("std.c_header_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        let cs = match lookup("std.c_source_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        let ph = match lookup("std.cpp_header_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        let ps = match lookup("std.cpp_source_extensions").unwrap() {
+            Value::List(l) => l,
+            _ => panic!(),
+        };
+        assert_eq!(ch, vec![".h"]);
+        assert_eq!(cs, vec![".c"]);
+        assert!(ph.contains(&".hpp"));
+        assert!(ps.contains(&".cpp"));
+    }
+
+    #[test]
+    fn removed_all_extensions_no_longer_exists() {
+        assert!(lookup("std.all_extensions").is_none());
+        assert!(lookup("std.c.extensions").is_none()); // old dot-style names
     }
 
     #[test]
@@ -427,11 +481,13 @@ mod tests {
     #[test]
     fn expand_list_spreads_known_constant_and_keeps_literals() {
         let out = expand_list(&[
-            "@std.c.extensions".to_string(),
+            "@std.c_extensions".to_string(),
             ".inl".to_string(),
         ])
         .unwrap();
-        assert_eq!(out, vec![".c", ".h", ".inl"]);
+        assert!(out.contains(&".c".to_string()));
+        assert!(out.contains(&".h".to_string()));
+        assert!(out.contains(&".inl".to_string()));
     }
 
     #[test]
@@ -458,8 +514,8 @@ mod tests {
     fn substitute_replaces_list_constant_as_alternation() {
         // A list constant used in a string field is materialized as a
         // regex alternation, just like _or would do.
-        let s = substitute_in_string("@std.c.extensions").unwrap();
-        assert_eq!(s, r"(?:\.c|\.h)");
+        let s = substitute_in_string("@std.c_extensions").unwrap();
+        assert_eq!(s, r"(?:\.h|\.c)");
     }
 
     #[test]
@@ -480,17 +536,6 @@ mod tests {
         assert_eq!(s, r"^([^/]+\.h)$");
     }
 
-    #[test]
-    fn all_extensions_includes_both_c_and_cpp() {
-        let v = lookup("std.all_extensions").unwrap();
-        let list = match v {
-            Value::List(l) => l,
-            _ => panic!("expected list"),
-        };
-        assert!(list.contains(&".c"));
-        assert!(list.contains(&".cpp"));
-        assert!(list.contains(&".hpp"));
-    }
 
     #[test]
     fn cpp_version_inheritance_is_cumulative() {

@@ -76,8 +76,13 @@ pub enum ResolvedAction {
 fn default_paths() -> Vec<String> {
     vec!["**".to_string()]
 }
+/// Layer 2 default. The `@std.*` references will be expanded by
+/// `constants::expand_list` in the next step of `merge`.
 fn default_extensions() -> Vec<String> {
-    Vec::new()
+    vec![
+        "@std.c_extensions".to_string(),
+        "@std.cpp_extensions".to_string(),
+    ]
 }
 fn default_forms() -> Vec<IncludeForm> {
     vec![IncludeForm::Quote]
@@ -336,7 +341,12 @@ mod tests {
         let map = resolve(&[cfg]).unwrap();
         let r = &map["base"];
         assert_eq!(r.paths, vec!["**"]);
-        assert!(r.extensions.is_empty());
+        // Default extensions cover canonical C + C++ file extensions via
+        // @std.c_extensions + @std.cpp_extensions.
+        assert!(r.extensions.contains(&".c".to_string()));
+        assert!(r.extensions.contains(&".h".to_string()));
+        assert!(r.extensions.contains(&".cpp".to_string()));
+        assert!(r.extensions.contains(&".hpp".to_string()));
         assert_eq!(r.forms, vec![IncludeForm::Quote]);
         assert_eq!(r.match_regex, ".*");
         assert!(matches!(
@@ -406,7 +416,7 @@ mod tests {
             r#"
             [[rule]]
             name = "base"
-            extensions = ["@std.c.extensions", ".inl"]
+            extensions = ["@std.c_extensions", ".inl"]
             match = "^(@std.c89.system_headers_or)$"
             "#,
         );
@@ -496,15 +506,15 @@ mod tests {
             r#"
             [[rule]]
             name = "x"
-            action = { type = "rewrite", to = "@std.c.extensions ${1}" }
+            action = { type = "rewrite", to = "@std.c_extensions ${1}" }
             "#,
         );
         let map = resolve(&[cfg]).unwrap();
         match &map["x"].action {
             ResolvedAction::Rewrite { to, .. } => {
-                // @std.c.extensions is a list constant; in a string it
+                // @std.c_extensions is a list constant; in a string it
                 // materializes as a regex alternation.
-                assert!(to.starts_with(r"(?:\.c|\.h)"));
+                assert!(to.starts_with(r"(?:\.h|\.c)"));
                 assert!(to.ends_with("${1}"));
             }
             _ => panic!("expected rewrite"),
