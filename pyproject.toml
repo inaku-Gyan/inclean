@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "inclean"
+description = "A C/C++ #include path normalizer that rewrites includes to resolve cleanly against a minimal -I set."
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "inaku" }]
+requires-python = ">=3.8"
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Pre-processors",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/inaku-Gyan/inclean"
+Issues = "https://github.com/inaku-Gyan/inclean/issues"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "Cargo.toml"
+strip = true

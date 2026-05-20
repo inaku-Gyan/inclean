@@ -98,13 +98,11 @@ mod tests {
 
     #[test]
     fn empty_allowed_dirs_means_skip() {
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             allowed_include_dirs = []
-            "#,
-        );
+            "#);
         let root = PathBuf::from("/p");
         assert!(validate(IncludeForm::Quote, "foo.h", &rule, &root).is_none());
         assert!(validate(IncludeForm::Angle, "stdio.h", &rule, &root).is_none());
@@ -114,13 +112,11 @@ mod tests {
     fn quote_resolves_under_allowed_passes() {
         let root = tmp_root();
         touch(&root, "include/foo.h");
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             allowed_include_dirs = ["include"]
-            "#,
-        );
+            "#);
         assert!(validate(IncludeForm::Quote, "foo.h", &rule, &root).is_none());
         fs::remove_dir_all(&root).ok();
     }
@@ -128,13 +124,11 @@ mod tests {
     #[test]
     fn quote_unresolvable_fails() {
         let root = tmp_root();
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             allowed_include_dirs = ["include"]
-            "#,
-        );
+            "#);
         let err = validate(IncludeForm::Quote, "missing.h", &rule, &root).unwrap();
         assert!(err.contains("cannot be resolved"));
         fs::remove_dir_all(&root).ok();
@@ -144,14 +138,12 @@ mod tests {
     fn angle_validated_like_quote_when_allowed_dirs_nonempty() {
         let root = tmp_root();
         touch(&root, "include/mylib/foo.h");
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             forms = ["angle"]
             allowed_include_dirs = ["include"]
-            "#,
-        );
+            "#);
         // Resolves → pass.
         assert!(validate(IncludeForm::Angle, "mylib/foo.h", &rule, &root).is_none());
         // Doesn't resolve → fail.
@@ -163,13 +155,11 @@ mod tests {
     #[test]
     fn macro_form_is_not_validated() {
         let root = tmp_root();
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             allowed_include_dirs = ["include"]
-            "#,
-        );
+            "#);
         assert!(validate(IncludeForm::Macro, "MY_HEADER", &rule, &root).is_none());
         fs::remove_dir_all(&root).ok();
     }
@@ -178,13 +168,11 @@ mod tests {
     fn first_matching_allowed_dir_wins() {
         let root = tmp_root();
         touch(&root, "second/foo.h");
-        let rule = cfg(
-            r#"
+        let rule = cfg(r#"
             [[rule]]
             name = "r"
             allowed_include_dirs = ["first", "second"]
-            "#,
-        );
+            "#);
         assert!(validate(IncludeForm::Quote, "foo.h", &rule, &root).is_none());
         fs::remove_dir_all(&root).ok();
     }

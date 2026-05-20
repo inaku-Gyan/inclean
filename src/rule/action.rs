@@ -167,11 +167,7 @@ fn format_argument(content: &str, form: IncludeForm) -> String {
 fn diff_paths(target: &Path, base: &Path) -> PathBuf {
     let t: Vec<_> = target.components().collect();
     let b: Vec<_> = base.components().collect();
-    let common = t
-        .iter()
-        .zip(b.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
+    let common = t.iter().zip(b.iter()).take_while(|(a, b)| a == b).count();
     let mut out = PathBuf::new();
     for _ in common..b.len() {
         out.push("..");
@@ -323,7 +319,11 @@ mod tests {
         }
     }
 
-    fn matched_resolved<'a>(c: &'a CompiledRule<'a>, captures: Vec<String>, resolved: PathBuf) -> Match<'a> {
+    fn matched_resolved<'a>(
+        c: &'a CompiledRule<'a>,
+        captures: Vec<String>,
+        resolved: PathBuf,
+    ) -> Match<'a> {
         Match {
             rule: c,
             captures,

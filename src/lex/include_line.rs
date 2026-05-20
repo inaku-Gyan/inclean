@@ -202,7 +202,7 @@ impl<'a> Lexer<'a> {
         // The next byte must be whitespace (or end of line). Otherwise it's
         // an identifier like `#includefoo`, not the include directive.
         match self.src.get(p) {
-            Some(&b) if matches!(b, b' ' | b'\t' | b'\r' | b'\n') => {}
+            Some(&b' ' | &b'\t' | &b'\r' | &b'\n') => {}
             _ => {
                 self.skip_to_end_of_line();
                 return None;
@@ -256,7 +256,10 @@ impl<'a> Lexer<'a> {
                 let end = self.find_macro_end(p);
                 (
                     IncludeForm::Macro,
-                    std::str::from_utf8(&self.src[p..end]).unwrap_or("").trim_end().to_string(),
+                    std::str::from_utf8(&self.src[p..end])
+                        .unwrap_or("")
+                        .trim_end()
+                        .to_string(),
                     end,
                 )
             }

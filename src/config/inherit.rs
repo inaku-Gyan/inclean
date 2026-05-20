@@ -11,9 +11,9 @@
 //! 4. Expand `@std.*` constants in lists and substitute them in regex /
 //!    template strings.
 
-use std::collections::{BTreeMap, HashMap};
 #[cfg(test)]
 use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -175,8 +175,12 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     let raw: &RawRule = locator.rule;
     let ctx = format!("rule `{}` at {}", raw.name, locator.config_path.display());
 
-    let paths = pick_list(raw.paths.as_deref(), parent.map(|p| &p.paths), default_paths)
-        .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "paths"))?;
+    let paths = pick_list(
+        raw.paths.as_deref(),
+        parent.map(|p| &p.paths),
+        default_paths,
+    )
+    .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "paths"))?;
 
     let extensions = pick_list(
         raw.extensions.as_deref(),

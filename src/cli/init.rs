@@ -111,8 +111,7 @@ name = "base"
 "##;
 
 pub fn run(dir: PathBuf) -> Result<u8> {
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("ensuring {} exists", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("ensuring {} exists", dir.display()))?;
     let target = dir.join(CONFIG_FILENAME);
     if target.exists() {
         anyhow::bail!(
@@ -120,8 +119,7 @@ pub fn run(dir: PathBuf) -> Result<u8> {
             target.display()
         );
     }
-    std::fs::write(&target, TEMPLATE)
-        .with_context(|| format!("writing {}", target.display()))?;
+    std::fs::write(&target, TEMPLATE).with_context(|| format!("writing {}", target.display()))?;
     println!("wrote {}", target.display());
     println!("next:");
     println!("  edit {} to taste, then run:", target.display());

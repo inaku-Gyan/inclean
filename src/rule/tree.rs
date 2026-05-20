@@ -115,7 +115,10 @@ fn is_ancestor<'a>(
     false
 }
 
-fn depth_of<'a>(r: &'a CompiledRule<'a>, by_name: &BTreeMap<String, &'a CompiledRule<'a>>) -> usize {
+fn depth_of<'a>(
+    r: &'a CompiledRule<'a>,
+    by_name: &BTreeMap<String, &'a CompiledRule<'a>>,
+) -> usize {
     let mut d = 0usize;
     let mut cursor = r.rule.extends.as_deref();
     while let Some(parent) = cursor {
@@ -131,10 +134,7 @@ fn depth_of<'a>(r: &'a CompiledRule<'a>, by_name: &BTreeMap<String, &'a Compiled
 pub fn index_by_name<'a, 'b>(
     rules: &'a [CompiledRule<'b>],
 ) -> BTreeMap<String, &'a CompiledRule<'b>> {
-    rules
-        .iter()
-        .map(|r| (r.rule.name.clone(), r))
-        .collect()
+    rules.iter().map(|r| (r.rule.name.clone(), r)).collect()
 }
 
 #[cfg(test)]
@@ -163,12 +163,10 @@ mod tests {
 
     #[test]
     fn empty_matched_is_ok() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "a"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let res = check_chain(&[], &by_name).unwrap();
@@ -177,12 +175,10 @@ mod tests {
 
     #[test]
     fn single_rule_is_ok() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "a"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let r = by_name["a"];
@@ -192,16 +188,14 @@ mod tests {
 
     #[test]
     fn parent_and_child_form_a_chain() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "parent"
 
             [[rule]]
             name = "child"
             extends = "parent"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let matched = vec![by_name["parent"], by_name["child"]];
@@ -211,21 +205,22 @@ mod tests {
 
     #[test]
     fn child_without_parent_is_child_wider_than_parent() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "parent"
 
             [[rule]]
             name = "child"
             extends = "parent"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let err = check_chain(&[by_name["child"]], &by_name).unwrap_err();
         match err {
-            ConflictKind::ChildWiderThanParent { child, missing_ancestor } => {
+            ConflictKind::ChildWiderThanParent {
+                child,
+                missing_ancestor,
+            } => {
                 assert_eq!(child.rule.name, "child");
                 assert_eq!(missing_ancestor.rule.name, "parent");
             }
@@ -235,15 +230,13 @@ mod tests {
 
     #[test]
     fn two_unrelated_roots_are_cross_chain() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "a"
 
             [[rule]]
             name = "b"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let err = check_chain(&[by_name["a"], by_name["b"]], &by_name).unwrap_err();
@@ -259,8 +252,7 @@ mod tests {
         // satisfies "parents present" (root not in M → child wider error first).
         // To isolate cross-chain, match {root, child_a, child_b}: the
         // adjacency check between child_a and child_b will fail.
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "root"
 
@@ -271,8 +263,7 @@ mod tests {
             [[rule]]
             name = "child_b"
             extends = "root"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let err = check_chain(
@@ -288,8 +279,7 @@ mod tests {
 
     #[test]
     fn three_level_chain_is_ok() {
-        let resolved = cfg(
-            r#"
+        let resolved = cfg(r#"
             [[rule]]
             name = "gp"
 
@@ -300,8 +290,7 @@ mod tests {
             [[rule]]
             name = "c"
             extends = "p"
-            "#,
-        );
+            "#);
         let compiled = compile(&resolved);
         let by_name = index_by_name(&compiled);
         let deepest = check_chain(&[by_name["gp"], by_name["p"], by_name["c"]], &by_name)

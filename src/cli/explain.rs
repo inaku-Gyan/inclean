@@ -4,7 +4,7 @@
 //! - `FILE` is any path inside the project; the root `inclean.toml` is
 //!   discovered by walking upward from it.
 //! - `INCLUDE` filters which includes are traced. Accepted forms:
-//!     `"foo.h"`, `<foo.h>`, or just `foo.h` (matches either form).
+//!   `"foo.h"`, `<foo.h>`, or just `foo.h` (matches either form).
 
 use std::path::{Path, PathBuf};
 
@@ -18,8 +18,8 @@ use crate::rule::action::{self, Outcome};
 use crate::rule::engine::{self, CompiledRule, RuleTrial};
 
 pub fn run(file: PathBuf, include_filter: Option<String>) -> Result<u8> {
-    let file_abs = std::fs::canonicalize(&file)
-        .with_context(|| format!("canonicalize {}", file.display()))?;
+    let file_abs =
+        std::fs::canonicalize(&file).with_context(|| format!("canonicalize {}", file.display()))?;
 
     let project_root = discover::discover_project_root(&file_abs)?;
     let configs = discover::load_all_configs(&project_root)?;
@@ -62,9 +62,15 @@ pub fn run(file: PathBuf, include_filter: Option<String>) -> Result<u8> {
     }
     if !printed_any {
         if filter.is_some() {
-            println!("(no #include in {} matched the filter)", file_relpath.display());
+            println!(
+                "(no #include in {} matched the filter)",
+                file_relpath.display()
+            );
         } else {
-            println!("(no #include directives found in {})", file_relpath.display());
+            println!(
+                "(no #include directives found in {})",
+                file_relpath.display()
+            );
         }
     }
     Ok(0)

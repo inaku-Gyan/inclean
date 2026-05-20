@@ -51,11 +51,8 @@ fn flat_library_check_reports_two_rewrites_and_no_errors() {
         .find(|f| f.relpath.ends_with("src/main.c"))
         .expect("main.c should appear in the summary");
 
-    let outcomes: Vec<&pipe::IncludeOutcome> = main_c
-        .include_results
-        .iter()
-        .map(|r| &r.outcome)
-        .collect();
+    let outcomes: Vec<&pipe::IncludeOutcome> =
+        main_c.include_results.iter().map(|r| &r.outcome).collect();
 
     // Two quote includes should be rewritten; the <stdio.h> angle include
     // should fall through with NoMatch (forms = ["quote"] excludes it).
@@ -63,7 +60,10 @@ fn flat_library_check_reports_two_rewrites_and_no_errors() {
         matches!(outcomes[0], pipe::IncludeOutcome::Rewritten { .. }),
         "got: {outcomes:?}"
     );
-    assert!(matches!(outcomes[1], pipe::IncludeOutcome::Rewritten { .. }));
+    assert!(matches!(
+        outcomes[1],
+        pipe::IncludeOutcome::Rewritten { .. }
+    ));
     assert!(matches!(outcomes[2], pipe::IncludeOutcome::NoMatch));
 
     if let pipe::IncludeOutcome::Rewritten { new_text, .. } = &outcomes[0] {
