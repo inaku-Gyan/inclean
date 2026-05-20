@@ -1,2 +1,553 @@
-// Rule `extends` resolution, field merging, and cycle detection.
-// Filled in by the next milestone task.
+//! Resolve `extends` chains, merge inherited fields, apply defaults, and
+//! expand `@std.*` constants. Produces the fully-baked [`ResolvedRule`]s
+//! the matching engine works with.
+//!
+//! Order of operations for a single rule:
+//!
+//! 1. Reject `match_resolved` (v1 unsupported).
+//! 2. Recursively resolve the parent named in `extends` (cycle-detected).
+//! 3. For each field, take the child's value if specified, otherwise the
+//!    parent's resolved value, otherwise the language default.
+//! 4. Expand `@std.*` constants in lists and substitute them in regex /
+//!    template strings.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+
+use super::constants;
+use super::schema::{
+    index_rules_by_name, AutoRelativeTo, IncludeForm, LoadedConfig, OutputForm, RawAction,
+    RawRule, RuleLocator,
+};
+
+/// Where a rule was declared. Carried through to the matching engine so
+/// later error messages and `explain` output can pinpoint the source.
+#[derive(Debug, Clone)]
+pub struct Origin {
+    pub config_path: PathBuf,
+    pub config_dir: PathBuf,
+    pub index: usize,
+}
+
+/// A fully merged, default-applied, constant-expanded view of a rule.
+#[derive(Debug, Clone)]
+pub struct ResolvedRule {
+    pub name: String,
+    pub extends: Option<String>,
+    pub origin: Origin,
+
+    // Layer 1..4 matching fields.
+    pub paths: Vec<String>,
+    pub extensions: Vec<String>,
+    pub forms: Vec<IncludeForm>,
+    pub match_regex: String,
+
+    // Non-matching fields.
+    pub allowed_include_dirs: Vec<String>,
+    pub original_include_dirs: Vec<String>,
+    pub validate_angle_patterns: Vec<String>,
+    pub action: ResolvedAction,
+}
+
+/// Action with all sub-fields defaulted.
+#[derive(Debug, Clone)]
+pub enum ResolvedAction {
+    Auto {
+        relative_to: AutoRelativeTo,
+        form: OutputForm,
+    },
+    Rewrite {
+        to: String,
+        form: OutputForm,
+    },
+    Keep,
+    Error {
+        message: String,
+    },
+}
+
+// ---- Defaults applied when neither child nor any ancestor specifies a value
+// ---------------------------------------------------------------------------
+
+fn default_paths() -> Vec<String> {
+    vec!["**".to_string()]
+}
+fn default_extensions() -> Vec<String> {
+    Vec::new()
+}
+fn default_forms() -> Vec<IncludeForm> {
+    vec![IncludeForm::Quote]
+}
+fn default_match_regex() -> String {
+    ".*".to_string()
+}
+fn default_action() -> ResolvedAction {
+    ResolvedAction::Auto {
+        relative_to: AutoRelativeTo::Allowed,
+        form: OutputForm::Quote,
+    }
+}
+
+/// Resolve every rule across `configs` into a [`ResolvedRule`]. Output is
+/// keyed by rule name. The caller is responsible for ordering rules for
+/// trial (which depends on the file being matched, not on the rule set).
+pub fn resolve(configs: &[LoadedConfig]) -> Result<BTreeMap<String, ResolvedRule>> {
+    let by_name = index_rules_by_name(configs)?;
+
+    let mut resolved: HashMap<String, ResolvedRule> = HashMap::new();
+    for name in by_name.keys() {
+        if !resolved.contains_key(name) {
+            let mut stack: Vec<String> = Vec::new();
+            resolve_one(name, &by_name, &mut resolved, &mut stack)?;
+        }
+    }
+
+    // Move into BTreeMap so the consumer sees a deterministic ordering.
+    Ok(resolved.into_iter().collect())
+}
+
+fn resolve_one(
+    name: &str,
+    by_name: &BTreeMap<String, RuleLocator<'_>>,
+    resolved: &mut HashMap<String, ResolvedRule>,
+    stack: &mut Vec<String>,
+) -> Result<()> {
+    if resolved.contains_key(name) {
+        return Ok(());
+    }
+    if stack.iter().any(|s| s == name) {
+        let cycle = stack
+            .iter()
+            .cloned()
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        anyhow::bail!("`extends` cycle: {cycle}");
+    }
+
+    let locator = by_name
+        .get(name)
+        .with_context(|| format!("rule `{name}` not found"))?;
+    let raw = locator.rule;
+
+    if raw.match_resolved.is_some() {
+        anyhow::bail!(
+            "rule `{}` at {}: `match_resolved` (layer 5) is not yet supported in v1",
+            name,
+            locator.config_path.display(),
+        );
+    }
+
+    let parent_resolved: Option<ResolvedRule> = match raw.extends.as_deref() {
+        Some(parent_name) => {
+            // Verify parent exists before recursing for a clearer error.
+            if !by_name.contains_key(parent_name) {
+                anyhow::bail!(
+                    "rule `{}` at {} extends unknown rule `{parent_name}`",
+                    name,
+                    locator.config_path.display(),
+                );
+            }
+            stack.push(name.to_string());
+            resolve_one(parent_name, by_name, resolved, stack)?;
+            stack.pop();
+            Some(resolved[parent_name].clone())
+        }
+        None => None,
+    };
+
+    let merged = merge(locator, parent_resolved.as_ref())?;
+    resolved.insert(name.to_string(), merged);
+    Ok(())
+}
+
+fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<ResolvedRule> {
+    let raw: &RawRule = locator.rule;
+    let ctx = format!("rule `{}` at {}", raw.name, locator.config_path.display());
+
+    let paths = pick_list(raw.paths.as_deref(), parent.map(|p| &p.paths), default_paths)
+        .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "paths"))?;
+
+    let extensions = pick_list(
+        raw.extensions.as_deref(),
+        parent.map(|p| &p.extensions),
+        default_extensions,
+    )
+    .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "extensions"))?;
+
+    let forms = match raw.forms.as_deref() {
+        Some(v) => v.to_vec(),
+        None => parent
+            .map(|p| p.forms.clone())
+            .unwrap_or_else(default_forms),
+    };
+
+    let match_regex = match raw.match_regex.as_deref() {
+        Some(s) => with_ctx(constants::substitute_in_string(s), &ctx, "match")?,
+        None => parent
+            .map(|p| p.match_regex.clone())
+            .unwrap_or_else(default_match_regex),
+    };
+
+    let allowed_include_dirs = pick_list(
+        raw.allowed_include_dirs.as_deref(),
+        parent.map(|p| &p.allowed_include_dirs),
+        Vec::new,
+    )
+    .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "allowed_include_dirs"))?;
+
+    let original_include_dirs = pick_list(
+        raw.original_include_dirs.as_deref(),
+        parent.map(|p| &p.original_include_dirs),
+        Vec::new,
+    )
+    .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "original_include_dirs"))?;
+
+    let validate_angle_patterns = match raw.validate_angle_patterns.as_deref() {
+        Some(v) => {
+            let mut out: Vec<String> = Vec::with_capacity(v.len());
+            for pat in v {
+                out.push(with_ctx(
+                    constants::substitute_in_string(pat),
+                    &ctx,
+                    "validate_angle_patterns",
+                )?);
+            }
+            out
+        }
+        None => parent
+            .map(|p| p.validate_angle_patterns.clone())
+            .unwrap_or_default(),
+    };
+
+    let action = match raw.action.as_ref() {
+        Some(a) => resolve_action(a, &ctx)?,
+        None => parent
+            .map(|p| p.action.clone())
+            .unwrap_or_else(default_action),
+    };
+
+    let origin = Origin {
+        config_path: locator.config_path.to_path_buf(),
+        config_dir: locator
+            .config_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
+        index: locator.index,
+    };
+
+    Ok(ResolvedRule {
+        name: raw.name.clone(),
+        extends: raw.extends.clone(),
+        origin,
+        paths,
+        extensions,
+        forms,
+        match_regex,
+        allowed_include_dirs,
+        original_include_dirs,
+        validate_angle_patterns,
+        action,
+    })
+}
+
+fn resolve_action(raw: &RawAction, ctx: &str) -> Result<ResolvedAction> {
+    match raw {
+        RawAction::Auto { relative_to, form } => Ok(ResolvedAction::Auto {
+            relative_to: relative_to.unwrap_or(AutoRelativeTo::Allowed),
+            form: form.unwrap_or(OutputForm::Quote),
+        }),
+        RawAction::Rewrite { to, form } => Ok(ResolvedAction::Rewrite {
+            to: with_ctx(constants::substitute_in_string(to), ctx, "action.to")?,
+            form: form.unwrap_or(OutputForm::Preserve),
+        }),
+        RawAction::Keep => Ok(ResolvedAction::Keep),
+        RawAction::Error { message } => Ok(ResolvedAction::Error {
+            message: message.clone(),
+        }),
+    }
+}
+
+fn pick_list(
+    own: Option<&[String]>,
+    parent: Option<&Vec<String>>,
+    default_fn: impl FnOnce() -> Vec<String>,
+) -> Result<Vec<String>> {
+    Ok(match own {
+        Some(v) => v.to_vec(),
+        None => match parent {
+            Some(v) => v.clone(),
+            None => default_fn(),
+        },
+    })
+}
+
+fn with_ctx<T>(r: Result<T>, ctx: &str, field: &str) -> Result<T> {
+    r.with_context(|| format!("{ctx}: while expanding `{field}`"))
+}
+
+/// Lint helper: report rule names whose ancestors form a tree (for explain
+/// / debugging output). Not used by the engine; exposed for tests.
+#[cfg(test)]
+pub fn ancestors_of<'a>(rules: &'a BTreeMap<String, ResolvedRule>, name: &'a str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut current = name;
+    let mut seen: HashSet<&str> = HashSet::new();
+    while let Some(r) = rules.get(current) {
+        if !seen.insert(current) {
+            break;
+        }
+        out.push(current);
+        match r.extends.as_deref() {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::parse;
+    use std::path::Path;
+
+    fn load(path: &str, body: &str) -> LoadedConfig {
+        LoadedConfig {
+            path: PathBuf::from(path),
+            raw: parse(body, Path::new(path)).unwrap(),
+        }
+    }
+
+    #[test]
+    fn standalone_rule_gets_all_defaults() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let r = &map["base"];
+        assert_eq!(r.paths, vec!["**"]);
+        assert!(r.extensions.is_empty());
+        assert_eq!(r.forms, vec![IncludeForm::Quote]);
+        assert_eq!(r.match_regex, ".*");
+        assert!(matches!(
+            r.action,
+            ResolvedAction::Auto {
+                relative_to: AutoRelativeTo::Allowed,
+                form: OutputForm::Quote
+            }
+        ));
+    }
+
+    #[test]
+    fn child_inherits_unspecified_fields_from_parent() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            paths = ["src/**"]
+            allowed_include_dirs = ["include"]
+            original_include_dirs = ["src", "src/internal"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "child"
+            extends = "base"
+            match = '^old_(.*)$'
+            action = { type = "rewrite", to = "new_${1}" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let child = &map["child"];
+        assert_eq!(child.paths, vec!["src/**"]);
+        assert_eq!(child.allowed_include_dirs, vec!["include"]);
+        assert_eq!(child.original_include_dirs, vec!["src", "src/internal"]);
+        assert_eq!(child.forms, vec![IncludeForm::Quote]);
+        assert_eq!(child.match_regex, "^old_(.*)$");
+        assert!(matches!(child.action, ResolvedAction::Rewrite { .. }));
+    }
+
+    #[test]
+    fn child_overrides_parent() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "narrow"
+            extends = "base"
+            paths = ["src/foo/**"]
+            forms = ["angle"]
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        assert_eq!(map["narrow"].paths, vec!["src/foo/**"]);
+        assert_eq!(map["narrow"].forms, vec![IncludeForm::Angle]);
+    }
+
+    #[test]
+    fn constants_are_expanded() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            extensions = ["@std.c.extensions", ".inl"]
+            match = "^(@std.c89.system_headers_or)$"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let r = &map["base"];
+        assert!(r.extensions.contains(&".c".to_string()));
+        assert!(r.extensions.contains(&".inl".to_string()));
+        assert!(r.match_regex.contains(r"stdio\.h"));
+    }
+
+    #[test]
+    fn cycle_is_detected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "a"
+            extends = "b"
+
+            [[rule]]
+            name = "b"
+            extends = "a"
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("cycle"), "got: {msg}");
+    }
+
+    #[test]
+    fn unknown_extends_target_errors() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "child"
+            extends = "nonexistent"
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        assert!(format!("{err:#}").contains("unknown rule"));
+    }
+
+    #[test]
+    fn match_resolved_is_rejected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "x"
+            match_resolved = { kind = "exact" }
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        assert!(format!("{err:#}").contains("not yet supported"));
+    }
+
+    #[test]
+    fn extends_across_configs_works_by_name() {
+        let root = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            paths = ["src/**"]
+            allowed_include_dirs = ["include"]
+            "#,
+        );
+        let sub = load(
+            "/p/src/inclean.toml",
+            r#"
+            [[rule]]
+            name = "src-only"
+            extends = "base"
+            match = '^foo\.h$'
+            "#,
+        );
+        let map = resolve(&[root, sub]).unwrap();
+        assert_eq!(map["src-only"].paths, vec!["src/**"]);
+        assert_eq!(map["src-only"].allowed_include_dirs, vec!["include"]);
+    }
+
+    #[test]
+    fn action_template_is_constant_substituted() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "x"
+            action = { type = "rewrite", to = "@std.c.extensions ${1}" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        match &map["x"].action {
+            ResolvedAction::Rewrite { to, .. } => {
+                // @std.c.extensions is a list constant; in a string it
+                // materializes as a regex alternation.
+                assert!(to.starts_with(r"(?:\.c|\.h)"));
+                assert!(to.ends_with("${1}"));
+            }
+            _ => panic!("expected rewrite"),
+        }
+    }
+
+    #[test]
+    fn ancestors_helper_walks_chain() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "a"
+
+            [[rule]]
+            name = "b"
+            extends = "a"
+
+            [[rule]]
+            name = "c"
+            extends = "b"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        assert_eq!(ancestors_of(&map, "c"), vec!["c", "b", "a"]);
+    }
+
+    #[test]
+    fn origin_carries_config_path_and_index() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "first"
+
+            [[rule]]
+            name = "second"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        assert_eq!(map["first"].origin.index, 0);
+        assert_eq!(map["second"].origin.index, 1);
+        assert_eq!(
+            map["first"].origin.config_path,
+            PathBuf::from("/p/inclean.toml")
+        );
+    }
+}
