@@ -43,7 +43,7 @@ the code shape:
 
 | Module | Responsibility |
 |---|---|
-| `cli/` | clap subcommands: `init`, `lint`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. |
+| `cli/` | clap subcommands: `init`, `validate`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `validate` is the config-only verifier (parsing + structural invariants + extends + constants); `check` is the source-level dry-run. |
 | `config/schema.rs` | serde structs for TOML deserialization |
 | `config/discover.rs` | walk the project tree, find all `inclean.toml`s |
 | `config/inherit.rs` | resolve `extends`, merge fields, detect cycles |

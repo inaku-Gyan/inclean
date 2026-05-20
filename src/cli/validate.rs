@@ -1,8 +1,10 @@
-//! `inclean lint <DIR>` — validate inclean.toml configuration only.
+//! `inclean validate <DIR>` — verify the inclean.toml configuration only.
 //!
-//! Performs every load-time check (TOML parse, structural invariants,
-//! `extends` resolution, cycle detection, constant expansion) but never
-//! reads or rewrites any source file.
+//! Checks every load-time invariant: TOML syntax, the [project].root sigil,
+//! sub-config restrictions, global rule-name uniqueness, the `extends` graph
+//! (existence and acyclicity), `@std.*` constant references, and the v1
+//! exclusions (e.g. layer-5 `match_resolved`). Never reads or rewrites any
+//! source file.
 
 use std::path::PathBuf;
 

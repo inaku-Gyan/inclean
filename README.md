@@ -26,12 +26,13 @@ Every command except `explain` takes a `[DIR]` positional argument — the
 directory that contains the project's root `inclean.toml`. Defaults to `.`.
 
 ```sh
-inclean init    [DIR]          # generate a starter inclean.toml in DIR
-inclean lint    [DIR]          # validate the configuration only
-inclean check   [DIR]          # report rewrites + validation errors (CI friendly)
-inclean diff    [DIR]          # show unified diff of would-be rewrites
-inclean apply   [DIR]          # apply rewrites in place
-inclean explain FILE [INCLUDE] # trace which rule matches an include
+inclean init     [DIR]         # generate a starter inclean.toml in DIR
+inclean validate [DIR]         # verify config syntax / structural invariants only
+inclean check    [DIR]         # report rewrites + source validation errors (CI friendly)
+inclean diff     [DIR]         # show unified diff of would-be rewrites
+inclean apply    [DIR]         # apply rewrites in place
+inclean explain  FILE [INCLUDE]
+                               # trace which rule matches an include
 ```
 
 ## Configuration

@@ -7,7 +7,7 @@ mod check;
 mod diff;
 mod explain;
 mod init;
-mod lint;
+mod validate;
 
 #[derive(Parser, Debug)]
 #[command(name = "inclean", version, about = "C/C++ #include path normalizer")]
@@ -28,8 +28,8 @@ enum Command {
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
     },
-    /// Validate the inclean.toml configuration only; do not touch source files
-    Lint {
+    /// Verify the inclean.toml configuration only; do not touch source files
+    Validate {
         /// Directory containing the root inclean.toml
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
@@ -69,7 +69,7 @@ pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init { dir } => init::run(dir),
-        Command::Lint { dir } => lint::run(dir),
+        Command::Validate { dir } => validate::run(dir),
         Command::Check { dir, no_validate } => check::run(dir, !no_validate),
         Command::Diff { dir, no_validate } => diff::run(dir, !no_validate),
         Command::Apply { dir, no_validate } => apply::run(dir, !no_validate),
