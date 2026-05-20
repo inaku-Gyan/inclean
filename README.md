@@ -2,70 +2,51 @@
 
 A C/C++ `#include` path normalizer.
 
-Many legacy C/C++ libraries `#include` headers by bare filename (e.g.
-`#include "bar.h"`) even though the actual header lives several directories
-deep (e.g. `src/internal/bar.h`). To consume such a library, users must add
-all the internal directories to their `-I` list, polluting their own
-include namespace and breaking the library's encapsulation.
+Many legacy C/C++ libraries `#include` headers by bare filename
+(`#include "bar.h"`) even though the actual header lives several
+directories deep (`src/internal/bar.h`). To consume such a library a
+caller must add every internal directory to their `-I` list — which
+pollutes their include namespace and breaks the library's
+encapsulation.
 
-inclean performs a one-shot, source-level normalization: it scans every
-source file in the library and rewrites each `#include` to a form that
-resolves cleanly against an explicit, minimal set of allowed include
-directories. After running inclean, consumers only need to `-I` the
-allowed directories.
+`inclean` does a one-shot, source-level normalization. It scans every
+source file in the library and rewrites each `#include` so it resolves
+cleanly against a small, explicit set of allowed include directories.
+After running `inclean`, consumers only `-I` the allowed directories.
 
-## Status
+---
 
-Beta. M1 + M2 + M3 + M4 of the milestone plan are complete: configuration
-loading, rule inheritance, the full five-layer matching engine including
-layer 5 (`match_resolved` against the physical file an include resolves
-to, with ambiguity detection over `original_include_dirs`), `auto` /
-`rewrite` / `keep` / `error` actions with `${...}` placeholder
-substitution (including `${resolved.*}` for layer-5 matches), post-action
-`allowed_include_dirs` validation, rule-tree conflict enforcement
-(child ⊆ parent + cross-chain disjoint), per-file processing parallelized
-with `rayon`, and the five CLI subcommands.
+## Install
 
-A synthetic 11k-file fixture runs Full mode in under 100ms in release
-builds — see [tests/perf.rs](tests/perf.rs) (`cargo test --release
---test perf -- --ignored --nocapture` to reproduce).
-
-See `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` for the
-design plan.
-
-## Usage
-
-Every command except `explain` takes a `[DIR]` positional argument — the
-directory that contains the project's root `inclean.toml`. Defaults to `.`.
+From source (Rust 1.91+):
 
 ```sh
-inclean init  [DIR]               # generate a starter inclean.toml in DIR
-inclean check [DIR] [MODE]        # three-mode read-only check (see below)
-inclean diff  [DIR]                # show unified diff of would-be rewrites
-inclean apply [DIR]                # apply rewrites in place
-inclean explain FILE [INCLUDE]     # trace which rule matches an include
+cargo install --path .
 ```
 
-`inclean check` has three modes (mutually-exclusive flags):
+## Quick start
 
-| Mode | Flag | What it does |
-|---|---|---|
-| Syntax | `--syntax-only` | Just config-level structural checks (TOML syntax, `[project]` sigil, `extends` graph, rule-name uniqueness, `@std.*` constants, template syntax). No source file is opened. |
-| Rules | `--no-rewrites` | Above + scan source, enforce **rule-tree invariants**: every child rule's match set must be a subset of its ancestors', and rules on different chains must not overlap on any single `#include`. No action evaluation. |
-| Full | _(default)_ | Above + evaluate actions and validate post-action includes against `allowed_include_dirs`. |
+`inclean` is driven by an `inclean.toml` placed at the root of the
+library you want to clean up. A typical workflow:
 
-## Configuration
+```sh
+inclean init                # write a documented starter inclean.toml
+$EDITOR inclean.toml        # tell it where your headers live
+inclean check               # dry-run: report every proposed change
+inclean diff                # see the rewrites as a unified diff
+inclean apply               # write the rewrites in place
+```
 
-inclean is configured by `inclean.toml` placed at the project root. The root
-config **must** declare a `[project]` block whose `root` field is set
-explicitly — this distinguishes the root config from any sub-configs.
-Sub-directory `inclean.toml` files may not declare a `[project]` block; they
-only contribute additional `[[rule]]` entries.
+Every command except `explain` takes an optional `[DIR]` argument — the
+directory containing the root `inclean.toml`. It defaults to `.`.
 
-Rules form a single-inheritance tree via the `extends` field; rule names are
-globally unique across the project.
+### Example
 
-A minimal config:
+Take a "flat" library where headers live at
+`include/mylib/internal/foo.h` but internal `#include`s use just the
+basename. The fixture under
+[tests/fixtures/flat-library/](tests/fixtures/flat-library/) ships
+this config:
 
 ```toml
 [project]
@@ -74,24 +55,48 @@ root = "."
 [[rule]]
 name = "base"
 paths = ["src/**", "include/**"]
-# extensions defaults to ["@std.c_extensions", "@std.cpp_extensions"]
 forms = ["quote"]
 allowed_include_dirs = ["include"]
-original_include_dirs = ["src", "src/internal"]
-# action defaults to { type = "auto", relative_to = "allowed", form = "quote" }
+original_include_dirs = ["include/mylib/internal"]
 ```
 
-See the design plan for the full rule schema, the five-layer matching model,
-inheritance semantics, `@std.*` built-in constants, and validation rules.
+A source line `#include "foo.h"` is rewritten to
+`#include "mylib/internal/foo.h"` — so the consumer only needs
+`-Iinclude`.
 
-## Building
+## Commands
 
-```sh
-cargo build --release
-```
+| Command                                  | Purpose                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| `inclean init [DIR]`                     | Generate a documented starter `inclean.toml`. Refuses to overwrite.           |
+| `inclean check [DIR] [-l/--level LEVEL]` | Read-only check at one of three depths. Never writes.                         |
+| `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
+| `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
+| `inclean explain FILE [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
 
-Requires Rust 1.91+ (2021 edition).
+`inclean check` runs at one of three levels (`-l config | rules |
+full`, default `full`). Each level is a strict superset of the
+previous; see [docs/configuration.md](docs/configuration.md#inclean-check-levels)
+for the full breakdown.
+
+## Documentation
+
+- **[docs/configuration.md](docs/configuration.md)** — full
+  `inclean.toml` schema: the five-layer matching model, inheritance,
+  `@std.*` constants, actions, placeholders, exit codes.
+- **[docs/architecture.md](docs/architecture.md)** — code-level
+  architecture: module map, pipeline phases, key invariants.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — toolchain, dev workflow,
+  conventions, scope.
+- **[CHANGELOG.md](CHANGELOG.md)** — release history.
+
+## Status
+
+`0.1` — feature-complete for v1. See [CHANGELOG.md](CHANGELOG.md). The
+synthetic 10k-file perf benchmark in [tests/perf.rs](tests/perf.rs)
+runs `full` mode in well under 100 ms on a release build
+(`cargo test --release --test perf -- --ignored --nocapture`).
 
 ## License
 
-See `LICENSE`.
+[BSD 3-Clause](LICENSE).

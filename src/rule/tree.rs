@@ -1,4 +1,4 @@
-//! Rule-tree invariants checked at `check --no-rewrites` and above.
+//! Rule-tree invariants checked at `check --level rules` and above.
 //!
 //! For each `#include` in the project we ask the engine for **every** rule
 //! whose five layers match (via [`super::engine::match_all`]). The

@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+use crate::pipeline::run::CheckMode;
 
 mod apply;
 mod check;
@@ -27,7 +29,7 @@ enum Command {
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
     },
-    /// Three-mode read-only check (default: full)
+    /// Three-level read-only check (default: full)
     Check(CheckArgs),
     /// Show a unified diff of would-be rewrites without modifying files
     Diff {
@@ -49,23 +51,33 @@ enum Command {
 }
 
 #[derive(Args, Debug)]
-#[command(group(
-    ArgGroup::new("check_mode")
-        .required(false)
-        .multiple(false)
-        .args(["syntax_only", "no_rewrites"])
-))]
 pub struct CheckArgs {
     /// Directory containing the root inclean.toml
     #[arg(default_value = ".")]
     pub dir: std::path::PathBuf,
-    /// Only verify the inclean.toml configuration; do not open any source file.
-    #[arg(long)]
-    pub syntax_only: bool,
-    /// Verify config + rule-tree invariants over actual source, but do not
-    /// evaluate actions or run allowed_include_dirs validation.
-    #[arg(long)]
-    pub no_rewrites: bool,
+    /// How deep to check.
+    ///   config: only validate inclean.toml (no source files opened).
+    ///   rules:  also scan source and enforce rule-tree invariants.
+    ///   full:   also evaluate actions and validate against allowed_include_dirs.
+    #[arg(short, long, value_enum, default_value_t = CheckLevel::Full)]
+    pub level: CheckLevel,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum CheckLevel {
+    Config,
+    Rules,
+    Full,
+}
+
+impl From<CheckLevel> for CheckMode {
+    fn from(level: CheckLevel) -> Self {
+        match level {
+            CheckLevel::Config => CheckMode::Config,
+            CheckLevel::Rules => CheckMode::Rules,
+            CheckLevel::Full => CheckMode::Full,
+        }
+    }
 }
 
 pub fn run() -> ExitCode {

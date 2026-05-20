@@ -8,11 +8,18 @@ canonical use case: take an old library whose internal source uses
 `#include "bar.h"` (resolving via `-Isrc/internal`) and rewrite every
 such line so the consumer only needs `-Ipath/to/lib/include`.
 
+For the module map and pipeline narrative, see
+[docs/architecture.md](docs/architecture.md); for the full `inclean.toml`
+schema (layers, actions, placeholders, `@std.*` constants), see
+[docs/configuration.md](docs/configuration.md). This file keeps only
+Claude-facing guidance.
+
 ## Design source of truth
 
-The full design lives in `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md`.
-Read it before making non-trivial changes. Key design choices that drive
-the code shape:
+The original design plan lives in
+`/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` (local to the
+maintainer's machine, not committed). Read it before making non-trivial
+changes. Key design choices that drive the code shape:
 
 - **Configuration**: TOML, hierarchical (`inclean.toml` at project root,
   optional `inclean.toml` in any sub-directory). The root config **must**
@@ -47,54 +54,12 @@ the code shape:
 - **`@std.*` built-in constants** (e.g. `@std.cpp.extensions`, `@std.cpp17.system_headers`)
   spread in any string-list field via `@name` syntax.
 
-## Module layout (src/)
+## Module layout & pipeline data flow
 
-| Module | Responsibility |
-|---|---|
-| `cli/` | clap subcommands: `init`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `check` is three-mode (`--syntax-only` / `--no-rewrites` / default = full). `diff` and `apply` always run full mode. |
-| `config/schema.rs` | serde structs for TOML deserialization |
-| `config/discover.rs` | walk the project tree, find all `inclean.toml`s |
-| `config/inherit.rs` | resolve `extends`, merge fields, detect cycles |
-| `config/constants.rs` | `@std.*` definitions and list-spread expansion |
-| `lex/include_line.rs` | recognize `#include` directives, skip comments/strings/continuations |
-| `rule/glob.rs` | layer 1 + layer 2 glob matching |
-| `rule/engine.rs` | five-layer matching: `find_match` (first-match-wins, kept for tests) and `match_all` (returns `MatchAllOutcome { matched, ambiguities }`; used by mode `Rules` and above). Each `CandidateMatch` carries its captures and, when layer 5 ran, the project-root-relative resolved path. |
-| `rule/tree.rs` | rule-tree invariants over the `extends` forest. `check_chain(matched, by_name)` either returns the deepest rule in `matched` (the leaf of a single ancestor chain) or a `ConflictKind` describing the violation |
-| `rule/action.rs` | evaluate `auto` / `rewrite` / `keep` / `error` + `${...}` template |
-| `index/header_index.rs` | basename / relpath → physical path index from `original_include_dirs` |
-| `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs`. Quote and angle includes both validated (a rule's `forms` decides which forms it claims); macro skipped. Empty `allowed_include_dirs` = "this rule does not participate in validation" (the idiom for allow-listing e.g. system headers). |
-| `pipeline/run.rs` | top-level orchestration |
-
-## Pipeline data flow
-
-`pipeline::run::run(project_root, mode: CheckMode) -> Summary` is the
-single entry point with three modes:
-
-* `CheckMode::Syntax` — load and validate configs (no source files
-  opened). Returns an empty `Summary`.
-* `CheckMode::Rules` — `Syntax` + scan source. For each `#include`,
-  `engine::match_all` produces every candidate rule and `tree::check_chain`
-  asserts the rule-tree invariants. Conflicts land in `Summary.conflicts`.
-  No action evaluation, no `allowed_include_dirs` validation.
-* `CheckMode::Full` — `Rules` + evaluate the **deepest** rule in the
-  matched chain's action (NOT the first-match-by-declaration; the chain
-  invariants make this well-defined and order-independent) + run
-  `allowed_include_dirs` validation.
-
-`IncludeOutcome` variants: `NoMatch`, `Matched` (Rules mode), `Keep`,
-`Rewritten`, `Error`, `EvaluationFailure`, `Conflict`, `Layer5Ambiguous`.
-`apply` refuses to write anything when `Summary.conflicts` is non-empty,
-and skips any file with an `Error` / `EvaluationFailure` / `Conflict` /
-`Layer5Ambiguous` outcome or a non-None `validation_error`.
-`summary_exit_code` returns `0`, `2` (action.error), or `3` (any of:
-EvaluationFailure, validation failure, rule-tree conflict, layer-5
-ambiguity).
-
-Per-file processing runs through `rayon::par_iter` after the (serial)
-walker enumerates candidate paths. Each file's task is pure — it returns
-its own `FileResult` and `Vec<Conflict>` — so no cross-thread sync is
-needed. The final `Summary.files` and `Summary.conflicts` are sorted by
-path so output is deterministic across runs.
+Moved to [docs/architecture.md](docs/architecture.md). Read that doc
+for the per-module responsibilities, the six-step pipeline walkthrough
+inside `pipeline::run::run`, and the full list of `IncludeOutcome`
+variants and exit-code semantics.
 
 ## Dev workflow
 

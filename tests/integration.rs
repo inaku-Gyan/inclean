@@ -212,7 +212,7 @@ fn angle_includes_validate_against_allowed_dirs() {
 }
 
 #[test]
-fn init_template_passes_syntax_check() {
+fn init_template_passes_config_check() {
     use std::process::Command;
     let root = tmp();
     let bin = env!("CARGO_BIN_EXE_inclean");
@@ -222,12 +222,12 @@ fn init_template_passes_syntax_check() {
         .unwrap();
     assert!(init.status.success(), "init failed: {:?}", init);
     let out = Command::new(bin)
-        .args(["check", "--syntax-only", root.to_str().unwrap()])
+        .args(["check", "--level", "config", root.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "`check --syntax-only` on init template failed: stdout={} stderr={}",
+        "`check --level config` on init template failed: stdout={} stderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
