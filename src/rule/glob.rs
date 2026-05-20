@@ -81,10 +81,6 @@ impl PathMatcher {
         self.extensions.iter().any(|e| e == &dotted)
     }
 
-    #[cfg(test)]
-    pub(crate) fn patterns(&self) -> Vec<&str> {
-        self.globs.iter().map(|g| g.pattern.as_str()).collect()
-    }
 }
 
 fn compile(pattern: &str) -> Result<CompiledGlob> {
