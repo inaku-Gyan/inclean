@@ -438,25 +438,22 @@ fn process_file<'a>(
         let deepest_match: Option<&CandidateMatch<'_>> =
             deepest.and_then(|d| outcome_all.matched.iter().find(|c| std::ptr::eq(c.rule, d)));
 
-        let (outcome, matched_rule_for_validation): (IncludeOutcome, Option<&inherit::ResolvedRule>) =
-            match (mode, deepest_match) {
-                (_, None) => (IncludeOutcome::NoMatch, None),
-                (CheckMode::Rules, Some(cm)) => (
-                    IncludeOutcome::Matched {
-                        rule: cm.rule.rule.name.clone(),
-                    },
-                    None,
-                ),
-                (CheckMode::Full, Some(cm)) => evaluate_with_action(
-                    cm,
-                    &include,
-                    relpath,
-                    project_root,
-                    original,
-                    &mut edits,
-                ),
-                (CheckMode::Config, _) => unreachable!("config mode returns before file processing"),
-            };
+        let (outcome, matched_rule_for_validation): (
+            IncludeOutcome,
+            Option<&inherit::ResolvedRule>,
+        ) = match (mode, deepest_match) {
+            (_, None) => (IncludeOutcome::NoMatch, None),
+            (CheckMode::Rules, Some(cm)) => (
+                IncludeOutcome::Matched {
+                    rule: cm.rule.rule.name.clone(),
+                },
+                None,
+            ),
+            (CheckMode::Full, Some(cm)) => {
+                evaluate_with_action(cm, &include, relpath, project_root, original, &mut edits)
+            }
+            (CheckMode::Config, _) => unreachable!("config mode returns before file processing"),
+        };
 
         let validation_error = if mode == CheckMode::Full {
             run_validation(
