@@ -31,6 +31,7 @@ pub fn run(dir: PathBuf) -> Result<u8> {
                         IncludeOutcome::Error { .. }
                             | IncludeOutcome::EvaluationFailure { .. }
                             | IncludeOutcome::Conflict
+                            | IncludeOutcome::Layer5Ambiguous { .. }
                     )
                 })
         })

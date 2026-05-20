@@ -58,6 +58,7 @@ pub fn evaluate(
         captures: &matched.captures,
         include,
         file_relpath,
+        resolved: matched.resolved.as_deref(),
     };
 
     match &matched.rule.rule.action {
@@ -190,6 +191,9 @@ struct TemplateCtx<'a> {
     captures: &'a [String],
     include: &'a Include,
     file_relpath: &'a Path,
+    /// Project-root-relative path produced by layer 5. `None` when the
+    /// matching rule had no `match_resolved` block.
+    resolved: Option<&'a Path>,
 }
 
 fn substitute(template: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
@@ -249,6 +253,28 @@ fn resolve_placeholder(name: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default(),
         "file.relpath" => ctx.file_relpath.to_string_lossy().into_owned(),
+        "resolved.path" | "resolved.relpath" => {
+            let p = ctx.resolved.with_context(|| {
+                format!("placeholder `${{{name}}}` requires layer 5 (`match_resolved`)")
+            })?;
+            p.to_string_lossy().replace('\\', "/")
+        }
+        "resolved.dir" => {
+            let p = ctx.resolved.with_context(|| {
+                format!("placeholder `${{{name}}}` requires layer 5 (`match_resolved`)")
+            })?;
+            p.parent()
+                .map(|q| q.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default()
+        }
+        "resolved.basename" => {
+            let p = ctx.resolved.with_context(|| {
+                format!("placeholder `${{{name}}}` requires layer 5 (`match_resolved`)")
+            })?;
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        }
         other => bail!("unknown placeholder `${{{other}}}`"),
     })
 }
@@ -290,7 +316,19 @@ mod tests {
     }
 
     fn matched<'a>(c: &'a CompiledRule<'a>, captures: Vec<String>) -> Match<'a> {
-        Match { rule: c, captures }
+        Match {
+            rule: c,
+            captures,
+            resolved: None,
+        }
+    }
+
+    fn matched_resolved<'a>(c: &'a CompiledRule<'a>, captures: Vec<String>, resolved: PathBuf) -> Match<'a> {
+        Match {
+            rule: c,
+            captures,
+            resolved: Some(resolved),
+        }
     }
 
     fn tmp_root() -> PathBuf {
@@ -534,6 +572,49 @@ mod tests {
         let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
         assert!(format!("{err:#}").contains("could not resolve include"));
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn resolved_placeholders_require_layer5() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "rewrite", to = "${resolved.relpath}" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["x.h".into()]);
+        let inc = inc("x.h", IncludeForm::Quote);
+        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        assert!(format!("{err:#}").contains("requires layer 5"));
+    }
+
+    #[test]
+    fn resolved_placeholders_expand_when_layer5_ran() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "rewrite", to = "${resolved.dir}/X.h" }
+            "#,
+            &root,
+        );
+        let m = matched_resolved(
+            &compiled,
+            vec!["foo.h".into()],
+            PathBuf::from("src/internal/foo.h"),
+        );
+        let inc = inc("foo.h", IncludeForm::Quote);
+        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"src/internal/X.h\"");
+            }
+            _ => panic!("expected Rewrite"),
+        }
     }
 
     #[test]

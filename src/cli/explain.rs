@@ -86,7 +86,7 @@ fn print_include_trace(
         include.line, include.content
     );
 
-    let trials = engine::trace_match(rules, file_relpath, include);
+    let trials = engine::trace_match(rules, file_relpath, include, project_root);
     if trials.is_empty() {
         println!("  (no eligible rules — no config covers this file's directory)");
         return;
@@ -109,6 +109,7 @@ fn print_include_trace(
         let m = engine::Match {
             rule: t.rule,
             captures: t.captures.clone().unwrap_or_default(),
+            resolved: t.resolved.clone(),
         };
         match action::evaluate(&m, include, file_relpath, project_root) {
             Ok(Outcome::Keep) => println!("  keep — leave the include unchanged"),
@@ -150,6 +151,9 @@ fn print_one_trial(t: &RuleTrial<'_>) {
     }
     if let Some(l) = &t.layer4_match {
         println!("    layer 4 (match)      {} {}", mark(l.passed), l.detail);
+    }
+    if let Some(l) = &t.layer5_resolved {
+        println!("    layer 5 (resolved)   {} {}", mark(l.passed), l.detail);
     }
     if t.matched_overall {
         if let Some(caps) = &t.captures {

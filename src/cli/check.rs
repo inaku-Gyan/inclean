@@ -67,7 +67,18 @@ fn print_syntax_report(args: &CheckArgs) -> Result<()> {
 }
 
 fn print_rules_report(summary: &Summary) {
-    if summary.conflicts.is_empty() {
+    let ambiguities: Vec<_> = summary
+        .files
+        .iter()
+        .flat_map(|f| {
+            f.include_results
+                .iter()
+                .filter(|r| matches!(r.outcome, IncludeOutcome::Layer5Ambiguous { .. }))
+                .map(move |r| (f, r))
+        })
+        .collect();
+
+    if summary.conflicts.is_empty() && ambiguities.is_empty() {
         let matched: usize = summary
             .files
             .iter()
@@ -80,7 +91,26 @@ fn print_rules_report(summary: &Summary) {
         );
         return;
     }
-    print_conflicts(summary);
+    if !summary.conflicts.is_empty() {
+        print_conflicts(summary);
+    }
+    if !ambiguities.is_empty() {
+        eprintln!();
+        eprintln!("{} layer-5 ambiguity(ies) detected:", ambiguities.len());
+        for (file, r) in ambiguities {
+            if let IncludeOutcome::Layer5Ambiguous { rule, candidates } = &r.outcome {
+                eprintln!(
+                    "  {}:{} {}  rule `{rule}` (narrow original_include_dirs):",
+                    file.relpath.display(),
+                    r.include.line,
+                    r.include.content
+                );
+                for c in candidates {
+                    eprintln!("    - {}", c.display());
+                }
+            }
+        }
+    }
 }
 
 fn print_full_report(summary: &Summary) {
@@ -124,6 +154,17 @@ fn print_full_report(summary: &Summary) {
                     "  L{:>4} conflict \"{}\"   (see conflicts block)",
                     r.include.line, r.include.content
                 ),
+                IncludeOutcome::Layer5Ambiguous { rule, candidates } => {
+                    eprintln!(
+                        "  L{:>4} ambig   \"{}\"   (rule: {rule}): include resolves to {} candidates under original_include_dirs:",
+                        r.include.line,
+                        r.include.content,
+                        candidates.len()
+                    );
+                    for c in candidates {
+                        eprintln!("           - {}", c.display());
+                    }
+                }
             }
             if let Some(msg) = &r.validation_error {
                 eprintln!(

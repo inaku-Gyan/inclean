@@ -29,6 +29,40 @@ pub fn resolve_in_dirs(
     None
 }
 
+/// Outcome of a unique-resolution lookup. Layer 5 uses this — it refuses
+/// the convenient "first wins" of `resolve_in_dirs` because by definition
+/// layer 5 wants a single authoritative physical file.
+pub enum UniqueResolution {
+    /// No dir contained the include.
+    None,
+    /// Exactly one dir contained the include.
+    Unique(PathBuf),
+    /// Two or more dirs contained the include — the user must narrow the
+    /// rule's `original_include_dirs` to disambiguate.
+    Ambiguous(Vec<PathBuf>),
+}
+
+/// Like [`resolve_in_dirs`] but visits every directory and reports
+/// ambiguity when more than one contains the file. Returns absolute paths.
+pub fn resolve_in_dirs_unique(
+    project_root: &Path,
+    dirs: &[String],
+    include_text: &str,
+) -> UniqueResolution {
+    let mut hits: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        let candidate = project_root.join(dir).join(include_text);
+        if candidate.is_file() {
+            hits.push(candidate);
+        }
+    }
+    match hits.len() {
+        0 => UniqueResolution::None,
+        1 => UniqueResolution::Unique(hits.pop().unwrap()),
+        _ => UniqueResolution::Ambiguous(hits),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +137,41 @@ mod tests {
     fn returns_none_when_not_found() {
         let root = tmp();
         assert!(resolve_in_dirs(&root, &["src".to_string()], "missing.h").is_none());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unique_returns_none_when_missing() {
+        let root = tmp();
+        assert!(matches!(
+            resolve_in_dirs_unique(&root, &["src".into()], "missing.h"),
+            UniqueResolution::None
+        ));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unique_returns_unique_when_one_match() {
+        let root = tmp();
+        write(&root, "a/foo.h", "");
+        match resolve_in_dirs_unique(&root, &["a".into(), "b".into()], "foo.h") {
+            UniqueResolution::Unique(p) => assert_eq!(p, root.join("a/foo.h")),
+            _ => panic!("expected unique"),
+        }
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unique_returns_ambiguous_when_multiple() {
+        let root = tmp();
+        write(&root, "a/foo.h", "");
+        write(&root, "b/foo.h", "");
+        match resolve_in_dirs_unique(&root, &["a".into(), "b".into()], "foo.h") {
+            UniqueResolution::Ambiguous(hits) => {
+                assert_eq!(hits.len(), 2);
+            }
+            _ => panic!("expected ambiguous"),
+        }
         fs::remove_dir_all(&root).ok();
     }
 

@@ -283,6 +283,96 @@ fn cross_chain_conflict_reported_in_rules_mode() {
 }
 
 #[test]
+fn layer5_under_constraint_drives_rewrite() {
+    // The base rule has a wide-open auto action; the child specializes via
+    // layer 5 to only fire when the include actually resolves under
+    // src/internal, and rewrites it to a canonical mylib/internal/<file>
+    // path.
+    let root = tmp();
+    fs::create_dir_all(root.join("src/internal")).unwrap();
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("src/internal/foo.h"), "").unwrap();
+    fs::write(root.join("src/main.c"), "#include \"foo.h\"\n").unwrap();
+    fs::write(
+        root.join("inclean.toml"),
+        r#"
+        [project]
+        root = "."
+
+        [[rule]]
+        name = "base"
+        paths = ["src/**"]
+        forms = ["quote"]
+        original_include_dirs = ["src/internal"]
+        action = { type = "keep" }
+
+        [[rule]]
+        name = "internal"
+        extends = "base"
+        match_resolved = { under = "src/internal" }
+        action = { type = "rewrite", to = "mylib/internal/${resolved.basename}" }
+        "#,
+    )
+    .unwrap();
+
+    let summary = pipe::run(&root, CheckMode::Full).unwrap();
+    let r = &summary.files[0].include_results[0];
+    match &r.outcome {
+        pipe::IncludeOutcome::Rewritten { new_text, rule, .. } => {
+            assert_eq!(new_text, "\"mylib/internal/foo.h\"");
+            assert_eq!(rule, "internal");
+        }
+        other => panic!("expected Rewritten, got {other:?}"),
+    }
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn layer5_ambiguity_reports_candidates_and_fails() {
+    // Two original_include_dirs both contain foo.h → the layer-5 rule cannot
+    // resolve uniquely. Pipeline must surface Layer5Ambiguous, exit code 3,
+    // and not produce a rewrite.
+    let root = tmp();
+    fs::create_dir_all(root.join("src/a")).unwrap();
+    fs::create_dir_all(root.join("src/b")).unwrap();
+    fs::write(root.join("src/a/foo.h"), "").unwrap();
+    fs::write(root.join("src/b/foo.h"), "").unwrap();
+    fs::write(root.join("src/main.c"), "#include \"foo.h\"\n").unwrap();
+    fs::write(
+        root.join("inclean.toml"),
+        r#"
+        [project]
+        root = "."
+
+        [[rule]]
+        name = "amb"
+        paths = ["src/**"]
+        forms = ["quote"]
+        original_include_dirs = ["src/a", "src/b"]
+        match_resolved = { match = '\.h$' }
+        action = { type = "keep" }
+        "#,
+    )
+    .unwrap();
+
+    let summary = pipe::run(&root, CheckMode::Full).unwrap();
+    let main_c = summary
+        .files
+        .iter()
+        .find(|f| f.relpath.ends_with("src/main.c"))
+        .expect("main.c missing");
+    match &main_c.include_results[0].outcome {
+        pipe::IncludeOutcome::Layer5Ambiguous { rule, candidates } => {
+            assert_eq!(rule, "amb");
+            assert_eq!(candidates.len(), 2);
+        }
+        other => panic!("expected Layer5Ambiguous, got {other:?}"),
+    }
+    assert_eq!(pipe::summary_exit_code(&summary), 3);
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn child_wider_than_parent_reported_in_rules_mode() {
     // Child widens `paths` from `src/**` to `**`. A file outside src/ then
     // triggers the child without triggering the parent → ChildWiderThanParent.

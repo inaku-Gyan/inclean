@@ -37,7 +37,7 @@ use crate::config::inherit;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
-use crate::rule::engine::{self, CompiledRule, Match};
+use crate::rule::engine::{self, CandidateMatch, CompiledRule, Match};
 use crate::rule::tree::{self, ConflictKind};
 use crate::validate::allowed as validate_allowed;
 
@@ -118,6 +118,13 @@ pub enum IncludeOutcome {
     /// The chain check rejected this include (a conflict was recorded in
     /// [`Summary::conflicts`]); no action was evaluated.
     Conflict,
+    /// Layer 5 detected an ambiguous resolution — the include resolves
+    /// against multiple `original_include_dirs` and the user must narrow
+    /// the rule's `-I` list.
+    Layer5Ambiguous {
+        rule: String,
+        candidates: Vec<PathBuf>,
+    },
 }
 
 /// A rule-tree invariant violation observed on a specific `#include`.
@@ -254,6 +261,7 @@ fn file_has_errors(f: &FileResult) -> bool {
             IncludeOutcome::Error { .. }
                 | IncludeOutcome::EvaluationFailure { .. }
                 | IncludeOutcome::Conflict
+                | IncludeOutcome::Layer5Ambiguous { .. }
         ) || r.validation_error.is_some()
     })
 }
@@ -355,8 +363,34 @@ fn process_file<'a>(
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
 
     for include in includes {
-        let matched = engine::match_all(rules, relpath, &include);
-        let deepest: Option<&CompiledRule<'_>> = match tree::check_chain(&matched, by_name) {
+        let outcome_all = engine::match_all(rules, relpath, &include, project_root);
+
+        // Layer-5 ambiguity is a hard error for the include; surface the
+        // first ambiguous rule, no chain check, no action.
+        if let Some(amb) = outcome_all.ambiguities.into_iter().next() {
+            let candidates_rel: Vec<PathBuf> = amb
+                .candidates
+                .into_iter()
+                .map(|p| {
+                    p.strip_prefix(project_root)
+                        .map(|s| s.to_path_buf())
+                        .unwrap_or(p)
+                })
+                .collect();
+            include_results.push(IncludeResult {
+                include,
+                outcome: IncludeOutcome::Layer5Ambiguous {
+                    rule: amb.rule.rule.name.clone(),
+                    candidates: candidates_rel,
+                },
+                validation_error: None,
+            });
+            continue;
+        }
+
+        let matched_rules: Vec<&CompiledRule<'_>> =
+            outcome_all.matched.iter().map(|c| c.rule).collect();
+        let deepest: Option<&CompiledRule<'_>> = match tree::check_chain(&matched_rules, by_name) {
             Ok(d) => d,
             Err(kind) => {
                 conflicts.push(Conflict {
@@ -374,17 +408,24 @@ fn process_file<'a>(
             }
         };
 
+        let deepest_match: Option<&CandidateMatch<'_>> = deepest.and_then(|d| {
+            outcome_all
+                .matched
+                .iter()
+                .find(|c| std::ptr::eq(c.rule, d))
+        });
+
         let (outcome, matched_rule_for_validation): (IncludeOutcome, Option<&inherit::ResolvedRule>) =
-            match (mode, deepest) {
+            match (mode, deepest_match) {
                 (_, None) => (IncludeOutcome::NoMatch, None),
-                (CheckMode::Rules, Some(r)) => (
+                (CheckMode::Rules, Some(cm)) => (
                     IncludeOutcome::Matched {
-                        rule: r.rule.name.clone(),
+                        rule: cm.rule.rule.name.clone(),
                     },
                     None,
                 ),
-                (CheckMode::Full, Some(r)) => evaluate_with_action(
-                    r,
+                (CheckMode::Full, Some(cm)) => evaluate_with_action(
+                    cm,
                     &include,
                     relpath,
                     project_root,
@@ -420,23 +461,18 @@ fn process_file<'a>(
 }
 
 fn evaluate_with_action<'a>(
-    rule: &'a CompiledRule<'a>,
+    candidate: &CandidateMatch<'a>,
     include: &Include,
     relpath: &Path,
     project_root: &Path,
     original: &str,
     edits: &mut Vec<(Range<usize>, String)>,
 ) -> (IncludeOutcome, Option<&'a inherit::ResolvedRule>) {
-    let captures: Vec<String> = match rule.regex.captures(&include.content) {
-        Some(c) => c
-            .iter()
-            .map(|opt| opt.map(|m| m.as_str().to_string()).unwrap_or_default())
-            .collect(),
-        None => return (IncludeOutcome::NoMatch, None),
-    };
+    let rule = candidate.rule;
     let m = Match {
         rule,
-        captures,
+        captures: candidate.captures.clone(),
+        resolved: candidate.resolved.clone(),
     };
     let rule_name = rule.rule.name.clone();
     let rule_ref = rule.rule;
@@ -552,7 +588,8 @@ pub fn summary_exit_code(summary: &Summary) -> u8 {
         for r in &f.include_results {
             match &r.outcome {
                 IncludeOutcome::Error { .. } => code = code.max(2),
-                IncludeOutcome::EvaluationFailure { .. } => code = code.max(3),
+                IncludeOutcome::EvaluationFailure { .. }
+                | IncludeOutcome::Layer5Ambiguous { .. } => code = code.max(3),
                 _ => {}
             }
             if r.validation_error.is_some() {

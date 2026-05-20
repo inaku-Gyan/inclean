@@ -55,17 +55,32 @@ pub struct RawRule {
     #[serde(rename = "match")]
     pub match_regex: Option<String>,
 
-    // ---- Layer 5: match resolved physical file (v1 unsupported) ----------
-    /// Reserved field. If present, config loading must error with a clear
-    /// "not yet supported in v1" message. Stored as a free-form value so we
-    /// can detect the presence without binding to a future shape.
-    pub match_resolved: Option<toml::Value>,
+    // ---- Layer 5: match on the resolved physical file --------------------
+    /// Constraints on the file the include resolves to via the rule's
+    /// `original_include_dirs`. A rule with this set additionally requires:
+    ///   1. the include text resolves to exactly one file under
+    ///      `original_include_dirs` (otherwise an ambiguity error is
+    ///      surfaced for the user to narrow their `-I` list); and
+    ///   2. the resolved file's project-root-relative path satisfies the
+    ///      `under` / `match` constraints written here.
+    pub match_resolved: Option<RawMatchResolved>,
 
     // ---- Non-matching configuration --------------------------------------
     pub allowed_include_dirs: Option<Vec<String>>,
     pub original_include_dirs: Option<Vec<String>>,
 
     pub action: Option<RawAction>,
+}
+
+/// Layer-5 constraint shape. At least one field must be specified.
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RawMatchResolved {
+    /// Resolved file's project-root-relative path must start with this dir.
+    pub under: Option<String>,
+    /// Resolved file's project-root-relative path must match this regex.
+    #[serde(rename = "match")]
+    pub path_regex: Option<String>,
 }
 
 /// The include "form": which quoting style of `#include` a rule applies to.
@@ -302,16 +317,31 @@ mod tests {
     }
 
     #[test]
-    fn match_resolved_is_preserved_as_raw_value() {
-        // It must be detected (so we can error) but is not strictly typed yet.
+    fn match_resolved_parses_known_fields() {
         let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "x"
+            match_resolved = { under = "src/internal", match = '\.h$' }
+            "#,
+        );
+        let m = cfg.rules[0].match_resolved.as_ref().unwrap();
+        assert_eq!(m.under.as_deref(), Some("src/internal"));
+        assert_eq!(m.path_regex.as_deref(), Some(r"\.h$"));
+    }
+
+    #[test]
+    fn match_resolved_rejects_unknown_fields() {
+        let err = parse(
             r#"
             [[rule]]
             name = "x"
             match_resolved = { kind = "exact" }
             "#,
-        );
-        assert!(cfg.rules[0].match_resolved.is_some());
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("kind"));
     }
 
     #[test]

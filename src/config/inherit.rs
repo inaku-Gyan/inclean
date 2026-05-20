@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use super::constants;
 use super::schema::{
     index_rules_by_name, AutoRelativeTo, IncludeForm, LoadedConfig, OutputForm, RawAction,
-    RawRule, RuleLocator,
+    RawMatchResolved, RawRule, RuleLocator,
 };
 
 /// Where a rule was declared. Carried through to the matching engine so
@@ -46,10 +46,20 @@ pub struct ResolvedRule {
     pub forms: Vec<IncludeForm>,
     pub match_regex: String,
 
+    // Layer 5: resolved-file matching. None = layer 5 inactive (default).
+    pub match_resolved: Option<ResolvedMatchResolved>,
+
     // Non-matching fields.
     pub allowed_include_dirs: Vec<String>,
     pub original_include_dirs: Vec<String>,
     pub action: ResolvedAction,
+}
+
+/// Layer-5 constraints after constant expansion.
+#[derive(Debug, Clone)]
+pub struct ResolvedMatchResolved {
+    pub under: Option<String>,
+    pub path_regex: Option<String>,
 }
 
 /// Action with all sub-fields defaulted.
@@ -138,14 +148,6 @@ fn resolve_one(
         .with_context(|| format!("rule `{name}` not found"))?;
     let raw = locator.rule;
 
-    if raw.match_resolved.is_some() {
-        anyhow::bail!(
-            "rule `{}` at {}: `match_resolved` (layer 5) is not yet supported in v1",
-            name,
-            locator.config_path.display(),
-        );
-    }
-
     let parent_resolved: Option<ResolvedRule> = match raw.extends.as_deref() {
         Some(parent_name) => {
             // Verify parent exists before recursing for a clearer error.
@@ -197,6 +199,11 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
             .unwrap_or_else(default_match_regex),
     };
 
+    let match_resolved = match raw.match_resolved.as_ref() {
+        Some(m) => Some(resolve_match_resolved(m, &ctx)?),
+        None => parent.and_then(|p| p.match_resolved.clone()),
+    };
+
     let allowed_include_dirs = pick_list(
         raw.allowed_include_dirs.as_deref(),
         parent.map(|p| &p.allowed_include_dirs),
@@ -236,9 +243,28 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         extensions,
         forms,
         match_regex,
+        match_resolved,
         allowed_include_dirs,
         original_include_dirs,
         action,
+    })
+}
+
+fn resolve_match_resolved(raw: &RawMatchResolved, ctx: &str) -> Result<ResolvedMatchResolved> {
+    if raw.under.is_none() && raw.path_regex.is_none() {
+        anyhow::bail!("{ctx}: `match_resolved` must specify at least one of `under` / `match`");
+    }
+    let path_regex = match raw.path_regex.as_deref() {
+        Some(s) => Some(with_ctx(
+            constants::substitute_in_string(s),
+            ctx,
+            "match_resolved.match",
+        )?),
+        None => None,
+    };
+    Ok(ResolvedMatchResolved {
+        under: raw.under.clone(),
+        path_regex,
     })
 }
 
@@ -442,17 +468,52 @@ mod tests {
     }
 
     #[test]
-    fn match_resolved_is_rejected() {
+    fn match_resolved_round_trips() {
         let cfg = load(
             "/p/inclean.toml",
             r#"
             [[rule]]
             name = "x"
-            match_resolved = { kind = "exact" }
+            match_resolved = { under = "src/internal", match = '\.h$' }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let m = map["x"].match_resolved.as_ref().unwrap();
+        assert_eq!(m.under.as_deref(), Some("src/internal"));
+        assert_eq!(m.path_regex.as_deref(), Some(r"\.h$"));
+    }
+
+    #[test]
+    fn match_resolved_requires_at_least_one_field() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "x"
+            match_resolved = {}
             "#,
         );
         let err = resolve(&[cfg]).unwrap_err();
-        assert!(format!("{err:#}").contains("not yet supported"));
+        assert!(format!("{err:#}").contains("at least one"));
+    }
+
+    #[test]
+    fn match_resolved_inherits_from_parent() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "p"
+            match_resolved = { under = "src" }
+
+            [[rule]]
+            name = "c"
+            extends = "p"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let m = map["c"].match_resolved.as_ref().unwrap();
+        assert_eq!(m.under.as_deref(), Some("src"));
     }
 
     #[test]
