@@ -1,15 +1,15 @@
-//! `inclean check <DIR> [--syntax-only|--no-rewrites]` — three-mode
+//! `inclean check <DIR> [-l/--level config|rules|full]` — three-level
 //! read-only check. Never writes a file.
 //!
-//! - `--syntax-only`: just verify the configuration's structural
+//! - `--level config`: just verify the configuration's structural
 //!   invariants (TOML syntax, [project].root sigil, extends graph, name
 //!   uniqueness, `@std.*` constants, layer-5 rejection). No source files
 //!   are opened.
-//! - `--no-rewrites`: also scan source files and enforce the rule-tree
+//! - `--level rules`: also scan source files and enforce the rule-tree
 //!   invariants — child rules' match sets must be subsets of their
 //!   ancestors', and rules on different chains must not overlap.
-//! - default: also evaluate actions and validate post-action includes
-//!   against `allowed_include_dirs`.
+//! - `--level full` (default): also evaluate actions and validate
+//!   post-action includes against `allowed_include_dirs`.
 
 use anyhow::Result;
 
@@ -17,27 +17,20 @@ use super::CheckArgs;
 use crate::pipeline::run::{self, CheckMode, ConflictKindOwned, IncludeOutcome, Summary};
 
 pub fn run(args: CheckArgs) -> Result<u8> {
-    let mode = if args.syntax_only {
-        CheckMode::Syntax
-    } else if args.no_rewrites {
-        CheckMode::Rules
-    } else {
-        CheckMode::Full
-    };
-
+    let mode: CheckMode = args.level.into();
     let summary = run::run(&args.dir, mode)?;
     match summary.mode {
-        CheckMode::Syntax => print_syntax_report(&args)?,
+        CheckMode::Config => print_config_report(&args)?,
         CheckMode::Rules => print_rules_report(&summary),
         CheckMode::Full => print_full_report(&summary),
     }
     Ok(run::summary_exit_code(&summary))
 }
 
-/// Syntax-only mode lists the config files and rules loaded. The pipeline
-/// has already validated their structure; we re-walk discovery so we can
-/// show file paths and rule origins.
-fn print_syntax_report(args: &CheckArgs) -> Result<()> {
+/// Config mode lists the config files and rules loaded. The pipeline has
+/// already validated their structure; we re-walk discovery so we can show
+/// file paths and rule origins.
+fn print_config_report(args: &CheckArgs) -> Result<()> {
     use crate::config::discover;
     use crate::config::inherit;
     let configs = discover::load_all_configs(&args.dir)?;

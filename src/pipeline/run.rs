@@ -5,7 +5,7 @@
 //!
 //! The pipeline runs in one of three modes (see [`CheckMode`]):
 //!
-//! * [`CheckMode::Syntax`] — load and resolve configs only. No source
+//! * [`CheckMode::Config`] — load and resolve configs only. No source
 //!   files are opened.
 //! * [`CheckMode::Rules`] — adds source scanning + rule-tree invariant
 //!   checking (`engine::match_all` + `tree::check_chain`). No action
@@ -48,8 +48,8 @@ pub enum CheckMode {
     /// Config layer only: parse, structural sigil checks, `extends` graph,
     /// `@std.*` constants, template syntax, layer-5 rejection. No source
     /// files opened.
-    Syntax,
-    /// `Syntax` + scan source, run all-candidate matching per include,
+    Config,
+    /// `Config` + scan source, run all-candidate matching per include,
     /// check the rule-tree invariants. No action evaluation, no
     /// `allowed_include_dirs` validation.
     Rules,
@@ -177,7 +177,7 @@ pub fn run(project_root: &Path, mode: CheckMode) -> Result<Summary> {
     discover::validate_loaded(&configs, &project_root_abs)?;
     let resolved = inherit::resolve(&configs)?;
 
-    if mode == CheckMode::Syntax {
+    if mode == CheckMode::Config {
         return Ok(Summary {
             mode,
             project_root: project_root_abs,
@@ -462,7 +462,7 @@ fn process_file<'a>(
                     original,
                     &mut edits,
                 ),
-                (CheckMode::Syntax, _) => unreachable!("syntax mode returns before file processing"),
+                (CheckMode::Config, _) => unreachable!("config mode returns before file processing"),
             };
 
         let validation_error = if mode == CheckMode::Full {
@@ -826,10 +826,10 @@ mod tests {
     }
 
     #[test]
-    fn syntax_mode_skips_source_scan() {
+    fn config_mode_skips_source_scan() {
         let root = tmp();
         // A source file with includes that *would* trigger conflicts, but
-        // syntax-only mode never opens it.
+        // config mode never opens it.
         touch(&root, "src/main.c", "#include \"x.h\"\n");
         touch(
             &root,
@@ -849,7 +849,7 @@ mod tests {
             forms = ["quote"]
             "#,
         );
-        let summary = run(&root, CheckMode::Syntax).unwrap();
+        let summary = run(&root, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
         assert!(summary.conflicts.is_empty());
         assert_eq!(summary_exit_code(&summary), 0);

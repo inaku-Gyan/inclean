@@ -39,20 +39,21 @@ Every command except `explain` takes a `[DIR]` positional argument — the
 directory that contains the project's root `inclean.toml`. Defaults to `.`.
 
 ```sh
-inclean init  [DIR]               # generate a starter inclean.toml in DIR
-inclean check [DIR] [MODE]        # three-mode read-only check (see below)
-inclean diff  [DIR]                # show unified diff of would-be rewrites
-inclean apply [DIR]                # apply rewrites in place
-inclean explain FILE [INCLUDE]     # trace which rule matches an include
+inclean init  [DIR]                       # generate a starter inclean.toml in DIR
+inclean check [DIR] [-l/--level LEVEL]    # three-level read-only check (see below)
+inclean diff  [DIR]                        # show unified diff of would-be rewrites
+inclean apply [DIR]                        # apply rewrites in place
+inclean explain FILE [INCLUDE]             # trace which rule matches an include
 ```
 
-`inclean check` has three modes (mutually-exclusive flags):
+`inclean check` runs at one of three levels, selected with `-l/--level`
+(default `full`):
 
-| Mode | Flag | What it does |
-|---|---|---|
-| Syntax | `--syntax-only` | Just config-level structural checks (TOML syntax, `[project]` sigil, `extends` graph, rule-name uniqueness, `@std.*` constants, template syntax). No source file is opened. |
-| Rules | `--no-rewrites` | Above + scan source, enforce **rule-tree invariants**: every child rule's match set must be a subset of its ancestors', and rules on different chains must not overlap on any single `#include`. No action evaluation. |
-| Full | _(default)_ | Above + evaluate actions and validate post-action includes against `allowed_include_dirs`. |
+| Level | What it does |
+|---|---|
+| `config` | Just config-level structural checks (TOML syntax, `[project]` sigil, `extends` graph, rule-name uniqueness, `@std.*` constants, template syntax). No source file is opened. |
+| `rules` | Above + scan source, enforce **rule-tree invariants**: every child rule's match set must be a subset of its ancestors', and rules on different chains must not overlap on any single `#include`. No action evaluation. |
+| `full` _(default)_ | Above + evaluate actions and validate post-action includes against `allowed_include_dirs`. |
 
 ## Configuration
 

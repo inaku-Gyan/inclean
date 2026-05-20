@@ -51,7 +51,7 @@ the code shape:
 
 | Module | Responsibility |
 |---|---|
-| `cli/` | clap subcommands: `init`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `check` is three-mode (`--syntax-only` / `--no-rewrites` / default = full). `diff` and `apply` always run full mode. |
+| `cli/` | clap subcommands: `init`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `check` is three-level via `-l/--level config|rules|full` (default `full`). `diff` and `apply` always run full mode. |
 | `config/schema.rs` | serde structs for TOML deserialization |
 | `config/discover.rs` | walk the project tree, find all `inclean.toml`s |
 | `config/inherit.rs` | resolve `extends`, merge fields, detect cycles |
@@ -70,9 +70,9 @@ the code shape:
 `pipeline::run::run(project_root, mode: CheckMode) -> Summary` is the
 single entry point with three modes:
 
-* `CheckMode::Syntax` — load and validate configs (no source files
+* `CheckMode::Config` — load and validate configs (no source files
   opened). Returns an empty `Summary`.
-* `CheckMode::Rules` — `Syntax` + scan source. For each `#include`,
+* `CheckMode::Rules` — `Config` + scan source. For each `#include`,
   `engine::match_all` produces every candidate rule and `tree::check_chain`
   asserts the rule-tree invariants. Conflicts land in `Summary.conflicts`.
   No action evaluation, no `allowed_include_dirs` validation.
