@@ -10,12 +10,13 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::config::{discover, inherit};
+use crate::config::{discover, inherit, lint};
 
 pub fn run(dir: PathBuf) -> Result<u8> {
     let configs = discover::load_all_configs(&dir)?;
     discover::validate_loaded(&configs, &dir)?;
     let resolved = inherit::resolve(&configs)?;
+    let warnings = lint::check(&resolved);
 
     println!(
         "ok: loaded {} config file(s), {} rule(s)",
@@ -36,6 +37,13 @@ pub fn run(dir: PathBuf) -> Result<u8> {
             rule.origin.config_path.display(),
             rule.origin.index
         );
+    }
+
+    if !warnings.is_empty() {
+        eprintln!();
+        for w in &warnings {
+            eprintln!("warning: {w}");
+        }
     }
     Ok(0)
 }
