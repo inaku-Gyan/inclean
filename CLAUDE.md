@@ -15,7 +15,9 @@ Read it before making non-trivial changes. Key design choices that drive
 the code shape:
 
 - **Configuration**: TOML, hierarchical (`inclean.toml` at project root,
-  optional `inclean.toml` in any sub-directory).
+  optional `inclean.toml` in any sub-directory). The root config **must**
+  declare `[project]` with `root` set; sub-configs **must not** declare
+  `[project]` at all.
 - **Rule model**: pure rule tree with single inheritance via `extends`. Rule
   `name` is globally unique across all configs in the project. There is
   **no `[defaults]` block** — users write a `base` rule and others extend it.
@@ -41,7 +43,7 @@ the code shape:
 
 | Module | Responsibility |
 |---|---|
-| `cli/` | clap subcommands: `init`, `check`, `diff`, `apply`, `explain` |
+| `cli/` | clap subcommands: `init`, `lint`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. |
 | `config/schema.rs` | serde structs for TOML deserialization |
 | `config/discover.rs` | walk the project tree, find all `inclean.toml`s |
 | `config/inherit.rs` | resolve `extends`, merge fields, detect cycles |

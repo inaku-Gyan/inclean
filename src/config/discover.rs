@@ -22,6 +22,53 @@ use super::schema::{self, LoadedConfig};
 
 pub const CONFIG_FILENAME: &str = "inclean.toml";
 
+/// Validate structural invariants the loader cannot express in the serde
+/// schema:
+///
+/// - The first loaded config (the one at `root_dir/inclean.toml`) must be
+///   present and must declare a `[project]` block whose `root` field is
+///   set explicitly. This sigil distinguishes the root config from
+///   sub-configs.
+/// - No sub-config may declare a `[project]` block.
+///
+/// Call after [`load_all_configs`] and before resolving rule inheritance.
+pub fn validate_loaded(configs: &[LoadedConfig], root_dir: &Path) -> Result<()> {
+    if configs.is_empty() {
+        anyhow::bail!("no {CONFIG_FILENAME} configs loaded");
+    }
+    let root_cfg = &configs[0];
+    let expected = root_dir.join(CONFIG_FILENAME);
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if canon(&root_cfg.path) != canon(&expected) {
+        anyhow::bail!(
+            "expected root config at {} but the shallowest found was {}",
+            expected.display(),
+            root_cfg.path.display(),
+        );
+    }
+    let project = root_cfg.raw.project.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "root config {} must declare a [project] block with `root = ...` set",
+            root_cfg.path.display(),
+        )
+    })?;
+    if project.root.is_none() {
+        anyhow::bail!(
+            "root config {}: [project].root must be set explicitly",
+            root_cfg.path.display(),
+        );
+    }
+    for sub in &configs[1..] {
+        if sub.raw.project.is_some() {
+            anyhow::bail!(
+                "sub-config {} must not declare a [project] block; only the root {CONFIG_FILENAME} may",
+                sub.path.display(),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Climb from `start` (or its parent if it is a file path) toward `/`
 /// looking for the nearest `inclean.toml`. The directory containing that
 /// file is the project root.
@@ -184,6 +231,81 @@ name = "should-not-load""#),
         let proj = build_tree(&[("src/foo.c", "")]);
         let err = load_all_configs(proj.path()).unwrap_err();
         assert!(format!("{err:#}").contains(CONFIG_FILENAME));
+    }
+
+    #[test]
+    fn validate_loaded_accepts_root_with_project_root() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
+    }
+
+    #[test]
+    fn validate_loaded_rejects_missing_project_block() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("[project]"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_unset_project_root() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("[project].root"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_subconfig_with_project_block() {
+        let proj = build_tree(&[
+            (
+                "inclean.toml",
+                r#"
+                [project]
+                root = "."
+
+                [[rule]]
+                name = "base"
+                "#,
+            ),
+            (
+                "src/inclean.toml",
+                r#"
+                [project]
+                root = "."
+
+                [[rule]]
+                name = "src-rule"
+                "#,
+            ),
+        ]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("sub-config"));
     }
 
     #[test]

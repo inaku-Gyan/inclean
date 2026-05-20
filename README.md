@@ -22,20 +22,28 @@ for the design plan and milestones.
 
 ## Usage (planned)
 
+Every command except `explain` takes a `[DIR]` positional argument — the
+directory that contains the project's root `inclean.toml`. Defaults to `.`.
+
 ```sh
-inclean init                   # generate a starter inclean.toml
-inclean check [PATH]           # report rewrites + validation errors (CI friendly)
-inclean diff  [PATH]           # show unified diff of would-be rewrites
-inclean apply [PATH]           # apply rewrites in place
+inclean init    [DIR]          # generate a starter inclean.toml in DIR
+inclean lint    [DIR]          # validate the configuration only
+inclean check   [DIR]          # report rewrites + validation errors (CI friendly)
+inclean diff    [DIR]          # show unified diff of would-be rewrites
+inclean apply   [DIR]          # apply rewrites in place
 inclean explain FILE [INCLUDE] # trace which rule matches an include
 ```
 
 ## Configuration
 
-inclean is configured by `inclean.toml` placed at the project root. Sub-directory
-`inclean.toml` files extend the configuration with extra rules. Rules form a
-single-inheritance tree via the `extends` field; rule names are globally unique
-across the project.
+inclean is configured by `inclean.toml` placed at the project root. The root
+config **must** declare a `[project]` block whose `root` field is set
+explicitly — this distinguishes the root config from any sub-configs.
+Sub-directory `inclean.toml` files may not declare a `[project]` block; they
+only contribute additional `[[rule]]` entries.
+
+Rules form a single-inheritance tree via the `extends` field; rule names are
+globally unique across the project.
 
 A minimal config:
 

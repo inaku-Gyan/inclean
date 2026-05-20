@@ -11,7 +11,9 @@
 //! 4. Expand `@std.*` constants in lists and substitute them in regex /
 //!    template strings.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
