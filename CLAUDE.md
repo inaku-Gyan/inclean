@@ -28,7 +28,12 @@ the code shape:
   2. `extensions` — file extension filter (skipped if layer 1 is an exact path)
   3. `forms` — set of `"quote"` / `"angle"` / `"macro"`; `"macro"` always errors in v1
   4. `match` — regex on the stripped include content (no quotes/angles)
-  5. `match_resolved` — v1 unsupported; error if configured
+  5. `match_resolved` — only runs when the rule sets it. Resolves the
+     include via `original_include_dirs` (must be unique — duplicate hits
+     surface as `Layer5Ambiguous` per-include, exit 3); then enforces
+     optional `under` (path-prefix) and `match` (path regex) constraints.
+     When layer 5 runs, the action gets `${resolved.path}` /
+     `${resolved.dir}` / `${resolved.basename}` placeholders.
 - **Inheritance semantics**: runtime AND-combination merges fields; the
   rule-tree invariants ("child's match set ⊆ parent's" + "cross-chain
   disjoint") are enforced at source-scan time by
@@ -53,7 +58,7 @@ the code shape:
 | `config/constants.rs` | `@std.*` definitions and list-spread expansion |
 | `lex/include_line.rs` | recognize `#include` directives, skip comments/strings/continuations |
 | `rule/glob.rs` | layer 1 + layer 2 glob matching |
-| `rule/engine.rs` | five-layer matching: `find_match` (first-match-wins, kept for tests) and `match_all` (every candidate rule, used by mode `Rules` and above) |
+| `rule/engine.rs` | five-layer matching: `find_match` (first-match-wins, kept for tests) and `match_all` (returns `MatchAllOutcome { matched, ambiguities }`; used by mode `Rules` and above). Each `CandidateMatch` carries its captures and, when layer 5 ran, the project-root-relative resolved path. |
 | `rule/tree.rs` | rule-tree invariants over the `extends` forest. `check_chain(matched, by_name)` either returns the deepest rule in `matched` (the leaf of a single ancestor chain) or a `ConflictKind` describing the violation |
 | `rule/action.rs` | evaluate `auto` / `rewrite` / `keep` / `error` + `${...}` template |
 | `index/header_index.rs` | basename / relpath → physical path index from `original_include_dirs` |
@@ -77,12 +82,19 @@ single entry point with three modes:
   `allowed_include_dirs` validation.
 
 `IncludeOutcome` variants: `NoMatch`, `Matched` (Rules mode), `Keep`,
-`Rewritten`, `Error`, `EvaluationFailure`, `Conflict`. `apply` refuses
-to write anything when `Summary.conflicts` is non-empty, and skips any
-file with an `Error` / `EvaluationFailure` / `Conflict` outcome or a
-non-None `validation_error`. `summary_exit_code` returns `0`, `2`
-(action.error), or `3` (any of: EvaluationFailure, validation failure,
-rule-tree conflict).
+`Rewritten`, `Error`, `EvaluationFailure`, `Conflict`, `Layer5Ambiguous`.
+`apply` refuses to write anything when `Summary.conflicts` is non-empty,
+and skips any file with an `Error` / `EvaluationFailure` / `Conflict` /
+`Layer5Ambiguous` outcome or a non-None `validation_error`.
+`summary_exit_code` returns `0`, `2` (action.error), or `3` (any of:
+EvaluationFailure, validation failure, rule-tree conflict, layer-5
+ambiguity).
+
+Per-file processing runs through `rayon::par_iter` after the (serial)
+walker enumerates candidate paths. Each file's task is pure — it returns
+its own `FileResult` and `Vec<Conflict>` — so no cross-thread sync is
+needed. The final `Summary.files` and `Summary.conflicts` are sorted by
+path so output is deterministic across runs.
 
 ## Dev workflow
 
@@ -91,6 +103,9 @@ cargo check     # fast type-check
 cargo test      # unit + integration tests
 cargo clippy    # lints
 cargo fmt       # format
+
+# Run perf benchmarks (11k-file synthetic project, release mode):
+cargo test --release --test perf -- --ignored --nocapture
 ```
 
 Integration fixtures live under `tests/fixtures/` (small fake libraries).

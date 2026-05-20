@@ -16,16 +16,22 @@ allowed directories.
 
 ## Status
 
-Alpha. M1 + M2 + M3 of the milestone plan are complete: configuration
-loading, rule inheritance, the five-layer matching engine, `auto` /
+Beta. M1 + M2 + M3 + M4 of the milestone plan are complete: configuration
+loading, rule inheritance, the full five-layer matching engine including
+layer 5 (`match_resolved` against the physical file an include resolves
+to, with ambiguity detection over `original_include_dirs`), `auto` /
 `rewrite` / `keep` / `error` actions with `${...}` placeholder
-substitution, post-action `allowed_include_dirs` validation, rule-tree
-conflict enforcement (child ⊆ parent + cross-chain disjoint), and the
-five CLI subcommands.
+substitution (including `${resolved.*}` for layer-5 matches), post-action
+`allowed_include_dirs` validation, rule-tree conflict enforcement
+(child ⊆ parent + cross-chain disjoint), per-file processing parallelized
+with `rayon`, and the five CLI subcommands.
+
+A synthetic 11k-file fixture runs Full mode in under 100ms in release
+builds — see [tests/perf.rs](tests/perf.rs) (`cargo test --release
+--test perf -- --ignored --nocapture` to reproduce).
 
 See `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` for the
-design plan and remaining work (M4: layer-5 resolved-file matching,
-parallelism, perf).
+design plan.
 
 ## Usage
 
