@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
+use rayon::prelude::*;
 
 use crate::config::discover::{self, CONFIG_FILENAME};
 use crate::config::inherit;
@@ -188,38 +189,67 @@ pub fn run(project_root: &Path, mode: CheckMode) -> Result<Summary> {
     let compiled = compile_rules(&resolved, &project_root_abs)?;
     let by_name = tree::index_by_name(&compiled);
 
-    let mut files: Vec<FileResult> = Vec::new();
-    let mut conflicts: Vec<Conflict> = Vec::new();
-
+    // Collect candidate files first so we can hand them to rayon as a
+    // single batch. The walker is single-threaded by design (it shells out
+    // to `ignore::WalkBuilder`), but every file's processing is pure CPU
+    // and can run in parallel.
+    let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in source_files(&project_root_abs) {
         let entry = entry?;
         let relpath = entry
             .strip_prefix(&project_root_abs)
             .unwrap_or(&entry)
             .to_path_buf();
-
-        if !any_rule_eligible(&compiled, &relpath) {
-            continue;
+        if any_rule_eligible(&compiled, &relpath) {
+            candidates.push(relpath);
         }
-
-        let original = std::fs::read_to_string(&entry)
-            .with_context(|| format!("reading {}", entry.display()))?;
-        let result = process_file(
-            &compiled,
-            &by_name,
-            &relpath,
-            &original,
-            &project_root_abs,
-            mode,
-            &mut conflicts,
-        );
-        files.push(FileResult {
-            relpath,
-            original: result.original,
-            rewritten: result.rewritten,
-            include_results: result.include_results,
-        });
     }
+
+    type PerFile = (FileResult, Vec<Conflict>);
+    let per_file: Vec<Result<PerFile>> = candidates
+        .par_iter()
+        .map(|relpath| -> Result<PerFile> {
+            let abs = project_root_abs.join(relpath);
+            let original = std::fs::read_to_string(&abs)
+                .with_context(|| format!("reading {}", abs.display()))?;
+            let mut conflicts: Vec<Conflict> = Vec::new();
+            let result = process_file(
+                &compiled,
+                &by_name,
+                relpath,
+                &original,
+                &project_root_abs,
+                mode,
+                &mut conflicts,
+            );
+            Ok((
+                FileResult {
+                    relpath: relpath.clone(),
+                    original: result.original,
+                    rewritten: result.rewritten,
+                    include_results: result.include_results,
+                },
+                conflicts,
+            ))
+        })
+        .collect();
+
+    let mut files: Vec<FileResult> = Vec::with_capacity(per_file.len());
+    let mut conflicts: Vec<Conflict> = Vec::new();
+    for r in per_file {
+        let (f, mut c) = r?;
+        files.push(f);
+        conflicts.append(&mut c);
+    }
+    // Sort for stable output across runs — rayon's collect preserves input
+    // order, but the candidate vector itself comes from a walker whose
+    // order is filesystem-defined, so we normalize here.
+    files.sort_by(|a, b| a.relpath.cmp(&b.relpath));
+    conflicts.sort_by(|a, b| {
+        a.file_relpath
+            .cmp(&b.file_relpath)
+            .then(a.include_line.cmp(&b.include_line))
+    });
 
     Ok(Summary {
         mode,

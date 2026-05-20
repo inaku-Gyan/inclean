@@ -316,8 +316,12 @@ fn layer5_under_constraint_drives_rewrite() {
     .unwrap();
 
     let summary = pipe::run(&root, CheckMode::Full).unwrap();
-    let r = &summary.files[0].include_results[0];
-    match &r.outcome {
+    let main_c = summary
+        .files
+        .iter()
+        .find(|f| f.relpath.ends_with("src/main.c"))
+        .expect("main.c missing");
+    match &main_c.include_results[0].outcome {
         pipe::IncludeOutcome::Rewritten { new_text, rule, .. } => {
             assert_eq!(new_text, "\"mylib/internal/foo.h\"");
             assert_eq!(rule, "internal");
