@@ -2,8 +2,13 @@ name: test
 
 on:
   pull_request:
+    paths-ignore: &non-src-code-paths
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
   push:
     branches: [main]
+    paths-ignore: *non-src-code-paths
 
 concurrency:
   group: test-${{ github.ref }}
