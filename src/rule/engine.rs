@@ -19,7 +19,6 @@ use regex::Regex;
 
 use super::glob::PathMatcher;
 use crate::config::inherit::ResolvedRule;
-use crate::config::schema::IncludeForm;
 use crate::lex::include_line::Include;
 
 /// A rule with its layer-1+2 matcher and layer-4 regex pre-compiled, plus
