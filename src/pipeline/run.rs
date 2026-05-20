@@ -3,6 +3,18 @@
 //! consume the [`Summary`] this returns to render check / diff / apply
 //! output.
 //!
+//! The pipeline runs in one of three modes (see [`CheckMode`]):
+//!
+//! * [`CheckMode::Syntax`] — load and resolve configs only. No source
+//!   files are opened.
+//! * [`CheckMode::Rules`] — adds source scanning + rule-tree invariant
+//!   checking (`engine::match_all` + `tree::check_chain`). No action
+//!   evaluation, no `allowed_include_dirs` validation.
+//! * [`CheckMode::Full`] — adds action evaluation + `allowed_include_dirs`
+//!   validation. The action target is the **deepest** rule in the matched
+//!   set's chain (the leaf), not the first by declaration order — the
+//!   rule-tree invariants guarantee this is well-defined.
+//!
 //! v1 keeps things simple:
 //! - The file walk uses `ignore::WalkBuilder` honoring `.gitignore` /
 //!   `.ignore` plus our hard-coded skip dirs (`.git`, `target`,
@@ -21,19 +33,37 @@ use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 
 use crate::config::discover::{self, CONFIG_FILENAME};
-use crate::config::{inherit, lint};
+use crate::config::inherit;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
-use crate::rule::engine::{self, CompiledRule};
+use crate::rule::engine::{self, CompiledRule, Match};
+use crate::rule::tree::{self, ConflictKind};
 use crate::validate::allowed as validate_allowed;
+
+/// Which slice of the pipeline to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckMode {
+    /// Config layer only: parse, structural sigil checks, `extends` graph,
+    /// `@std.*` constants, template syntax, layer-5 rejection. No source
+    /// files opened.
+    Syntax,
+    /// `Syntax` + scan source, run all-candidate matching per include,
+    /// check the rule-tree invariants. No action evaluation, no
+    /// `allowed_include_dirs` validation.
+    Rules,
+    /// `Rules` + evaluate the matched rule's action and validate the
+    /// post-action include against the rule's `allowed_include_dirs`.
+    Full,
+}
 
 /// Outcome for a whole `inclean` invocation against a project root.
 #[derive(Debug)]
 pub struct Summary {
+    pub mode: CheckMode,
     pub project_root: PathBuf,
     pub files: Vec<FileResult>,
-    pub config_warnings: Vec<lint::Warning>,
+    pub conflicts: Vec<Conflict>,
 }
 
 /// Per-file result.
@@ -41,7 +71,8 @@ pub struct Summary {
 pub struct FileResult {
     pub relpath: PathBuf,
     pub original: String,
-    /// `Some(_)` if any include was rewritten; equal to `original` otherwise.
+    /// `Some(_)` if any include was rewritten (only ever populated in
+    /// [`CheckMode::Full`]); `None` otherwise.
     pub rewritten: Option<String>,
     pub include_results: Vec<IncludeResult>,
 }
@@ -52,13 +83,19 @@ pub struct IncludeResult {
     pub outcome: IncludeOutcome,
     /// Post-action validation message; `Some(_)` when the resulting
     /// include cannot be resolved under the matched rule's
-    /// `allowed_include_dirs` (or angle-pattern subset thereof).
+    /// `allowed_include_dirs`. Only ever populated in [`CheckMode::Full`].
     pub validation_error: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum IncludeOutcome {
     NoMatch,
+    /// [`CheckMode::Rules`] only — the rule-tree chain check accepted this
+    /// include and selected `rule` (the deepest in the chain). No action
+    /// was evaluated.
+    Matched {
+        rule: String,
+    },
     Keep {
         rule: String,
     },
@@ -78,23 +115,75 @@ pub enum IncludeOutcome {
         rule: String,
         message: String,
     },
+    /// The chain check rejected this include (a conflict was recorded in
+    /// [`Summary::conflicts`]); no action was evaluated.
+    Conflict,
 }
 
-/// Run the full pipeline against `project_root`. When `validate` is true,
-/// each include is also checked against the matched rule's
-/// `allowed_include_dirs` after the action runs.
-pub fn run(project_root: &Path, validate: bool) -> Result<Summary> {
+/// A rule-tree invariant violation observed on a specific `#include`.
+#[derive(Debug)]
+pub struct Conflict {
+    pub file_relpath: PathBuf,
+    pub include_line: usize,
+    pub include_text: String,
+    pub kind: ConflictKindOwned,
+}
+
+#[derive(Debug)]
+pub enum ConflictKindOwned {
+    /// A rule matched but one of its ancestors did not.
+    ChildWiderThanParent {
+        child: String,
+        missing_ancestor: String,
+    },
+    /// Two rules matched but neither is an ancestor of the other.
+    CrossChain {
+        a: String,
+        b: String,
+    },
+}
+
+impl ConflictKindOwned {
+    fn from_kind(k: ConflictKind<'_>) -> Self {
+        match k {
+            ConflictKind::ChildWiderThanParent { child, missing_ancestor } => {
+                ConflictKindOwned::ChildWiderThanParent {
+                    child: child.rule.name.clone(),
+                    missing_ancestor: missing_ancestor.rule.name.clone(),
+                }
+            }
+            ConflictKind::CrossChain { a, b } => ConflictKindOwned::CrossChain {
+                a: a.rule.name.clone(),
+                b: b.rule.name.clone(),
+            },
+        }
+    }
+}
+
+/// Run the pipeline against `project_root` in the requested mode.
+pub fn run(project_root: &Path, mode: CheckMode) -> Result<Summary> {
     let project_root_abs = std::fs::canonicalize(project_root)
         .with_context(|| format!("canonicalize {}", project_root.display()))?;
 
     let configs = discover::load_all_configs(&project_root_abs)?;
     discover::validate_loaded(&configs, &project_root_abs)?;
     let resolved = inherit::resolve(&configs)?;
-    let config_warnings = lint::check(&resolved);
+
+    if mode == CheckMode::Syntax {
+        return Ok(Summary {
+            mode,
+            project_root: project_root_abs,
+            files: Vec::new(),
+            conflicts: Vec::new(),
+        });
+    }
 
     let compiled = compile_rules(&resolved, &project_root_abs)?;
+    let by_name = tree::index_by_name(&compiled);
 
     let mut files: Vec<FileResult> = Vec::new();
+    let mut conflicts: Vec<Conflict> = Vec::new();
+
     for entry in source_files(&project_root_abs) {
         let entry = entry?;
         let relpath = entry
@@ -108,7 +197,15 @@ pub fn run(project_root: &Path, validate: bool) -> Result<Summary> {
 
         let original = std::fs::read_to_string(&entry)
             .with_context(|| format!("reading {}", entry.display()))?;
-        let result = process_file(&compiled, &relpath, &original, &project_root_abs, validate);
+        let result = process_file(
+            &compiled,
+            &by_name,
+            &relpath,
+            &original,
+            &project_root_abs,
+            mode,
+            &mut conflicts,
+        );
         files.push(FileResult {
             relpath,
             original: result.original,
@@ -118,17 +215,24 @@ pub fn run(project_root: &Path, validate: bool) -> Result<Summary> {
     }
 
     Ok(Summary {
+        mode,
         project_root: project_root_abs,
         files,
-        config_warnings,
+        conflicts,
     })
 }
 
-/// Apply the rewrites in `summary` to disk. Files whose include results
-/// include any `Error` or `EvaluationFailure` outcome are **skipped**:
-/// partial writes risk leaving the file in an inconsistent state.
-/// Returns the number of files actually written.
+/// Apply the rewrites in `summary` to disk. Refuses to write anything if
+/// the summary has unresolved conflicts. Files whose include results
+/// include any `Error` or `EvaluationFailure` outcome are skipped to
+/// avoid partial writes. Returns the number of files actually written.
 pub fn apply(summary: &Summary) -> Result<usize> {
+    if !summary.conflicts.is_empty() {
+        anyhow::bail!(
+            "refusing to apply: {} rule-tree conflict(s) must be resolved first",
+            summary.conflicts.len()
+        );
+    }
     let mut written = 0;
     for f in &summary.files {
         if file_has_errors(f) {
@@ -147,7 +251,9 @@ fn file_has_errors(f: &FileResult) -> bool {
     f.include_results.iter().any(|r| {
         matches!(
             r.outcome,
-            IncludeOutcome::Error { .. } | IncludeOutcome::EvaluationFailure { .. }
+            IncludeOutcome::Error { .. }
+                | IncludeOutcome::EvaluationFailure { .. }
+                | IncludeOutcome::Conflict
         ) || r.validation_error.is_some()
     })
 }
@@ -235,71 +341,60 @@ struct FileProcessing {
     include_results: Vec<IncludeResult>,
 }
 
-fn process_file(
-    rules: &[CompiledRule<'_>],
+fn process_file<'a>(
+    rules: &'a [CompiledRule<'a>],
+    by_name: &BTreeMap<String, &'a CompiledRule<'a>>,
     relpath: &Path,
     original: &str,
     project_root: &Path,
-    validate: bool,
+    mode: CheckMode,
+    conflicts: &mut Vec<Conflict>,
 ) -> FileProcessing {
     let includes = include_line::scan(original);
     let mut include_results = Vec::with_capacity(includes.len());
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
 
     for include in includes {
-        let m = engine::find_match(rules, relpath, &include);
+        let matched = engine::match_all(rules, relpath, &include);
+        let deepest: Option<&CompiledRule<'_>> = match tree::check_chain(&matched, by_name) {
+            Ok(d) => d,
+            Err(kind) => {
+                conflicts.push(Conflict {
+                    file_relpath: relpath.to_path_buf(),
+                    include_line: include.line,
+                    include_text: format_include_text(&include),
+                    kind: ConflictKindOwned::from_kind(kind),
+                });
+                include_results.push(IncludeResult {
+                    include,
+                    outcome: IncludeOutcome::Conflict,
+                    validation_error: None,
+                });
+                continue;
+            }
+        };
+
         let (outcome, matched_rule_for_validation): (IncludeOutcome, Option<&inherit::ResolvedRule>) =
-            match m {
-                None => (IncludeOutcome::NoMatch, None),
-                Some(matched) => {
-                    let rule_name = matched.rule.rule.name.clone();
-                    let rule_ref = matched.rule.rule;
-                    match action::evaluate(&matched, &include, relpath, project_root) {
-                        Ok(Outcome::Keep) => (
-                            IncludeOutcome::Keep { rule: rule_name },
-                            Some(rule_ref),
-                        ),
-                        Ok(Outcome::Rewrite { argument_range, new_text }) => {
-                            let unchanged = original
-                                .get(argument_range.clone())
-                                .map(|s| s == new_text)
-                                .unwrap_or(false);
-                            if unchanged {
-                                (
-                                    IncludeOutcome::Keep { rule: rule_name },
-                                    Some(rule_ref),
-                                )
-                            } else {
-                                edits.push((argument_range.clone(), new_text.clone()));
-                                (
-                                    IncludeOutcome::Rewritten {
-                                        rule: rule_name,
-                                        argument_range,
-                                        new_text,
-                                    },
-                                    Some(rule_ref),
-                                )
-                            }
-                        }
-                        Ok(Outcome::Error { message }) => (
-                            IncludeOutcome::Error {
-                                rule: rule_name,
-                                message,
-                            },
-                            None,
-                        ),
-                        Err(err) => (
-                            IncludeOutcome::EvaluationFailure {
-                                rule: rule_name,
-                                message: format!("{err:#}"),
-                            },
-                            None,
-                        ),
-                    }
-                }
+            match (mode, deepest) {
+                (_, None) => (IncludeOutcome::NoMatch, None),
+                (CheckMode::Rules, Some(r)) => (
+                    IncludeOutcome::Matched {
+                        rule: r.rule.name.clone(),
+                    },
+                    None,
+                ),
+                (CheckMode::Full, Some(r)) => evaluate_with_action(
+                    r,
+                    &include,
+                    relpath,
+                    project_root,
+                    original,
+                    &mut edits,
+                ),
+                (CheckMode::Syntax, _) => unreachable!("syntax mode returns before file processing"),
             };
 
-        let validation_error = if validate {
+        let validation_error = if mode == CheckMode::Full {
             run_validation(&include, &outcome, matched_rule_for_validation, project_root)
         } else {
             None
@@ -324,6 +419,82 @@ fn process_file(
     }
 }
 
+fn evaluate_with_action<'a>(
+    rule: &'a CompiledRule<'a>,
+    include: &Include,
+    relpath: &Path,
+    project_root: &Path,
+    original: &str,
+    edits: &mut Vec<(Range<usize>, String)>,
+) -> (IncludeOutcome, Option<&'a inherit::ResolvedRule>) {
+    let captures: Vec<String> = match rule.regex.captures(&include.content) {
+        Some(c) => c
+            .iter()
+            .map(|opt| opt.map(|m| m.as_str().to_string()).unwrap_or_default())
+            .collect(),
+        None => return (IncludeOutcome::NoMatch, None),
+    };
+    let m = Match {
+        rule,
+        captures,
+    };
+    let rule_name = rule.rule.name.clone();
+    let rule_ref = rule.rule;
+    match action::evaluate(&m, include, relpath, project_root) {
+        Ok(Outcome::Keep) => (
+            IncludeOutcome::Keep { rule: rule_name },
+            Some(rule_ref),
+        ),
+        Ok(Outcome::Rewrite {
+            argument_range,
+            new_text,
+        }) => {
+            let unchanged = original
+                .get(argument_range.clone())
+                .map(|s| s == new_text)
+                .unwrap_or(false);
+            if unchanged {
+                (
+                    IncludeOutcome::Keep { rule: rule_name },
+                    Some(rule_ref),
+                )
+            } else {
+                edits.push((argument_range.clone(), new_text.clone()));
+                (
+                    IncludeOutcome::Rewritten {
+                        rule: rule_name,
+                        argument_range,
+                        new_text,
+                    },
+                    Some(rule_ref),
+                )
+            }
+        }
+        Ok(Outcome::Error { message }) => (
+            IncludeOutcome::Error {
+                rule: rule_name,
+                message,
+            },
+            None,
+        ),
+        Err(err) => (
+            IncludeOutcome::EvaluationFailure {
+                rule: rule_name,
+                message: format!("{err:#}"),
+            },
+            None,
+        ),
+    }
+}
+
+fn format_include_text(include: &Include) -> String {
+    match include.form {
+        IncludeForm::Quote => format!("\"{}\"", include.content),
+        IncludeForm::Angle => format!("<{}>", include.content),
+        IncludeForm::Macro => include.content.clone(),
+    }
+}
+
 /// Compute the include text as it will exist after the action runs, then
 /// dispatch to `validate::allowed::validate`. Returns `Some(_)` when the
 /// final include cannot resolve under the matched rule's allowed dirs.
@@ -337,7 +508,7 @@ fn run_validation(
     let (form, content): (IncludeForm, String) = match outcome {
         IncludeOutcome::Keep { .. } => (include.form, include.content.clone()),
         IncludeOutcome::Rewritten { new_text, .. } => parse_argument_text(new_text)?,
-        // NoMatch / Error / EvaluationFailure are not validated.
+        // NoMatch / Matched / Error / EvaluationFailure / Conflict are not validated.
         _ => return None,
     };
     validate_allowed::validate(form, &content, rule, project_root)
@@ -370,9 +541,13 @@ fn apply_edits(original: &str, edits: &[(Range<usize>, String)]) -> String {
 
 /// Highest-severity outcome across the whole summary, in the order the
 /// CLI exit codes describe (1 = user config error, 2 = action.error,
-/// 3 = evaluation failure / would-be-validation failure, 0 = clean).
+/// 3 = evaluation failure / validation failure / rule-tree conflict,
+/// 0 = clean).
 pub fn summary_exit_code(summary: &Summary) -> u8 {
     let mut code: u8 = 0;
+    if !summary.conflicts.is_empty() {
+        code = code.max(3);
+    }
     for f in &summary.files {
         for r in &f.include_results {
             match &r.outcome {
@@ -438,7 +613,7 @@ mod tests {
             "#,
         );
 
-        let summary = run(&root, true).unwrap();
+        let summary = run(&root, CheckMode::Full).unwrap();
         let file = &summary.files[0];
         assert_eq!(file.relpath, PathBuf::from("src/main.c"));
         let rewritten = file.rewritten.as_ref().expect("should be rewritten");
@@ -465,7 +640,7 @@ mod tests {
             action = { type = "error", message = "deprecated: ${1}" }
             "#,
         );
-        let summary = run(&root, true).unwrap();
+        let summary = run(&root, CheckMode::Full).unwrap();
         let outcomes: Vec<_> = summary
             .files
             .iter()
@@ -497,7 +672,7 @@ mod tests {
             original_include_dirs = ["include"]
             "#,
         );
-        let summary = run(&root, true).unwrap();
+        let summary = run(&root, CheckMode::Full).unwrap();
         let written = apply(&summary).unwrap();
         // only main.c is rewritten (no-op for other.c which had no includes)
         assert_eq!(written, 0); // include "foo.h" is already canonical → no edits
@@ -517,6 +692,9 @@ mod tests {
             "src/main.c",
             "#include \"old_x.h\"\n#include \"new_y.h\"\n",
         );
+        // Declare `rewrite` first so that it remains the deepest-in-chain
+        // candidate for new_y.h while `deprecate` handles old_x.h.
+        // Both extend an explicit `base` so the rule-tree invariants hold.
         touch(
             &root,
             "inclean.toml",
@@ -525,21 +703,24 @@ mod tests {
             root = "."
 
             [[rule]]
-            name = "deprecate"
+            name = "base"
             paths = ["src/**"]
             forms = ["quote"]
+
+            [[rule]]
+            name = "deprecate"
+            extends = "base"
             match = '^old_(.+)$'
             action = { type = "error", message = "deprecated" }
 
             [[rule]]
             name = "rewrite"
-            paths = ["src/**"]
-            forms = ["quote"]
+            extends = "base"
             match = '^new_(.+)$'
             action = { type = "rewrite", to = "renamed/${1}" }
             "#,
         );
-        let summary = run(&root, true).unwrap();
+        let summary = run(&root, CheckMode::Full).unwrap();
         let written = apply(&summary).unwrap();
         // The file mixes an error and a rewrite → apply skips it entirely.
         assert_eq!(written, 0);
@@ -570,10 +751,138 @@ mod tests {
             action = { type = "rewrite", to = "renamed/${include.text}" }
             "#,
         );
-        let summary = run(&root, true).unwrap();
+        let summary = run(&root, CheckMode::Full).unwrap();
         let d = render_diff(&summary);
         assert!(d.contains("--- a/src/main.c"));
         assert!(!d.contains("other.c"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn syntax_mode_skips_source_scan() {
+        let root = tmp();
+        // A source file with includes that *would* trigger conflicts, but
+        // syntax-only mode never opens it.
+        touch(&root, "src/main.c", "#include \"x.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "a"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "b"
+            paths = ["src/**"]
+            forms = ["quote"]
+            "#,
+        );
+        let summary = run(&root, CheckMode::Syntax).unwrap();
+        assert!(summary.files.is_empty());
+        assert!(summary.conflicts.is_empty());
+        assert_eq!(summary_exit_code(&summary), 0);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rules_mode_reports_cross_chain_conflict() {
+        let root = tmp();
+        touch(&root, "src/main.c", "#include \"x.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "a"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "b"
+            paths = ["src/**"]
+            forms = ["quote"]
+            "#,
+        );
+        let summary = run(&root, CheckMode::Rules).unwrap();
+        assert_eq!(summary.conflicts.len(), 1);
+        assert!(matches!(
+            &summary.conflicts[0].kind,
+            ConflictKindOwned::CrossChain { .. }
+        ));
+        assert_eq!(summary_exit_code(&summary), 3);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rules_mode_reports_child_wider_than_parent() {
+        // Child overrides `paths` to widen the parent's `src/**` to `**`,
+        // then a file at the project root triggers child but not parent.
+        let root = tmp();
+        touch(&root, "main.c", "#include \"x.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "parent"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "child"
+            extends = "parent"
+            paths = ["**"]
+            "#,
+        );
+        let summary = run(&root, CheckMode::Rules).unwrap();
+        assert_eq!(summary.conflicts.len(), 1);
+        match &summary.conflicts[0].kind {
+            ConflictKindOwned::ChildWiderThanParent { child, missing_ancestor } => {
+                assert_eq!(child, "child");
+                assert_eq!(missing_ancestor, "parent");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert_eq!(summary_exit_code(&summary), 3);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_refuses_when_conflicts_present() {
+        let root = tmp();
+        touch(&root, "src/main.c", "#include \"x.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "a"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "b"
+            paths = ["src/**"]
+            forms = ["quote"]
+            "#,
+        );
+        let summary = run(&root, CheckMode::Full).unwrap();
+        let err = apply(&summary).unwrap_err();
+        assert!(format!("{err:#}").contains("conflict"));
         fs::remove_dir_all(&root).ok();
     }
 }

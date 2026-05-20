@@ -1,23 +1,89 @@
-//! `inclean check <DIR>` — dry-run report. Reports every would-be rewrite
-//! and any errors / evaluation failures. Never writes a file.
-
-use std::path::PathBuf;
+//! `inclean check <DIR> [--syntax-only|--no-rewrites]` — three-mode
+//! read-only check. Never writes a file.
+//!
+//! - `--syntax-only`: just verify the configuration's structural
+//!   invariants (TOML syntax, [project].root sigil, extends graph, name
+//!   uniqueness, `@std.*` constants, layer-5 rejection). No source files
+//!   are opened.
+//! - `--no-rewrites`: also scan source files and enforce the rule-tree
+//!   invariants — child rules' match sets must be subsets of their
+//!   ancestors', and rules on different chains must not overlap.
+//! - default: also evaluate actions and validate post-action includes
+//!   against `allowed_include_dirs`.
 
 use anyhow::Result;
 
-use crate::pipeline::run::{self, IncludeOutcome, Summary};
+use super::CheckArgs;
+use crate::pipeline::run::{self, CheckMode, ConflictKindOwned, IncludeOutcome, Summary};
 
-pub fn run(dir: PathBuf, validate: bool) -> Result<u8> {
-    let summary = run::run(&dir, validate)?;
-    print_report(&summary);
+pub fn run(args: CheckArgs) -> Result<u8> {
+    let mode = if args.syntax_only {
+        CheckMode::Syntax
+    } else if args.no_rewrites {
+        CheckMode::Rules
+    } else {
+        CheckMode::Full
+    };
+
+    let summary = run::run(&args.dir, mode)?;
+    match summary.mode {
+        CheckMode::Syntax => print_syntax_report(&args)?,
+        CheckMode::Rules => print_rules_report(&summary),
+        CheckMode::Full => print_full_report(&summary),
+    }
     Ok(run::summary_exit_code(&summary))
 }
 
-pub(super) fn print_report(summary: &Summary) {
-    for w in &summary.config_warnings {
-        eprintln!("warning: {w}");
+/// Syntax-only mode lists the config files and rules loaded. The pipeline
+/// has already validated their structure; we re-walk discovery so we can
+/// show file paths and rule origins.
+fn print_syntax_report(args: &CheckArgs) -> Result<()> {
+    use crate::config::discover;
+    use crate::config::inherit;
+    let configs = discover::load_all_configs(&args.dir)?;
+    discover::validate_loaded(&configs, &args.dir)?;
+    let resolved = inherit::resolve(&configs)?;
+    println!(
+        "ok: loaded {} config file(s), {} rule(s)",
+        configs.len(),
+        resolved.len()
+    );
+    for cfg in &configs {
+        println!("  config: {}", cfg.path.display());
     }
+    for (name, rule) in &resolved {
+        let extends = rule
+            .extends
+            .as_deref()
+            .map(|p| format!(" extends `{p}`"))
+            .unwrap_or_default();
+        println!(
+            "  rule:   `{name}`{extends}  ({} :: #{})",
+            rule.origin.config_path.display(),
+            rule.origin.index
+        );
+    }
+    Ok(())
+}
 
+fn print_rules_report(summary: &Summary) {
+    if summary.conflicts.is_empty() {
+        let matched: usize = summary
+            .files
+            .iter()
+            .flat_map(|f| f.include_results.iter())
+            .filter(|r| matches!(r.outcome, IncludeOutcome::Matched { .. }))
+            .count();
+        println!(
+            "ok: scanned {} file(s), {matched} include(s) matched a rule, no conflicts",
+            summary.files.len()
+        );
+        return;
+    }
+    print_conflicts(summary);
+}
+
+fn print_full_report(summary: &Summary) {
     let mut interesting = 0usize;
     for file in &summary.files {
         let any = file
@@ -32,6 +98,10 @@ pub(super) fn print_report(summary: &Summary) {
         for r in &file.include_results {
             match &r.outcome {
                 IncludeOutcome::NoMatch => continue,
+                IncludeOutcome::Matched { rule } => println!(
+                    "  L{:>4} match   \"{}\"   (rule: {rule})",
+                    r.include.line, r.include.content
+                ),
                 IncludeOutcome::Keep { rule } => println!(
                     "  L{:>4} keep    \"{}\"   (rule: {rule})",
                     r.include.line, r.include.content
@@ -50,6 +120,10 @@ pub(super) fn print_report(summary: &Summary) {
                     "  L{:>4} fail    \"{}\"   (rule: {rule}): {message}",
                     r.include.line, r.include.content
                 ),
+                IncludeOutcome::Conflict => eprintln!(
+                    "  L{:>4} conflict \"{}\"   (see conflicts block)",
+                    r.include.line, r.include.content
+                ),
             }
             if let Some(msg) = &r.validation_error {
                 eprintln!(
@@ -59,7 +133,37 @@ pub(super) fn print_report(summary: &Summary) {
             }
         }
     }
-    if interesting == 0 {
+    if interesting == 0 && summary.conflicts.is_empty() {
         println!("no changes proposed");
+    }
+    if !summary.conflicts.is_empty() {
+        print_conflicts(summary);
+    }
+}
+
+fn print_conflicts(summary: &Summary) {
+    eprintln!();
+    eprintln!(
+        "{} rule-tree conflict(s) detected:",
+        summary.conflicts.len()
+    );
+    for c in &summary.conflicts {
+        match &c.kind {
+            ConflictKindOwned::ChildWiderThanParent {
+                child,
+                missing_ancestor,
+            } => eprintln!(
+                "  {}:{} {}  rule `{child}` matched but its ancestor `{missing_ancestor}` did not",
+                c.file_relpath.display(),
+                c.include_line,
+                c.include_text
+            ),
+            ConflictKindOwned::CrossChain { a, b } => eprintln!(
+                "  {}:{} {}  rules `{a}` and `{b}` both match but are not on the same extends chain",
+                c.file_relpath.display(),
+                c.include_line,
+                c.include_text
+            ),
+        }
     }
 }

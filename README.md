@@ -16,30 +16,37 @@ allowed directories.
 
 ## Status
 
-Alpha. M1 + M2 of the milestone plan are complete: configuration loading,
-rule inheritance, the five-layer matching engine, `auto` / `rewrite` /
-`keep` / `error` actions with `${...}` placeholder substitution,
-post-action `allowed_include_dirs` validation, all six CLI subcommands,
-and end-to-end integration tests.
+Alpha. M1 + M2 + M3 of the milestone plan are complete: configuration
+loading, rule inheritance, the five-layer matching engine, `auto` /
+`rewrite` / `keep` / `error` actions with `${...}` placeholder
+substitution, post-action `allowed_include_dirs` validation, rule-tree
+conflict enforcement (child ⊆ parent + cross-chain disjoint), and the
+five CLI subcommands.
 
 See `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` for the
-design plan and remaining work (M3: layer-5 resolved-file matching,
+design plan and remaining work (M4: layer-5 resolved-file matching,
 parallelism, perf).
 
-## Usage (planned)
+## Usage
 
 Every command except `explain` takes a `[DIR]` positional argument — the
 directory that contains the project's root `inclean.toml`. Defaults to `.`.
 
 ```sh
-inclean init     [DIR]         # generate a starter inclean.toml in DIR
-inclean validate [DIR]         # verify config syntax / structural invariants only
-inclean check    [DIR]         # report rewrites + source validation errors (CI friendly)
-inclean diff     [DIR]         # show unified diff of would-be rewrites
-inclean apply    [DIR]         # apply rewrites in place
-inclean explain  FILE [INCLUDE]
-                               # trace which rule matches an include
+inclean init  [DIR]               # generate a starter inclean.toml in DIR
+inclean check [DIR] [MODE]        # three-mode read-only check (see below)
+inclean diff  [DIR]                # show unified diff of would-be rewrites
+inclean apply [DIR]                # apply rewrites in place
+inclean explain FILE [INCLUDE]     # trace which rule matches an include
 ```
+
+`inclean check` has three modes (mutually-exclusive flags):
+
+| Mode | Flag | What it does |
+|---|---|---|
+| Syntax | `--syntax-only` | Just config-level structural checks (TOML syntax, `[project]` sigil, `extends` graph, rule-name uniqueness, `@std.*` constants, template syntax). No source file is opened. |
+| Rules | `--no-rewrites` | Above + scan source, enforce **rule-tree invariants**: every child rule's match set must be a subset of its ancestors', and rules on different chains must not overlap on any single `#include`. No action evaluation. |
+| Full | _(default)_ | Above + evaluate actions and validate post-action includes against `allowed_include_dirs`. |
 
 ## Configuration
 

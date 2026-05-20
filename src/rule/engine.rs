@@ -105,6 +105,22 @@ pub fn find_match<'a>(
     None
 }
 
+/// All rules whose five layers match `include` within `file_relpath`, in
+/// trial order. Unlike [`find_match`], this does not short-circuit — it
+/// returns every candidate so callers can audit rule-tree invariants
+/// (child ⊆ parent, cross-chain disjoint) over the project's actual
+/// sources.
+pub fn match_all<'a>(
+    rules: &'a [CompiledRule<'a>],
+    file_relpath: &Path,
+    include: &Include,
+) -> Vec<&'a CompiledRule<'a>> {
+    ordered_eligible(rules, file_relpath)
+        .into_iter()
+        .filter(|r| try_match(r, file_relpath, include).is_some())
+        .collect()
+}
+
 /// Return the rules in trial order for `file_relpath`: configs that are
 /// ancestors of the file's directory, deepest first; within each config,
 /// rules in declaration order. Stable for ties.
@@ -531,6 +547,56 @@ mod tests {
         let root = PathBuf::from("/proj");
         let err = CompiledRule::new(rules.values().next().unwrap(), &root).unwrap_err();
         assert!(format!("{err:#}").contains("layer 4"));
+    }
+
+    #[test]
+    fn match_all_returns_every_passing_rule_in_trial_order() {
+        // Two rules in the same config both match the same include. find_match
+        // returns just "specific" (declared first); match_all returns both,
+        // in declaration order.
+        let configs = vec![cfg_at(
+            "/proj/inclean.toml",
+            r#"
+            [[rule]]
+            name = "specific"
+            paths = ["src/**"]
+            forms = ["quote"]
+            match = '^old_(.+)$'
+
+            [[rule]]
+            name = "fallback"
+            paths = ["src/**"]
+            forms = ["quote"]
+            "#,
+        )];
+        let rules = resolve(&configs).unwrap();
+        let compiled = compile(&rules);
+        let all = match_all(&compiled, Path::new("src/main.c"), &quote_inc("old_x.h"));
+        let names: Vec<_> = all.iter().map(|r| r.rule.name.as_str()).collect();
+        assert_eq!(names, vec!["specific", "fallback"]);
+    }
+
+    #[test]
+    fn match_all_skips_rules_that_fail_any_layer() {
+        let configs = vec![cfg_at(
+            "/proj/inclean.toml",
+            r#"
+            [[rule]]
+            name = "quote-only"
+            paths = ["src/**"]
+            forms = ["quote"]
+
+            [[rule]]
+            name = "angle-only"
+            paths = ["src/**"]
+            forms = ["angle"]
+            "#,
+        )];
+        let rules = resolve(&configs).unwrap();
+        let compiled = compile(&rules);
+        let all = match_all(&compiled, Path::new("src/main.c"), &quote_inc("x.h"));
+        let names: Vec<_> = all.iter().map(|r| r.rule.name.as_str()).collect();
+        assert_eq!(names, vec!["quote-only"]);
     }
 
     #[test]

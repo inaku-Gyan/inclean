@@ -29,11 +29,15 @@ the code shape:
   3. `forms` — set of `"quote"` / `"angle"` / `"macro"`; `"macro"` always errors in v1
   4. `match` — regex on the stripped include content (no quotes/angles)
   5. `match_resolved` — v1 unsupported; error if configured
-- **Inheritance semantics**: runtime AND-combination. The subset invariant
-  ("child's match set ⊆ parent's") is enforced by evaluating the merged
-  rule. Static lint catches obvious widening on layers 1/2/3; layer 4
-  regex is not statically checked.
-- **First-match-wins**, with closer (deeper) configs tried first.
+- **Inheritance semantics**: runtime AND-combination merges fields; the
+  rule-tree invariants ("child's match set ⊆ parent's" + "cross-chain
+  disjoint") are enforced at source-scan time by
+  `tree::check_chain(match_all(...))`. There is no static lint module —
+  the source-level check supersedes it (also covers layer-4 regex).
+- **Mode-dependent winner**: under `CheckMode::Full`, the action runs on
+  the deepest rule in the matched chain (the leaf), not the first-by-
+  declaration. This makes apply behavior independent of rule declaration
+  order.
 - **Action default**: `{ type = "auto", relative_to = "allowed", form = "quote" }`.
 - **`@std.*` built-in constants** (e.g. `@std.cpp.extensions`, `@std.cpp17.system_headers`)
   spread in any string-list field via `@name` syntax.
@@ -42,15 +46,15 @@ the code shape:
 
 | Module | Responsibility |
 |---|---|
-| `cli/` | clap subcommands: `init`, `validate`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `validate` is the config-only verifier (parsing + structural invariants + extends + constants); `check` is the source-level dry-run. |
+| `cli/` | clap subcommands: `init`, `check`, `diff`, `apply`, `explain`. Every command except `explain` takes a positional `[DIR]` (default `.`) pointing at the directory that contains the root `inclean.toml`. `check` is three-mode (`--syntax-only` / `--no-rewrites` / default = full). `diff` and `apply` always run full mode. |
 | `config/schema.rs` | serde structs for TOML deserialization |
 | `config/discover.rs` | walk the project tree, find all `inclean.toml`s |
 | `config/inherit.rs` | resolve `extends`, merge fields, detect cycles |
 | `config/constants.rs` | `@std.*` definitions and list-spread expansion |
-| `config/lint.rs` | static lint on layer 1/2/3 widening |
 | `lex/include_line.rs` | recognize `#include` directives, skip comments/strings/continuations |
 | `rule/glob.rs` | layer 1 + layer 2 glob matching |
-| `rule/engine.rs` | five-layer matching loop + first-match-wins |
+| `rule/engine.rs` | five-layer matching: `find_match` (first-match-wins, kept for tests) and `match_all` (every candidate rule, used by mode `Rules` and above) |
+| `rule/tree.rs` | rule-tree invariants over the `extends` forest. `check_chain(matched, by_name)` either returns the deepest rule in `matched` (the leaf of a single ancestor chain) or a `ConflictKind` describing the violation |
 | `rule/action.rs` | evaluate `auto` / `rewrite` / `keep` / `error` + `${...}` template |
 | `index/header_index.rs` | basename / relpath → physical path index from `original_include_dirs` |
 | `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs`. Quote and angle includes both validated (a rule's `forms` decides which forms it claims); macro skipped. Empty `allowed_include_dirs` = "this rule does not participate in validation" (the idiom for allow-listing e.g. system headers). |
@@ -58,13 +62,27 @@ the code shape:
 
 ## Pipeline data flow
 
-`pipeline::run::run(project_root, validate: bool) -> Summary` is the
-single entry point. Per `IncludeResult` it carries the action `outcome`
-(NoMatch / Keep / Rewritten / Error / EvaluationFailure) and an optional
-`validation_error: Option<String>`. `apply` skips any file that has an
-error / evaluation failure / validation_error so partial writes never
-happen. `summary_exit_code` returns `0`, `2` (action.error), or `3`
-(EvaluationFailure or validation failure).
+`pipeline::run::run(project_root, mode: CheckMode) -> Summary` is the
+single entry point with three modes:
+
+* `CheckMode::Syntax` — load and validate configs (no source files
+  opened). Returns an empty `Summary`.
+* `CheckMode::Rules` — `Syntax` + scan source. For each `#include`,
+  `engine::match_all` produces every candidate rule and `tree::check_chain`
+  asserts the rule-tree invariants. Conflicts land in `Summary.conflicts`.
+  No action evaluation, no `allowed_include_dirs` validation.
+* `CheckMode::Full` — `Rules` + evaluate the **deepest** rule in the
+  matched chain's action (NOT the first-match-by-declaration; the chain
+  invariants make this well-defined and order-independent) + run
+  `allowed_include_dirs` validation.
+
+`IncludeOutcome` variants: `NoMatch`, `Matched` (Rules mode), `Keep`,
+`Rewritten`, `Error`, `EvaluationFailure`, `Conflict`. `apply` refuses
+to write anything when `Summary.conflicts` is non-empty, and skips any
+file with an `Error` / `EvaluationFailure` / `Conflict` outcome or a
+non-None `validation_error`. `summary_exit_code` returns `0`, `2`
+(action.error), or `3` (any of: EvaluationFailure, validation failure,
+rule-tree conflict).
 
 ## Dev workflow
 
