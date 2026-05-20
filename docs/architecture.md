@@ -22,26 +22,26 @@ rule, index, validate)`. Nothing in `config`/`lex`/`rule`/`index`/
 
 ## Module map
 
-| File | Responsibility |
-|---|---|
-| [src/cli/mod.rs](../src/cli/mod.rs) | clap `Cli`/`Command` parser; routes to per-subcommand handlers; owns the `CheckLevel` value-enum surfaced as `-l/--level`. |
-| [src/cli/init.rs](../src/cli/init.rs) | Generates a documented starter `inclean.toml`; refuses to overwrite. |
-| [src/cli/check.rs](../src/cli/check.rs) | Calls `pipeline::run` in the requested mode, prints per-level reports (config/rules/full). |
-| [src/cli/diff.rs](../src/cli/diff.rs) | Calls `pipeline::run` in Full mode and renders a unified diff via `pipeline::render_diff`. |
-| [src/cli/apply.rs](../src/cli/apply.rs) | Calls `pipeline::run` in Full mode, then writes rewritten files via `pipeline::apply` (refuses on conflicts; skips files with errors). |
-| [src/cli/explain.rs](../src/cli/explain.rs) | For a single source file (and optional include), traces every rule's five-layer trial outcome — debugging aid. |
-| [src/config/schema.rs](../src/config/schema.rs) | serde structs (`RawConfig`, `RawRule`, `RawAction`, `IncludeForm`, `OutputForm`); pure deserialization, no policy. |
-| [src/config/discover.rs](../src/config/discover.rs) | Walks the project tree from the root, loads every `inclean.toml`, enforces "root config declares `[project].root`; sub-configs must not". |
-| [src/config/inherit.rs](../src/config/inherit.rs) | Resolves `extends` chains, merges inherited fields, applies defaults, expands `@std.*` constants, detects cycles. Produces `ResolvedRule`. |
-| [src/config/constants.rs](../src/config/constants.rs) | `@std.*` definitions and the `expand_list` / `substitute_in_string` expansion logic, including the `_or` regex-alternation suffix. |
-| [src/lex/include_line.rs](../src/lex/include_line.rs) | Scans source for `#include` directives, skipping comments, string literals, and line continuations. Returns `Include { form, content, line, argument_range }`. Does not evaluate preprocessor conditionals. |
-| [src/rule/glob.rs](../src/rule/glob.rs) | Layer 1 (`paths`) + layer 2 (`extensions`) compiled matcher. Uses `globset` with literal `/` (so `*` does not cross separators). |
-| [src/rule/engine.rs](../src/rule/engine.rs) | The five-layer matcher. `find_match` (first-match-wins, kept for tests) and `match_all` (returns `MatchAllOutcome { matched, ambiguities }`, used by `rules` level and above). Each `CandidateMatch` carries its captures and, when layer 5 ran, the resolved path. |
-| [src/rule/tree.rs](../src/rule/tree.rs) | Rule-tree invariants over the `extends` forest. `check_chain(matched, by_name)` returns either the deepest rule in the matched set (the leaf of a single ancestor chain) or a `ConflictKind` describing a `ChildWiderThanParent` or `CrossChain` violation. |
-| [src/rule/action.rs](../src/rule/action.rs) | Evaluates `auto` / `rewrite` / `keep` / `error` and substitutes `${...}` placeholders (captures, file paths, resolved-file paths). `auto` requires the resolved file to live under the matched rule's `allowed_include_dirs`. |
-| [src/index/header_index.rs](../src/index/header_index.rs) | Resolves `#include` text against a list of search directories (preprocessor-style: `<dir>/<text>`). `resolve_in_dirs_unique` surfaces ambiguity when multiple dirs contain the same file. |
-| [src/validate/allowed.rs](../src/validate/allowed.rs) | Post-action check that the (possibly rewritten) include resolves under the matched rule's `allowed_include_dirs`. Empty list = skip (the system-header idiom). |
-| [src/pipeline/run.rs](../src/pipeline/run.rs) | Top-level orchestrator. Owns `CheckMode`, `Summary`, `FileResult`, `IncludeOutcome`, `Conflict`. Also exports `apply`, `render_diff`, `summary_exit_code`. |
+| File                                                      | Responsibility                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [src/cli/mod.rs](../src/cli/mod.rs)                       | clap `Cli`/`Command` parser; routes to per-subcommand handlers; owns the `CheckLevel` value-enum surfaced as `-l/--level`.                                                                                                                                          |
+| [src/cli/init.rs](../src/cli/init.rs)                     | Generates a documented starter `inclean.toml`; refuses to overwrite.                                                                                                                                                                                                |
+| [src/cli/check.rs](../src/cli/check.rs)                   | Calls `pipeline::run` in the requested mode, prints per-level reports (config/rules/full).                                                                                                                                                                          |
+| [src/cli/diff.rs](../src/cli/diff.rs)                     | Calls `pipeline::run` in Full mode and renders a unified diff via `pipeline::render_diff`.                                                                                                                                                                          |
+| [src/cli/apply.rs](../src/cli/apply.rs)                   | Calls `pipeline::run` in Full mode, then writes rewritten files via `pipeline::apply` (refuses on conflicts; skips files with errors).                                                                                                                              |
+| [src/cli/explain.rs](../src/cli/explain.rs)               | For a single source file (and optional include), traces every rule's five-layer trial outcome — debugging aid.                                                                                                                                                      |
+| [src/config/schema.rs](../src/config/schema.rs)           | serde structs (`RawConfig`, `RawRule`, `RawAction`, `IncludeForm`, `OutputForm`); pure deserialization, no policy.                                                                                                                                                  |
+| [src/config/discover.rs](../src/config/discover.rs)       | Walks the project tree from the root, loads every `inclean.toml`, enforces "root config declares `[project].root`; sub-configs must not".                                                                                                                           |
+| [src/config/inherit.rs](../src/config/inherit.rs)         | Resolves `extends` chains, merges inherited fields, applies defaults, expands `@std.*` constants, detects cycles. Produces `ResolvedRule`.                                                                                                                          |
+| [src/config/constants.rs](../src/config/constants.rs)     | `@std.*` definitions and the `expand_list` / `substitute_in_string` expansion logic, including the `_or` regex-alternation suffix.                                                                                                                                  |
+| [src/lex/include_line.rs](../src/lex/include_line.rs)     | Scans source for `#include` directives, skipping comments, string literals, and line continuations. Returns `Include { form, content, line, argument_range }`. Does not evaluate preprocessor conditionals.                                                         |
+| [src/rule/glob.rs](../src/rule/glob.rs)                   | Layer 1 (`paths`) + layer 2 (`extensions`) compiled matcher. Uses `globset` with literal `/` (so `*` does not cross separators).                                                                                                                                    |
+| [src/rule/engine.rs](../src/rule/engine.rs)               | The five-layer matcher. `find_match` (first-match-wins, kept for tests) and `match_all` (returns `MatchAllOutcome { matched, ambiguities }`, used by `rules` level and above). Each `CandidateMatch` carries its captures and, when layer 5 ran, the resolved path. |
+| [src/rule/tree.rs](../src/rule/tree.rs)                   | Rule-tree invariants over the `extends` forest. `check_chain(matched, by_name)` returns either the deepest rule in the matched set (the leaf of a single ancestor chain) or a `ConflictKind` describing a `ChildWiderThanParent` or `CrossChain` violation.         |
+| [src/rule/action.rs](../src/rule/action.rs)               | Evaluates `auto` / `rewrite` / `keep` / `error` and substitutes `${...}` placeholders (captures, file paths, resolved-file paths). `auto` requires the resolved file to live under the matched rule's `allowed_include_dirs`.                                       |
+| [src/index/header_index.rs](../src/index/header_index.rs) | Resolves `#include` text against a list of search directories (preprocessor-style: `<dir>/<text>`). `resolve_in_dirs_unique` surfaces ambiguity when multiple dirs contain the same file.                                                                           |
+| [src/validate/allowed.rs](../src/validate/allowed.rs)     | Post-action check that the (possibly rewritten) include resolves under the matched rule's `allowed_include_dirs`. Empty list = skip (the system-header idiom).                                                                                                      |
+| [src/pipeline/run.rs](../src/pipeline/run.rs)             | Top-level orchestrator. Owns `CheckMode`, `Summary`, `FileResult`, `IncludeOutcome`, `Conflict`. Also exports `apply`, `render_diff`, `summary_exit_code`.                                                                                                          |
 
 ## Pipeline phases
 
@@ -61,7 +61,7 @@ processes the project.
    into `CompiledRule`s. Build the by-name index for tree lookups.
 5. **Walk source files.** `ignore::WalkBuilder` honors `.gitignore`
    and skips `.git/`, `target/`, `node_modules/`. The walker filters
-   to files that satisfy *some* rule's path/extension predicate so
+   to files that satisfy _some_ rule's path/extension predicate so
    we don't read files no rule could ever match.
 6. **Process per file, in parallel.** Candidate paths are handed to
    `rayon::par_iter`. Each file's task is pure:
@@ -128,7 +128,7 @@ All exported from [src/pipeline/run.rs](../src/pipeline/run.rs).
   This is how rules covering system headers (`forms = ["angle"]`)
   opt out cleanly.
 - **Layer 5 is opt-in.** Rules without `match_resolved` skip the
-  resolved-file stage entirely. When layer 5 *does* run and the
+  resolved-file stage entirely. When layer 5 _does_ run and the
   include resolves under more than one `original_include_dirs`,
   the outcome is `Layer5Ambiguous` (exit 3) — the user is expected to
   narrow their `-I` list.

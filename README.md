@@ -66,13 +66,13 @@ A source line `#include "foo.h"` is rewritten to
 
 ## Commands
 
-| Command | Purpose |
-|---|---|
-| `inclean init [DIR]` | Generate a documented starter `inclean.toml`. Refuses to overwrite. |
-| `inclean check [DIR] [-l/--level LEVEL]` | Read-only check at one of three depths. Never writes. |
-| `inclean diff [DIR]` | Print a unified diff of every proposed rewrite. |
-| `inclean apply [DIR]` | Apply rewrites in place. Refuses if any rule-tree conflict is present. |
-| `inclean explain FILE [INCLUDE]` | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
+| Command                                  | Purpose                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| `inclean init [DIR]`                     | Generate a documented starter `inclean.toml`. Refuses to overwrite.           |
+| `inclean check [DIR] [-l/--level LEVEL]` | Read-only check at one of three depths. Never writes.                         |
+| `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
+| `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
+| `inclean explain FILE [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
 
 `inclean check` runs at one of three levels (`-l config | rules |
 full`, default `full`). Each level is a strict superset of the

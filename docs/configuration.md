@@ -8,15 +8,26 @@ behavior. For an end-to-end walkthrough, see the
 
 ## Table of contents
 
-- [File layout](#file-layout)
-- [The rule tree](#the-rule-tree)
-- [The five matching layers](#the-five-matching-layers)
-- [Actions](#actions)
-- [`${...}` placeholders](#-placeholders)
-- [`@std.*` built-in constants](#std-built-in-constants)
-- [`allowed_include_dirs` semantics](#allowed_include_dirs-semantics)
-- [`inclean check` levels](#inclean-check-levels)
-- [Exit codes](#exit-codes)
+- [Configuration reference](#configuration-reference)
+  - [Table of contents](#table-of-contents)
+  - [File layout](#file-layout)
+  - [The rule tree](#the-rule-tree)
+  - [The five matching layers](#the-five-matching-layers)
+    - [Layer 1 — `paths` (file path glob)](#layer-1--paths-file-path-glob)
+    - [Layer 2 — `extensions` (file extension)](#layer-2--extensions-file-extension)
+    - [Layer 3 — `forms` (include syntax)](#layer-3--forms-include-syntax)
+    - [Layer 4 — `match` (regex on include content)](#layer-4--match-regex-on-include-content)
+    - [Layer 5 — `match_resolved` (resolved physical file)](#layer-5--match_resolved-resolved-physical-file)
+  - [Actions](#actions)
+    - [`auto`](#auto)
+    - [`rewrite`](#rewrite)
+    - [`keep`](#keep)
+    - [`error`](#error)
+  - [`${...}` placeholders](#-placeholders)
+  - [`@std.*` built-in constants](#std-built-in-constants)
+  - [`allowed_include_dirs` semantics](#allowed_include_dirs-semantics)
+  - [`inclean check` levels](#inclean-check-levels)
+  - [Exit codes](#exit-codes)
 
 ## File layout
 
@@ -64,7 +75,7 @@ field, which names a parent rule. A few invariants:
 When a rule field is unspecified, the value is inherited from the
 parent (recursively up the chain). When both child and parent specify a
 field, the rule semantics are **AND-combined at match time**: an
-include must satisfy *both* the child's and the parent's predicate.
+include must satisfy _both_ the child's and the parent's predicate.
 This is enforced by the rule-tree invariants:
 
 - **Child ⊆ Parent.** If a child rule matches an include, every
@@ -111,10 +122,10 @@ extensions = ["@std.cpp_extensions"]
 
 Restricts the rule to one or more `#include` forms:
 
-| Value | Matches |
-|---|---|
-| `"quote"` | `#include "foo.h"` |
-| `"angle"` | `#include <foo.h>` |
+| Value     | Matches                                |
+| --------- | -------------------------------------- |
+| `"quote"` | `#include "foo.h"`                     |
+| `"angle"` | `#include <foo.h>`                     |
 | `"macro"` | `#include FOO_HEADER` (macro-expanded) |
 
 `"macro"` may appear in a rule and is matched, but action evaluation
@@ -227,18 +238,18 @@ exit 3).
 
 Available in `rewrite.to` and `error.message`:
 
-| Placeholder | Meaning |
-|---|---|
-| `${0}` | The full stripped include text |
-| `${1}`, `${2}`, … | Capture groups from layer-4 `match` |
-| `${file.path}` | Source file path (project-root-relative) |
-| `${file.relpath}` | Same as `${file.path}` |
-| `${file.dir}` | Directory of the source file |
-| `${resolved.path}` | Resolved file's project-root-relative path *(layer 5 only)* |
-| `${resolved.relpath}` | Same as `${resolved.path}` |
-| `${resolved.dir}` | Directory of the resolved file |
-| `${resolved.basename}` | Basename of the resolved file |
-| `$$` | Literal `$` |
+| Placeholder            | Meaning                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `${0}`                 | The full stripped include text                              |
+| `${1}`, `${2}`, …      | Capture groups from layer-4 `match`                         |
+| `${file.path}`         | Source file path (project-root-relative)                    |
+| `${file.relpath}`      | Same as `${file.path}`                                      |
+| `${file.dir}`          | Directory of the source file                                |
+| `${resolved.path}`     | Resolved file's project-root-relative path _(layer 5 only)_ |
+| `${resolved.relpath}`  | Same as `${resolved.path}`                                  |
+| `${resolved.dir}`      | Directory of the resolved file                              |
+| `${resolved.basename}` | Basename of the resolved file                               |
+| `$$`                   | Literal `$`                                                 |
 
 `${resolved.*}` placeholders require layer 5 to have run; using them
 in a rule without `match_resolved` is an error.
@@ -303,22 +314,22 @@ is validated by checking that it resolves under one of the rule's
 at one of three levels. Each level is a strict superset of the
 previous.
 
-| Level | What it does | Failures contribute exit |
-|---|---|---|
-| `config` | Just config-level structural checks (TOML syntax, `[project]` sigil rule, `extends` graph, name uniqueness, `@std.*` constants, action template syntax, layer-5 rejection). No source file is opened. | 1 (config error) |
-| `rules` | `config` + scans every source file. For each `#include`, computes the full set of matching rules and asserts the rule-tree invariants (`child ⊆ parent`, cross-chain disjoint). No action evaluation. | 3 (rule-tree conflict, layer-5 ambiguity) |
-| `full` _(default)_ | `rules` + evaluates the matched rule's action on each include and validates the post-action text against `allowed_include_dirs`. | 2 (`action.error`), 3 (eval failure, validation, conflict, ambiguity) |
+| Level              | What it does                                                                                                                                                                                          | Failures contribute exit                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `config`           | Just config-level structural checks (TOML syntax, `[project]` sigil rule, `extends` graph, name uniqueness, `@std.*` constants, action template syntax, layer-5 rejection). No source file is opened. | 1 (config error)                                                      |
+| `rules`            | `config` + scans every source file. For each `#include`, computes the full set of matching rules and asserts the rule-tree invariants (`child ⊆ parent`, cross-chain disjoint). No action evaluation. | 3 (rule-tree conflict, layer-5 ambiguity)                             |
+| `full` _(default)_ | `rules` + evaluates the matched rule's action on each include and validates the post-action text against `allowed_include_dirs`.                                                                      | 2 (`action.error`), 3 (eval failure, validation, conflict, ambiguity) |
 
 `inclean diff` and `inclean apply` always run at `full` level.
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | Clean run. |
-| 1 | Infrastructure/config error (parse failure, missing root, invalid regex). |
-| 2 | At least one include matched an `action = { type = "error", … }` rule. |
-| 3 | At least one of: rule-tree conflict, layer-5 ambiguity, action evaluation failure (e.g. `auto` could not resolve under `allowed_include_dirs`), post-action `allowed_include_dirs` validation failure. |
+| Code | Meaning                                                                                                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Clean run.                                                                                                                                                                                             |
+| 1    | Infrastructure/config error (parse failure, missing root, invalid regex).                                                                                                                              |
+| 2    | At least one include matched an `action = { type = "error", … }` rule.                                                                                                                                 |
+| 3    | At least one of: rule-tree conflict, layer-5 ambiguity, action evaluation failure (e.g. `auto` could not resolve under `allowed_include_dirs`), post-action `allowed_include_dirs` validation failure. |
 
 `inclean apply` additionally refuses to write any file when conflicts
 or ambiguities are present, and skips writing individual files whose

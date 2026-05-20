@@ -65,7 +65,7 @@ module-by-module map. In short:
   rule name and the source path so the user can locate the problem.
 - **CLI is thin.** `src/cli/*.rs` files parse flags and call
   `pipeline::run`. Don't put pipeline logic in CLI handlers.
-- **Comments.** Default to none. Add one when the *why* is non-
+- **Comments.** Default to none. Add one when the _why_ is non-
   obvious: a hidden constraint, a subtle invariant, a workaround. Do
   not narrate what code already says.
 - **No `unsafe`.** There is none today; keep it that way.
