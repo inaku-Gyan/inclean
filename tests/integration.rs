@@ -155,14 +155,17 @@ fn validation_flags_unresolvable_keep_includes() {
 }
 
 #[test]
-fn angle_includes_are_skipped_unless_pattern_matches() {
+fn angle_includes_validate_against_allowed_dirs() {
+    // Angle includes are validated by the same rule that matched them. A
+    // rule that wants to allow-list system headers does so by selecting
+    // them via `match` and setting `allowed_include_dirs = []`.
     let root = tmp();
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::create_dir_all(root.join("include")).unwrap();
-    // No header exists under include/ for either include.
+    fs::create_dir_all(root.join("include/mylib")).unwrap();
+    fs::write(root.join("include/mylib/foo.h"), "").unwrap();
     fs::write(
         root.join("src/main.c"),
-        "#include <stdio.h>\n#include <mylib/foo.h>\n",
+        "#include <stdio.h>\n#include <mylib/foo.h>\n#include <mylib/missing.h>\n",
     )
     .unwrap();
     fs::write(
@@ -171,12 +174,21 @@ fn angle_includes_are_skipped_unless_pattern_matches() {
         [project]
         root = "."
 
+        # Allow-list stdio.h (and friends) — empty allowed_include_dirs opts out.
         [[rule]]
-        name = "base"
+        name = "stdlib"
+        paths = ["src/**"]
+        forms = ["angle"]
+        match = '^stdio\.h$'
+        allowed_include_dirs = []
+        action = { type = "keep" }
+
+        # All other angle includes must resolve under include/.
+        [[rule]]
+        name = "mylib-angle"
         paths = ["src/**"]
         forms = ["angle"]
         allowed_include_dirs = ["include"]
-        validate_angle_patterns = ["^mylib/"]
         action = { type = "keep" }
         "#,
     )
@@ -184,10 +196,12 @@ fn angle_includes_are_skipped_unless_pattern_matches() {
 
     let summary = pipe::run(&root, true).unwrap();
     let results = &summary.files[0].include_results;
-    // <stdio.h> doesn't match validate_angle_patterns → skipped.
+    // <stdio.h> matched the stdlib rule with empty allowed_include_dirs → skipped.
     assert!(results[0].validation_error.is_none());
-    // <mylib/foo.h> matches the pattern but the file doesn't exist → fails.
-    assert!(results[1].validation_error.is_some());
+    // <mylib/foo.h> resolves → passes.
+    assert!(results[1].validation_error.is_none());
+    // <mylib/missing.h> does not resolve → fails.
+    assert!(results[2].validation_error.is_some());
 
     fs::remove_dir_all(&root).ok();
 }

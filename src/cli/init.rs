@@ -73,11 +73,6 @@ name = "base"
 # candidate is <dir>/<include text>).
 # original_include_dirs = ["src", "src/internal"]
 
-# Validate angle includes (e.g. <mylib/foo.h>) against allowed_include_dirs
-# only when the include content matches one of these regexes. System
-# headers like <stdio.h> are skipped by default.
-# validate_angle_patterns = ["^mylib/"]
-
 # action defaults to { type = "auto", relative_to = "allowed", form = "quote" }
 #
 # Other action shapes:

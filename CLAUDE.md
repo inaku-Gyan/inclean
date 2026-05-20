@@ -22,8 +22,7 @@ the code shape:
   `name` is globally unique across all configs in the project. There is
   **no `[defaults]` block** — users write a `base` rule and others extend it.
 - **`[project]` block is minimal**: only `root`. Everything else
-  (`allowed_include_dirs`, `original_include_dirs`, `validate_angle_patterns`)
-  lives on rules.
+  (`allowed_include_dirs`, `original_include_dirs`) lives on rules.
 - **Five-layer matching** (each layer has a default if unspecified):
   1. `paths` — gitignore-style file globs
   2. `extensions` — file extension filter (skipped if layer 1 is an exact path)
@@ -54,7 +53,7 @@ the code shape:
 | `rule/engine.rs` | five-layer matching loop + first-match-wins |
 | `rule/action.rs` | evaluate `auto` / `rewrite` / `keep` / `error` + `${...}` template |
 | `index/header_index.rs` | basename / relpath → physical path index from `original_include_dirs` |
-| `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs`. Quote includes always; angle includes only when one of the rule's `validate_angle_patterns` regexes matches; macro includes skipped. Empty `allowed_include_dirs` = "this rule does not participate in validation". |
+| `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs`. Quote and angle includes both validated (a rule's `forms` decides which forms it claims); macro skipped. Empty `allowed_include_dirs` = "this rule does not participate in validation" (the idiom for allow-listing e.g. system headers). |
 | `pipeline/run.rs` | top-level orchestration |
 
 ## Pipeline data flow

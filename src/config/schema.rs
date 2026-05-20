@@ -64,7 +64,6 @@ pub struct RawRule {
     // ---- Non-matching configuration --------------------------------------
     pub allowed_include_dirs: Option<Vec<String>>,
     pub original_include_dirs: Option<Vec<String>>,
-    pub validate_angle_patterns: Option<Vec<String>>,
 
     pub action: Option<RawAction>,
 }

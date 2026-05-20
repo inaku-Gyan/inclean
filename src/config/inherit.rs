@@ -49,7 +49,6 @@ pub struct ResolvedRule {
     // Non-matching fields.
     pub allowed_include_dirs: Vec<String>,
     pub original_include_dirs: Vec<String>,
-    pub validate_angle_patterns: Vec<String>,
     pub action: ResolvedAction,
 }
 
@@ -212,23 +211,6 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     )
     .and_then(|v| with_ctx(constants::expand_list(&v), &ctx, "original_include_dirs"))?;
 
-    let validate_angle_patterns = match raw.validate_angle_patterns.as_deref() {
-        Some(v) => {
-            let mut out: Vec<String> = Vec::with_capacity(v.len());
-            for pat in v {
-                out.push(with_ctx(
-                    constants::substitute_in_string(pat),
-                    &ctx,
-                    "validate_angle_patterns",
-                )?);
-            }
-            out
-        }
-        None => parent
-            .map(|p| p.validate_angle_patterns.clone())
-            .unwrap_or_default(),
-    };
-
     let action = match raw.action.as_ref() {
         Some(a) => resolve_action(a, &ctx)?,
         None => parent
@@ -256,7 +238,6 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         match_regex,
         allowed_include_dirs,
         original_include_dirs,
-        validate_angle_patterns,
         action,
     })
 }

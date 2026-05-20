@@ -4,16 +4,19 @@
 //!
 //! Policy:
 //! - The matched rule's `allowed_include_dirs` is empty → skip (explicit
-//!   "this rule does not participate in validation").
+//!   "this rule does not participate in validation"; the idiom for
+//!   allow-listing e.g. system headers).
 //! - Quote-form include → must resolve under one of the dirs.
-//! - Angle-form include → skipped by default; participates iff one of the
-//!   rule's `validate_angle_patterns` regexes matches the include content.
+//! - Angle-form include → must resolve under one of the dirs. Whether to
+//!   validate angle includes at all is controlled at the rule level by
+//!   `forms`: a rule whose `forms` excludes `"angle"` will never match an
+//!   angle include in the first place. System headers are typically
+//!   handled by a dedicated `forms = ["angle"]` rule with empty
+//!   `allowed_include_dirs`.
 //! - Macro-form include → not validated (should already have been rejected
 //!   by the action evaluator).
 
 use std::path::Path;
-
-use regex::Regex;
 
 use crate::config::inherit::ResolvedRule;
 use crate::config::schema::IncludeForm;
@@ -36,13 +39,8 @@ pub fn validate(
     }
     match final_form {
         IncludeForm::Macro => None,
-        IncludeForm::Quote => check_resolvable(final_content, rule, project_root),
-        IncludeForm::Angle => {
-            if any_pattern_matches(&rule.validate_angle_patterns, final_content) {
-                check_resolvable(final_content, rule, project_root)
-            } else {
-                None
-            }
+        IncludeForm::Quote | IncludeForm::Angle => {
+            check_resolvable(final_content, rule, project_root)
         }
     }
 }
@@ -61,14 +59,6 @@ fn check_resolvable(
         "include `{include_text}` cannot be resolved under the matched rule's allowed_include_dirs ({:?})",
         rule.allowed_include_dirs
     ))
-}
-
-fn any_pattern_matches(patterns: &[String], text: &str) -> bool {
-    patterns.iter().any(|pat| {
-        Regex::new(pat)
-            .map(|re| re.is_match(text))
-            .unwrap_or(false)
-    })
 }
 
 #[cfg(test)]
@@ -117,6 +107,7 @@ mod tests {
         );
         let root = PathBuf::from("/p");
         assert!(validate(IncludeForm::Quote, "foo.h", &rule, &root).is_none());
+        assert!(validate(IncludeForm::Angle, "stdio.h", &rule, &root).is_none());
     }
 
     #[test]
@@ -150,52 +141,22 @@ mod tests {
     }
 
     #[test]
-    fn angle_is_skipped_by_default() {
-        let root = tmp_root();
-        let rule = cfg(
-            r#"
-            [[rule]]
-            name = "r"
-            allowed_include_dirs = ["include"]
-            "#,
-        );
-        // No validate_angle_patterns → skip even though file would not resolve.
-        assert!(validate(IncludeForm::Angle, "stdio.h", &rule, &root).is_none());
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn angle_validated_when_pattern_matches() {
-        let root = tmp_root();
-        let rule = cfg(
-            r#"
-            [[rule]]
-            name = "r"
-            allowed_include_dirs = ["include"]
-            validate_angle_patterns = ["^mylib/"]
-            "#,
-        );
-        // Doesn't match the pattern → not validated → pass.
-        assert!(validate(IncludeForm::Angle, "stdio.h", &rule, &root).is_none());
-        // Matches the pattern → validated → fails because file doesn't exist.
-        let err = validate(IncludeForm::Angle, "mylib/foo.h", &rule, &root).unwrap();
-        assert!(err.contains("cannot be resolved"));
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn angle_validated_pattern_succeeds_when_file_exists() {
+    fn angle_validated_like_quote_when_allowed_dirs_nonempty() {
         let root = tmp_root();
         touch(&root, "include/mylib/foo.h");
         let rule = cfg(
             r#"
             [[rule]]
             name = "r"
+            forms = ["angle"]
             allowed_include_dirs = ["include"]
-            validate_angle_patterns = ["^mylib/"]
             "#,
         );
+        // Resolves → pass.
         assert!(validate(IncludeForm::Angle, "mylib/foo.h", &rule, &root).is_none());
+        // Doesn't resolve → fail.
+        let err = validate(IncludeForm::Angle, "stdio.h", &rule, &root).unwrap();
+        assert!(err.contains("cannot be resolved"));
         fs::remove_dir_all(&root).ok();
     }
 
