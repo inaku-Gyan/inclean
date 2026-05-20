@@ -54,8 +54,18 @@ the code shape:
 | `rule/engine.rs` | five-layer matching loop + first-match-wins |
 | `rule/action.rs` | evaluate `auto` / `rewrite` / `keep` / `error` + `${...}` template |
 | `index/header_index.rs` | basename / relpath → physical path index from `original_include_dirs` |
-| `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs` |
+| `validate/allowed.rs` | post-rewrite resolvability check against matched rule's `allowed_include_dirs`. Quote includes always; angle includes only when one of the rule's `validate_angle_patterns` regexes matches; macro includes skipped. Empty `allowed_include_dirs` = "this rule does not participate in validation". |
 | `pipeline/run.rs` | top-level orchestration |
+
+## Pipeline data flow
+
+`pipeline::run::run(project_root, validate: bool) -> Summary` is the
+single entry point. Per `IncludeResult` it carries the action `outcome`
+(NoMatch / Keep / Rewritten / Error / EvaluationFailure) and an optional
+`validation_error: Option<String>`. `apply` skips any file that has an
+error / evaluation failure / validation_error so partial writes never
+happen. `summary_exit_code` returns `0`, `2` (action.error), or `3`
+(EvaluationFailure or validation failure).
 
 ## Dev workflow
 

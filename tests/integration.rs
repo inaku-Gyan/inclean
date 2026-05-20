@@ -117,6 +117,105 @@ fn flat_library_apply_is_idempotent() {
 }
 
 #[test]
+fn validation_flags_unresolvable_keep_includes() {
+    // A "keep" rule with an include that doesn't exist under allowed_include_dirs.
+    let root = tmp();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("src/main.c"), "#include \"missing.h\"\n").unwrap();
+    fs::write(
+        root.join("inclean.toml"),
+        r#"
+        [project]
+        root = "."
+
+        [[rule]]
+        name = "base"
+        paths = ["src/**"]
+        forms = ["quote"]
+        allowed_include_dirs = ["include"]
+        action = { type = "keep" }
+        "#,
+    )
+    .unwrap();
+
+    let summary = pipe::run(&root, true).unwrap();
+    let main_c = &summary.files[0];
+    let r = &main_c.include_results[0];
+    assert!(r.validation_error.is_some(), "got: {:?}", r);
+    assert_eq!(pipe::summary_exit_code(&summary), 3);
+
+    // With validation disabled, the error goes away.
+    let summary = pipe::run(&root, false).unwrap();
+    let r = &summary.files[0].include_results[0];
+    assert!(r.validation_error.is_none());
+    assert_eq!(pipe::summary_exit_code(&summary), 0);
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn angle_includes_are_skipped_unless_pattern_matches() {
+    let root = tmp();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("include")).unwrap();
+    // No header exists under include/ for either include.
+    fs::write(
+        root.join("src/main.c"),
+        "#include <stdio.h>\n#include <mylib/foo.h>\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("inclean.toml"),
+        r#"
+        [project]
+        root = "."
+
+        [[rule]]
+        name = "base"
+        paths = ["src/**"]
+        forms = ["angle"]
+        allowed_include_dirs = ["include"]
+        validate_angle_patterns = ["^mylib/"]
+        action = { type = "keep" }
+        "#,
+    )
+    .unwrap();
+
+    let summary = pipe::run(&root, true).unwrap();
+    let results = &summary.files[0].include_results;
+    // <stdio.h> doesn't match validate_angle_patterns → skipped.
+    assert!(results[0].validation_error.is_none());
+    // <mylib/foo.h> matches the pattern but the file doesn't exist → fails.
+    assert!(results[1].validation_error.is_some());
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn init_template_passes_validate() {
+    use std::process::Command;
+    let root = tmp();
+    let bin = env!("CARGO_BIN_EXE_inclean");
+    let init = Command::new(bin)
+        .args(["init", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "init failed: {:?}", init);
+    let validate = Command::new(bin)
+        .args(["validate", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        validate.status.success(),
+        "validate on init template failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn flat_library_diff_emits_only_changed_files() {
     let root = fixture_path("flat-library");
     let summary = pipe::run(&root, true).unwrap();

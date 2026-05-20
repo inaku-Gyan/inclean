@@ -16,9 +16,15 @@ allowed directories.
 
 ## Status
 
-Pre-alpha. The crate skeleton compiles; functionality is being filled in
-milestone by milestone. See `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md`
-for the design plan and milestones.
+Alpha. M1 + M2 of the milestone plan are complete: configuration loading,
+rule inheritance, the five-layer matching engine, `auto` / `rewrite` /
+`keep` / `error` actions with `${...}` placeholder substitution,
+post-action `allowed_include_dirs` validation (with `validate_angle_patterns`),
+all six CLI subcommands, and end-to-end integration tests.
+
+See `/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` for the
+design plan and remaining work (M3: layer-5 resolved-file matching,
+parallelism, perf).
 
 ## Usage (planned)
 
