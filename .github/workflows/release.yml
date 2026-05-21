@@ -62,7 +62,7 @@ jobs:
 
   publish-crate:
     name: publish to crates.io
-    needs: [verify, check-tag]
+    needs: [gh-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
