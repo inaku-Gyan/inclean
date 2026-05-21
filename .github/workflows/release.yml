@@ -183,7 +183,7 @@ jobs:
 
   gh-release:
     name: create GitHub Release
-    needs: [build, publish-crate]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
