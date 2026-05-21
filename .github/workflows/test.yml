@@ -29,10 +29,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
+      - name: Cargo fmt --check
+        run: cargo fmt --all --check
 
-      - name: cargo clippy
+      - name: Cargo clippy
         run: cargo clippy --all-targets --all-features
 
   test:
@@ -49,5 +49,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo test
+      - name: Cargo test
         run: cargo test --all-features
