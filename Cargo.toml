@@ -5,6 +5,7 @@ edition = "2021"
 license = "BSD-3-Clause"
 description = "A C/C++ #include path normalizer that rewrites includes to resolve cleanly against a minimal -I set."
 repository = "https://github.com/inaku-Gyan/inclean"
+authors = ["inaku <inaku.gs@gmail.com>"]
 readme = "README.md"
 keywords = ["cpp", "include", "cli", "refactoring", "c"]
 categories = ["command-line-utilities", "development-tools"]
@@ -16,6 +17,9 @@ pkg-fmt = "tgz"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
+
+[profile.release]
+strip = "symbols"
 
 [dependencies]
 anyhow = "1.0.102"
