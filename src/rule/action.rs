@@ -456,10 +456,9 @@ fn resolve_placeholder(name: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
         let idx: usize = rest.parse().with_context(|| {
             format!("placeholder `${{comment.{rest}}}` is not a valid capture index")
         })?;
-        return caps
-            .get(idx)
-            .cloned()
-            .with_context(|| format!("placeholder `${{comment.{idx}}}` exceeds available captures"));
+        return caps.get(idx).cloned().with_context(|| {
+            format!("placeholder `${{comment.{idx}}}` exceeds available captures")
+        });
     }
 
     Ok(match name {
@@ -981,10 +980,7 @@ mod tests {
             trailing_comment = { match = "^$", to = "note" }
             "#;
         // No existing comment → regex matches empty body → inject.
-        assert_rewrite(
-            run(toml, vec!["foo.h".into()], ""),
-            "\"foo.h\"  // note",
-        );
+        assert_rewrite(run(toml, vec!["foo.h".into()], ""), "\"foo.h\"  // note");
         // Existing comment → regex doesn't match → trailing left alone.
         let out = run(toml, vec!["foo.h".into()], "  // user");
         assert_eq!(out, Outcome::Keep);
@@ -1298,9 +1294,6 @@ mod tests {
         let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // body");
         let err = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("exceeds available captures"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("exceeds available captures"), "got: {msg}");
     }
 }

@@ -292,9 +292,9 @@ fn resolve_trailing_comment(
             (None, s.clone(), TrailingForm::Preserve, None)
         }
         RawTrailingComment::Full(f) => {
-            let to = f.to.clone().ok_or_else(|| {
-                anyhow::anyhow!("{ctx}: `trailing_comment.to` is required")
-            })?;
+            let to =
+                f.to.clone()
+                    .ok_or_else(|| anyhow::anyhow!("{ctx}: `trailing_comment.to` is required"))?;
             (
                 f.match_regex.clone(),
                 to,
@@ -754,7 +754,10 @@ mod tests {
         );
         let err = resolve(&[cfg]).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("`trailing_comment.to` is required"), "got: {msg}");
+        assert!(
+            msg.contains("`trailing_comment.to` is required"),
+            "got: {msg}"
+        );
     }
 
     #[test]
@@ -770,7 +773,11 @@ mod tests {
         let map = resolve(&[cfg]).unwrap();
         let t = map["r"].trailing_comment.as_ref().unwrap();
         // The @std.*_or constants expand into a regex alternation.
-        assert!(t.match_regex.contains(r"stdio\.h"), "got: {}", t.match_regex);
+        assert!(
+            t.match_regex.contains(r"stdio\.h"),
+            "got: {}",
+            t.match_regex
+        );
     }
 
     #[test]
