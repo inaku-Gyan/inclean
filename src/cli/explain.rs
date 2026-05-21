@@ -57,7 +57,7 @@ pub fn run(file: PathBuf, include_filter: Option<String>) -> Result<u8> {
             }
         }
         printed_any = true;
-        print_include_trace(&compiled, &file_relpath, &project_root, include);
+        print_include_trace(&compiled, &file_relpath, &project_root, &source, include);
         println!();
     }
     if !printed_any {
@@ -80,6 +80,7 @@ fn print_include_trace(
     rules: &[CompiledRule<'_>],
     file_relpath: &Path,
     project_root: &Path,
+    source: &str,
     include: &Include,
 ) {
     let form_word = match include.form {
@@ -117,7 +118,7 @@ fn print_include_trace(
             captures: t.captures.clone().unwrap_or_default(),
             resolved: t.resolved.clone(),
         };
-        match action::evaluate(&m, include, file_relpath, project_root) {
+        match action::evaluate(&m, include, source, file_relpath, project_root) {
             Ok(Outcome::Keep) => println!("  keep — leave the include unchanged"),
             Ok(Outcome::Rewrite { new_text, .. }) => {
                 println!("  rewrite → {new_text}");

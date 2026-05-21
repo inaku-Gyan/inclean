@@ -14,17 +14,21 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use super::engine::Match;
-use crate::config::inherit::ResolvedAction;
-use crate::config::schema::{AutoRelativeTo, IncludeForm, OutputForm};
+use crate::config::inherit::{ResolvedAction, ResolvedTrailingComment};
+use crate::config::schema::{AutoRelativeTo, IncludeForm, OutputForm, TrailingPolicy};
 use crate::index::header_index;
 use crate::lex::include_line::Include;
 
 /// What the engine should do with the matched include.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// Replace bytes in `argument_range` with `new_text`.
+    /// Replace bytes in `edit_range` with `new_text`. `edit_range` usually
+    /// covers just the include argument (delimiters + path), but when the
+    /// rule also rewrites the trailing comment it widens to include the
+    /// post-argument whitespace and comment up to (but not including) the
+    /// line-terminating newline.
     Rewrite {
-        argument_range: Range<usize>,
+        edit_range: Range<usize>,
         new_text: String,
     },
     /// Leave the include unchanged.
@@ -37,9 +41,13 @@ pub enum Outcome {
 /// Evaluate the action that the matched rule attaches to this include.
 ///
 /// `file_relpath` is the source file's path relative to `project_root`.
+/// `source` is the full text of that file — needed when the rule injects
+/// a trailing comment, because that requires inspecting whatever is on
+/// the line after the argument.
 pub fn evaluate(
     matched: &Match<'_>,
     include: &Include,
+    source: &str,
     file_relpath: &Path,
     project_root: &Path,
 ) -> Result<Outcome> {
@@ -61,38 +69,44 @@ pub fn evaluate(
         resolved: matched.resolved.as_deref(),
     };
 
-    match &matched.rule.rule.action {
-        ResolvedAction::Keep => Ok(Outcome::Keep),
-        ResolvedAction::Error { message } => Ok(Outcome::Error {
-            message: substitute(message, &ctx)?,
-        }),
+    let rule = matched.rule.rule;
+    let trailing = rule.trailing_comment.as_ref();
+
+    let new_arg: Option<String> = match &rule.action {
+        // `error` aborts the file — trailing-comment settings are
+        // intentionally ignored.
+        ResolvedAction::Error { message } => {
+            return Ok(Outcome::Error {
+                message: substitute(message, &ctx)?,
+            });
+        }
+        ResolvedAction::Keep => None,
         ResolvedAction::Rewrite { to, form } => {
             let new_content = substitute(to, &ctx)?;
             let form_out = pick_form(*form, include.form);
-            Ok(Outcome::Rewrite {
-                argument_range: include.argument_range.clone(),
-                new_text: format_argument(&new_content, form_out),
-            })
+            Some(format_argument(&new_content, form_out))
         }
-        ResolvedAction::Auto { relative_to, form } => evaluate_auto(
+        ResolvedAction::Auto { relative_to, form } => Some(evaluate_auto_arg(
             matched,
             include,
             file_relpath,
             project_root,
             *relative_to,
             *form,
-        ),
-    }
+        )?),
+    };
+
+    finalize_outcome(include, source, new_arg, trailing, &ctx)
 }
 
-fn evaluate_auto(
+fn evaluate_auto_arg(
     matched: &Match<'_>,
     include: &Include,
     file_relpath: &Path,
     project_root: &Path,
     relative_to: AutoRelativeTo,
     form: OutputForm,
-) -> Result<Outcome> {
+) -> Result<String> {
     let rule = &matched.rule.rule;
 
     let resolved = header_index::resolve_in_dirs(
@@ -137,9 +151,135 @@ fn evaluate_auto(
 
     let new_content = output_path.to_string_lossy().replace('\\', "/");
     let form_out = pick_form(form, include.form);
+    Ok(format_argument(&new_content, form_out))
+}
+
+/// Combine the action's new argument (if any) with the rule's
+/// trailing-comment policy into a final `Outcome`. Idempotency is
+/// enforced here: when the resulting bytes match what's already in the
+/// source, the outcome collapses to `Keep`.
+fn finalize_outcome(
+    include: &Include,
+    source: &str,
+    new_arg: Option<String>,
+    trailing: Option<&ResolvedTrailingComment>,
+    ctx: &TemplateCtx<'_>,
+) -> Result<Outcome> {
+    let existing_arg = &source[include.argument_range.clone()];
+    let existing_trailing = &source[include.trailing_range.clone()];
+
+    let arg_text: String = new_arg.unwrap_or_else(|| existing_arg.to_string());
+
+    // No trailing-comment rule: behavior unchanged from before this
+    // feature — we only ever touch the argument range. Anything after the
+    // argument (whitespace, comments) is left to the file's own bytes.
+    let Some(config) = trailing else {
+        if arg_text == existing_arg {
+            return Ok(Outcome::Keep);
+        }
+        return Ok(Outcome::Rewrite {
+            edit_range: include.argument_range.clone(),
+            new_text: arg_text,
+        });
+    };
+
+    let change = compute_trailing_change(config, existing_trailing, ctx)?;
+    let new_trailing: String = match change {
+        TrailingChange::Unchanged => existing_trailing.to_string(),
+        TrailingChange::Set { trailing } => trailing,
+    };
+
+    let new_combined = format!("{arg_text}{new_trailing}");
+    let existing_combined = &source[include.argument_range.start..include.trailing_range.end];
+    if new_combined == existing_combined {
+        return Ok(Outcome::Keep);
+    }
     Ok(Outcome::Rewrite {
-        argument_range: include.argument_range.clone(),
-        new_text: format_argument(&new_content, form_out),
+        edit_range: include.argument_range.start..include.trailing_range.end,
+        new_text: new_combined,
+    })
+}
+
+enum TrailingChange {
+    /// Leave existing trailing bytes alone (either policy says so or
+    /// idempotency detected the text is already where it should be).
+    Unchanged,
+    /// Replace the trailing slice with this string (already includes any
+    /// leading whitespace).
+    Set { trailing: String },
+}
+
+fn compute_trailing_change(
+    config: &ResolvedTrailingComment,
+    existing_trailing: &str,
+    ctx: &TemplateCtx<'_>,
+) -> Result<TrailingChange> {
+    let ws_end = existing_trailing
+        .bytes()
+        .position(|b| b != b' ' && b != b'\t')
+        .unwrap_or(existing_trailing.len());
+    let existing_ws = &existing_trailing[..ws_end];
+    let existing_comment = &existing_trailing[ws_end..];
+
+    let subst_text = substitute(&config.text, ctx)?;
+
+    // Idempotency checks for prepend/append — without these, repeat
+    // `apply` runs would stack copies of `subst_text`. Replace and
+    // FillIfAbsent are naturally idempotent because they don't compose
+    // with the existing comment text.
+    match config.policy {
+        TrailingPolicy::Prepend
+            if !subst_text.is_empty() && existing_comment.starts_with(&subst_text) =>
+        {
+            return Ok(TrailingChange::Unchanged);
+        }
+        TrailingPolicy::Append
+            if !subst_text.is_empty() && existing_comment.ends_with(&subst_text) =>
+        {
+            return Ok(TrailingChange::Unchanged);
+        }
+        _ => {}
+    }
+
+    let new_body: String = match config.policy {
+        TrailingPolicy::Prepend => {
+            if existing_comment.is_empty() {
+                subst_text
+            } else {
+                format!("{subst_text} {existing_comment}")
+            }
+        }
+        TrailingPolicy::Append => {
+            if existing_comment.is_empty() {
+                subst_text
+            } else {
+                format!("{existing_comment} {subst_text}")
+            }
+        }
+        TrailingPolicy::Replace => subst_text,
+        TrailingPolicy::FillIfAbsent => {
+            if existing_comment.is_empty() {
+                subst_text
+            } else {
+                return Ok(TrailingChange::Unchanged);
+            }
+        }
+    };
+
+    // Leading whitespace: keep the user's spacing when present so we
+    // don't disturb hand-aligned columns; otherwise default to two
+    // spaces. When the result has no body at all (Replace with empty
+    // text → strip), emit nothing.
+    let leading_ws = if new_body.is_empty() {
+        String::new()
+    } else if existing_ws.is_empty() {
+        "  ".to_string()
+    } else {
+        existing_ws.to_string()
+    };
+
+    Ok(TrailingChange::Set {
+        trailing: format!("{leading_ws}{new_body}"),
     })
 }
 
@@ -302,12 +442,27 @@ mod tests {
     }
 
     fn inc(content: &str, form: IncludeForm) -> Include {
+        let arg_len = match form {
+            IncludeForm::Quote | IncludeForm::Angle => content.len() + 2,
+            IncludeForm::Macro => content.len(),
+        };
         Include {
             form,
             content: content.to_string(),
             line: 1,
-            // Tests don't replay rewriting at byte level here; arbitrary range.
-            argument_range: 0..content.len() + 2,
+            argument_range: 0..arg_len,
+            trailing_range: arg_len..arg_len,
+        }
+    }
+
+    /// Synthesize a source string that matches the byte ranges in `inc`.
+    /// Tests use it to satisfy `evaluate`'s `source: &str` argument
+    /// without needing a real file on disk.
+    fn src_of(inc: &Include) -> String {
+        match inc.form {
+            IncludeForm::Quote => format!("\"{}\"", inc.content),
+            IncludeForm::Angle => format!("<{}>", inc.content),
+            IncludeForm::Macro => inc.content.clone(),
         }
     }
 
@@ -366,7 +521,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         let inc = inc("foo.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         assert_eq!(out, Outcome::Keep);
     }
 
@@ -383,7 +538,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         let inc = inc("foo.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Error { message } => assert_eq!(message, "deprecated: foo.h"),
             _ => panic!("expected Error"),
@@ -404,7 +559,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["old_foo.h".into(), "foo.h".into()]);
         let inc = inc("old_foo.h", IncludeForm::Angle);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "<new_foo.h>"),
             _ => panic!("expected Rewrite"),
@@ -425,7 +580,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["x.h".into()]);
         let inc = inc("x.h", IncludeForm::Angle);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"x.h\""),
             _ => panic!("expected Rewrite"),
@@ -445,7 +600,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["x.h".into()]);
         let inc = inc("x.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/foo/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/foo/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"src/foo/x.h\""),
             _ => panic!("expected Rewrite"),
@@ -465,7 +620,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["x.h".into()]);
         let inc = inc("x.h", IncludeForm::Quote);
-        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        let err = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap_err();
         assert!(format!("{err:#}").contains("unknown placeholder"));
     }
 
@@ -483,7 +638,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["MY_HEADER".into()]);
         let inc = inc("MY_HEADER", IncludeForm::Macro);
-        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        let err = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap_err();
         assert!(format!("{err:#}").contains("macro-form"));
     }
 
@@ -503,7 +658,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         let inc = inc("foo.h", IncludeForm::Quote);
-        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        let err = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap_err();
         // The resolved file lives under src/internal, not under include/.
         assert!(format!("{err:#}").contains("not under any allowed_include_dir"));
 
@@ -520,7 +675,7 @@ mod tests {
             &root,
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"internal/foo.h\""),
             _ => panic!("expected Rewrite"),
@@ -546,7 +701,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         let inc = inc("foo.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/foo/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/foo/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"../../include/foo.h\""),
             _ => panic!("expected Rewrite"),
@@ -569,7 +724,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["missing.h".into()]);
         let inc = inc("missing.h", IncludeForm::Quote);
-        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        let err = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap_err();
         assert!(format!("{err:#}").contains("could not resolve include"));
         fs::remove_dir_all(&root).ok();
     }
@@ -587,7 +742,7 @@ mod tests {
         );
         let m = matched(&compiled, vec!["x.h".into()]);
         let inc = inc("x.h", IncludeForm::Quote);
-        let err = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap_err();
+        let err = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap_err();
         assert!(format!("{err:#}").contains("requires layer 5"));
     }
 
@@ -608,7 +763,7 @@ mod tests {
             PathBuf::from("src/internal/foo.h"),
         );
         let inc = inc("foo.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
                 assert_eq!(new_text, "\"src/internal/X.h\"");
@@ -630,9 +785,279 @@ mod tests {
         );
         let m = matched(&compiled, vec!["x.h".into()]);
         let inc = inc("x.h", IncludeForm::Quote);
-        let out = evaluate(&m, &inc, Path::new("src/main.c"), &root).unwrap();
+        let out = evaluate(&m, &inc, &src_of(&inc), Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"price$1\""),
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    // ---- Trailing-comment policy tests ------------------------------------
+
+    /// Build an include + matching source that includes an arbitrary
+    /// trailing string after the argument. The argument is rendered in
+    /// the requested form so byte ranges line up.
+    fn inc_with_trailing(content: &str, form: IncludeForm, trailing: &str) -> (Include, String) {
+        let arg = match form {
+            IncludeForm::Quote => format!("\"{content}\""),
+            IncludeForm::Angle => format!("<{content}>"),
+            IncludeForm::Macro => content.to_string(),
+        };
+        let arg_len = arg.len();
+        let source = format!("{arg}{trailing}");
+        let trailing_len = trailing.len();
+        let include = Include {
+            form,
+            content: content.to_string(),
+            line: 1,
+            argument_range: 0..arg_len,
+            trailing_range: arg_len..(arg_len + trailing_len),
+        };
+        (include, source)
+    }
+
+    #[test]
+    fn trailing_prepend_into_empty_inserts_text() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = "// IWYU pragma: keep"
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: keep");
+            }
+            _ => panic!("expected Rewrite, got {out:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_prepend_places_text_before_existing_comment() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "/* IWYU pragma: keep */", policy = "prepend" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // note");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  /* IWYU pragma: keep */ // note");
+            }
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    #[test]
+    fn trailing_prepend_is_idempotent_on_reapply() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = "// IWYU pragma: keep"
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        // Simulate the post-first-apply state.
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // IWYU pragma: keep");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_append_places_text_after_existing_comment() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " /* user */");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\" /* user */ // IWYU pragma: associated");
+            }
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    #[test]
+    fn trailing_append_is_idempotent_on_reapply() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing(
+            "foo.h",
+            IncludeForm::Quote,
+            " /* user */ // IWYU pragma: associated",
+        );
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_replace_overwrites_existing() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // old note");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: export");
+            }
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    #[test]
+    fn trailing_replace_with_empty_strips_existing() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "", policy = "replace" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // some note");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"");
+            }
+            _ => panic!("expected Rewrite, got {out:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_fill_if_absent_leaves_existing_alone() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "// IWYU pragma: keep", policy = "fill_if_absent" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // user");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_fill_if_absent_injects_when_missing() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { text = "// IWYU pragma: keep", policy = "fill_if_absent" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: keep");
+            }
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    #[test]
+    fn trailing_supports_placeholders() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            match_resolved = { under = "src" }
+            action = { type = "keep" }
+            trailing_comment = "// for ${resolved.basename}"
+            "#,
+            &root,
+        );
+        let m = matched_resolved(&compiled, vec!["foo.h".into()], PathBuf::from("src/foo.h"));
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // for foo.h");
+            }
+            _ => panic!("expected Rewrite"),
+        }
+    }
+
+    #[test]
+    fn trailing_preserves_existing_whitespace_alignment() {
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = "// IWYU pragma: keep"
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        // Existing alignment uses a single space — we should preserve it
+        // rather than forcing two spaces in.
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " // note");
+        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\" // IWYU pragma: keep // note");
+            }
             _ => panic!("expected Rewrite"),
         }
     }

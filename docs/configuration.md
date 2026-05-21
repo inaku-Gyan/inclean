@@ -23,6 +23,7 @@ behavior. For an end-to-end walkthrough, see the
     - [`rewrite`](#rewrite)
     - [`keep`](#keep)
     - [`error`](#error)
+  - [Trailing comments (`trailing_comment`)](#trailing-comments-trailing_comment)
   - [`${...}` placeholders](#-placeholders)
   - [`@std.*` built-in constants](#std-built-in-constants)
   - [`allowed_include_dirs` semantics](#allowed_include_dirs-semantics)
@@ -233,6 +234,74 @@ action = { type = "error", message = "deprecated header: ${0}" }
 
 Triggers exit code 2 (distinct from infrastructure failures, which use
 exit 3).
+
+## Trailing comments (`trailing_comment`)
+
+Anything written after the `#include` argument — leading whitespace
+plus the trailing comment, if any — is **preserved verbatim by
+default**. The rewrite engine touches only the delimited argument
+(`"foo.h"` or `<foo.h>`), so `#include "foo.h"  // pulled in for FOO`
+keeps its trailing note across every action type.
+
+Opt in to **injecting** a trailing comment (IWYU pragmas being the
+common use case) by setting `trailing_comment` on a rule. It is a
+rule-level field, sits alongside `paths` / `action` / etc., and is
+inherited by `extends` like every other rule field.
+
+```toml
+[[rule]]
+name = "internal-iwyu"
+extends = "base"
+match_resolved = { under = "include/mylib/internal" }
+trailing_comment = "/* IWYU pragma: keep */"
+```
+
+The string shortcut above expands to `policy = "prepend"`. The full
+form lets you choose how the configured text composes with any
+pre-existing trailing comment:
+
+```toml
+trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
+```
+
+Available policies (the "no existing comment" case is the same for
+all four — `text` is injected with a two-space gutter after the
+argument):
+
+| policy             | When the include already has a trailing comment             |
+| ------------------ | ----------------------------------------------------------- |
+| `prepend` (default)| `text` + one space + the existing comment                   |
+| `append`           | Existing comment + one space + `text`                       |
+| `replace`          | Replace existing trailing content with `text`               |
+| `fill_if_absent`   | Leave the existing comment untouched, inject nothing        |
+
+An empty `text` is only valid with `policy = "replace"` — that is the
+explicit "strip the trailing comment" form. Other policies reject
+empty text at config load.
+
+`text` runs through the same `${...}` placeholder engine as
+`rewrite.to`, including layer-5 placeholders such as
+`${resolved.basename}` when the rule sets `match_resolved`. Use
+`@std.*` constants in it just like any other template.
+
+**Whitespace.** When the include already has whitespace before its
+existing trailing comment, that exact whitespace is preserved. When
+there was no trailing content at all and a new comment is being
+injected, two spaces are inserted between the argument and the text.
+
+**Apply is idempotent.** Re-running `inclean apply` does not stack
+copies of the configured text — `prepend` / `append` detect an
+already-applied insertion by exact byte match against the existing
+comment's start / end; `replace` and `fill_if_absent` converge to a
+no-op when the resulting bytes equal what's already on disk.
+
+**`//` line-comment caveat.** A `//` comment extends to end-of-line,
+so a single `#include` line can hold at most one `//`-style comment.
+If a rule combines `text` and an existing user comment via `prepend`
+or `append`, you must use `/* ... */` for at least one of the two if
+you want both to survive — otherwise the second `//` ends up swallowed
+by the first. inclean does not auto-convert comment forms; that's a
+deliberate choice you make in the config.
 
 ## `${...}` placeholders
 

@@ -56,6 +56,7 @@ jobs:
           echo "tag '$REF_NAME' matches Cargo.toml version '$cargo_version'"
 
   verify:
+    needs: check-tag
     name: verify
     uses: ./.github/workflows/test.yml
 
@@ -141,7 +142,7 @@ jobs:
           Compress-Archive -Path "bins/$stage/*" -DestinationPath "bins/$stage.zip"
           Remove-Item -Recurse -Force "bins/$stage"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bins-${{ matrix.triple }}
           path: bins/*

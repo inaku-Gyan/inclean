@@ -545,6 +545,7 @@ mod tests {
             content: content.to_string(),
             line: 1,
             argument_range: 0..0,
+            trailing_range: 0..0,
         }
     }
 
@@ -554,6 +555,7 @@ mod tests {
             content: content.to_string(),
             line: 1,
             argument_range: 0..0,
+            trailing_range: 0..0,
         }
     }
 

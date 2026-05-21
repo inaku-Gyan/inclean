@@ -70,6 +70,41 @@ pub struct RawRule {
     pub original_include_dirs: Option<Vec<String>>,
 
     pub action: Option<RawAction>,
+
+    /// Optional trailing-comment injection. See [`RawTrailingComment`].
+    pub trailing_comment: Option<RawTrailingComment>,
+}
+
+/// Trailing-comment injection. Two TOML shapes:
+///
+/// - Shortcut: a bare string, equivalent to `{ text = "...", policy = "prepend" }`.
+/// - Full: `{ text = "...", policy = "prepend" | "append" | "replace" | "fill_if_absent" }`.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum RawTrailingComment {
+    Shortcut(String),
+    Full {
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        policy: Option<TrailingPolicy>,
+    },
+}
+
+/// How a configured trailing-comment text combines with any pre-existing
+/// trailing comment on the include line.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrailingPolicy {
+    /// Default. Place `text` before any existing trailing comment.
+    Prepend,
+    /// Place `text` after any existing trailing comment.
+    Append,
+    /// Replace any existing trailing comment with `text`. An empty `text`
+    /// strips the trailing comment entirely.
+    Replace,
+    /// Only inject `text` when there is no existing trailing comment.
+    FillIfAbsent,
 }
 
 /// Layer-5 constraint shape. At least one field must be specified.
@@ -369,6 +404,64 @@ mod tests {
         };
         let err = index_rules_by_name([&a, &b]).unwrap_err();
         assert!(format!("{err}").contains("duplicate rule name"));
+    }
+
+    #[test]
+    fn trailing_comment_shortcut_parses() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = "// IWYU pragma: keep"
+            "#,
+        );
+        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
+            RawTrailingComment::Shortcut(s) => assert_eq!(s, "// IWYU pragma: keep"),
+            _ => panic!("expected shortcut"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_full_form_parses() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { text = "// X", policy = "replace" }
+            "#,
+        );
+        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
+            RawTrailingComment::Full { text, policy } => {
+                assert_eq!(text.as_deref(), Some("// X"));
+                assert_eq!(*policy, Some(TrailingPolicy::Replace));
+            }
+            _ => panic!("expected full"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_all_policies_parse() {
+        for (name, expected) in [
+            ("prepend", TrailingPolicy::Prepend),
+            ("append", TrailingPolicy::Append),
+            ("replace", TrailingPolicy::Replace),
+            ("fill_if_absent", TrailingPolicy::FillIfAbsent),
+        ] {
+            let body = format!(
+                r#"
+                [[rule]]
+                name = "r"
+                trailing_comment = {{ text = "// X", policy = "{name}" }}
+                "#
+            );
+            let cfg = parse_str(&body);
+            match cfg.rules[0].trailing_comment.as_ref().unwrap() {
+                RawTrailingComment::Full { policy, .. } => {
+                    assert_eq!(*policy, Some(expected));
+                }
+                _ => panic!("expected full"),
+            }
+        }
     }
 
     #[test]
