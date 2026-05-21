@@ -31,6 +31,12 @@ pub struct Include {
     /// quote / angle (delimiters included), or the macro identifier(s) for
     /// macro form. This is what a rewrite replaces.
     pub argument_range: Range<usize>,
+    /// Byte range covering anything after the argument up to (but not
+    /// including) the line-terminating `\n` — leading whitespace plus any
+    /// trailing comment. Empty when the line ends immediately after the
+    /// argument. Carriage returns (`\r`) at the very end of the line, if
+    /// any, are excluded so this range only describes printable content.
+    pub trailing_range: Range<usize>,
 }
 
 /// Scan `src` for `#include` directives.
@@ -273,11 +279,21 @@ impl<'a> Lexer<'a> {
         self.pos = arg_end;
         self.skip_to_end_of_line();
 
+        // `self.pos` now points at the newline (or EOF). Compute the
+        // trailing range as `[arg_end, eol_end)` — every byte after the
+        // argument up to but not including the `\n`. Trim a trailing `\r`
+        // so the range reflects printable content only.
+        let mut eol_end = self.pos;
+        if eol_end > arg_end && self.src.get(eol_end - 1) == Some(&b'\r') {
+            eol_end -= 1;
+        }
+
         Some(Include {
             form,
             content,
             line: directive_start_line,
             argument_range: arg_start..arg_end,
+            trailing_range: arg_end..eol_end,
         })
     }
 
@@ -434,6 +450,55 @@ mod tests {
         assert_eq!(incs[0].content, "foo.h");
         let r = &incs[0].argument_range;
         assert_eq!(&src[r.clone()], "\"foo.h\"");
+    }
+
+    #[test]
+    fn trailing_range_covers_to_eol() {
+        let src = "#include \"foo.h\"  // pulled in for FOO\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], "  // pulled in for FOO");
+    }
+
+    #[test]
+    fn trailing_range_empty_when_no_trailing() {
+        let src = "#include \"foo.h\"\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(t.start, t.end);
+        assert_eq!(&src[t.clone()], "");
+    }
+
+    #[test]
+    fn trailing_range_excludes_carriage_return() {
+        let src = "#include \"foo.h\"\r\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], "");
+    }
+
+    #[test]
+    fn trailing_range_excludes_carriage_return_after_comment() {
+        let src = "#include \"foo.h\"  // note\r\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], "  // note");
+    }
+
+    #[test]
+    fn trailing_range_handles_block_comment() {
+        let src = "#include \"foo.h\" /* note */\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " /* note */");
+    }
+
+    #[test]
+    fn trailing_range_for_last_line_without_newline() {
+        let src = "#include \"foo.h\" // tail";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " // tail");
     }
 
     #[test]
