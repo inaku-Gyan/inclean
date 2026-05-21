@@ -1,0 +1,13 @@
+[project]
+root = "."
+
+# `keep` rule with allowed_include_dirs set, but `include/` is empty —
+# any include from src/ will fail the post-action validation in Full mode
+# and be silently skipped in Rules mode.
+
+[[rule]]
+name = "base"
+paths = ["src/**"]
+forms = ["quote"]
+allowed_include_dirs = ["include"]
+action = { type = "keep" }

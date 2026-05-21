@@ -1,0 +1,19 @@
+[project]
+root = "."
+
+# Source files inside `lib/` reference headers in `lib/inner/`. Using
+# `relative_to = "file_dir"`, the rewriter expresses the resolved path
+# relative to the source file's own directory — so `outer.c` ends up
+# with `"inner/helper.h"` while `inner/core.c` keeps the bare
+# `"helper.h"`.
+
+[[rule]]
+name = "base"
+paths = ["lib/**"]
+forms = ["quote"]
+# `allowed_include_dirs` is intentionally omitted: with
+# `relative_to = "file_dir"`, includes are resolved by the compiler
+# relative to the source file, not via the consumer's `-I` list, so the
+# allowed-dirs validation isn't meaningful here.
+original_include_dirs = ["lib/inner"]
+action = { type = "auto", relative_to = "file_dir" }

@@ -1,0 +1,5 @@
+[[rule]]
+name = "moduleB"
+extends = "base"
+paths = ["src/moduleB/**"]
+original_include_dirs = ["include/modB"]

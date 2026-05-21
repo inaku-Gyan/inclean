@@ -1,0 +1,13 @@
+[project]
+root = "."
+
+# Two original_include_dirs both contain `foo.h` — the layer-5 resolver
+# cannot decide between them, so the rule surfaces Layer5Ambiguous.
+
+[[rule]]
+name = "amb"
+paths = ["src/**"]
+forms = ["quote"]
+original_include_dirs = ["src/a", "src/b"]
+match_resolved = { match = '\.h$' }
+action = { type = "keep" }
