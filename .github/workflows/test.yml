@@ -3,13 +3,10 @@ name: test
 on:
   workflow_call:
   pull_request:
-    paths-ignore: &non-src-code-paths
+    paths-ignore:
       - "**/*.md"
       - "LICENSE"
       - ".gitignore"
-  push:
-    branches: [main]
-    paths-ignore: *non-src-code-paths
 
 concurrency:
   group: test-${{ github.ref }}
