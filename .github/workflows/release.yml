@@ -24,7 +24,9 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
-      - name: validate
+      - uses: actions/checkout@v6
+
+      - name: validate tag format and Cargo.toml version match
         shell: bash
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -37,7 +39,21 @@ jobs:
             echo "::error::tag '$REF_NAME' is not valid SemVer (expected vMAJOR.MINOR.PATCH[-prerelease][+build])"
             exit 1
           fi
-          echo "tag '$REF_NAME' is valid SemVer"
+
+          tag_version="${REF_NAME#v}"
+          cargo_version=$(awk -F'"' '/^version = "/ { print $2; exit }' Cargo.toml)
+
+          if [[ -z "$cargo_version" ]]; then
+            echo "::error::could not extract version from Cargo.toml"
+            exit 1
+          fi
+
+          if [[ "$tag_version" != "$cargo_version" ]]; then
+            echo "::error::tag version '$tag_version' does not match Cargo.toml version '$cargo_version' — bump Cargo.toml before tagging"
+            exit 1
+          fi
+
+          echo "tag '$REF_NAME' matches Cargo.toml version '$cargo_version'"
 
   verify:
     name: verify
