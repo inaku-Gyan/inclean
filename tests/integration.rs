@@ -127,7 +127,7 @@ fn iwyu_library_apply_exercises_all_policies() {
     assert!(after.contains("\"mylib/private/baz.h\"  // IWYU pragma: private"));
     // append: place text after existing block comment.
     assert!(
-        after.contains("\"mylib/aux/qux.h\" /* please keep */ // IWYU pragma: associated"),
+        after.contains("\"mylib/helper/qux.h\" /* please keep */ // IWYU pragma: associated"),
         "got:\n{after}"
     );
     // replace: text overwrites the legacy comment.

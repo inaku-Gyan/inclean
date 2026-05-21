@@ -13,7 +13,7 @@ allowed_include_dirs = ["include"]
 original_include_dirs = [
     "include/mylib/internal",
     "include/mylib/private",
-    "include/mylib/aux",
+    "include/mylib/helper",
     "include/mylib/legacy",
 ]
 
@@ -30,9 +30,9 @@ match_resolved = { under = "include/mylib/private" }
 trailing_comment = { text = "// IWYU pragma: private", policy = "fill_if_absent" }
 
 [[rule]]
-name = "aux-append"
+name = "helper-append"
 extends = "base"
-match_resolved = { under = "include/mylib/aux" }
+match_resolved = { under = "include/mylib/helper" }
 trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
 
 [[rule]]
