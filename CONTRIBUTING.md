@@ -66,6 +66,37 @@ module-by-module map. In short:
   not narrate what code already says.
 - **No `unsafe`.** There is none today; keep it that way.
 
+## Releasing
+
+Releases are tag-driven. Pushing a `vMAJOR.MINOR.PATCH` tag to GitHub
+triggers `.github/workflows/release.yml`, which validates the tag,
+runs the test suite, builds binaries for the five supported targets,
+and publishes to crates.io, PyPI, and GitHub Releases in one shot.
+
+Cut a release as follows:
+
+1. **Update `CHANGELOG.md`.** Promote the `[Unreleased]` section to
+   `[X.Y.Z] — YYYY-MM-DD` (today's date) and re-open an empty
+   `[Unreleased]` above it. Update the reference links at the bottom.
+2. **Bump `Cargo.toml`** — set `version = "X.Y.Z"`. The `check-tag`
+   workflow job compares the tag against this field and refuses to
+   publish if they disagree.
+3. **Commit and merge to `main`.** Both edits land in the same commit
+   (e.g. `chore: release v0.1.2`). The release workflow only fires on
+   tags that point at a `main` commit.
+4. **Tag and push.** From a clean `main`:
+   ```sh
+   git tag -a v0.1.2 -m "v0.1.2"
+   git push origin v0.1.2
+   ```
+   The tag must be SemVer with a leading `v`. Pre-release suffixes
+   (`v0.2.0-rc.1`) are accepted.
+
+If the workflow fails at the `check-tag` step, delete the remote tag
+(`git push origin :v0.1.2`) and the local one (`git tag -d v0.1.2`),
+fix the mismatch, and re-tag — do **not** force-push over a published
+tag.
+
 ## Things outside v1 scope
 
 These have been considered and explicitly excluded. Please discuss

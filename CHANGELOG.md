@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-05-22
+
 ### Changed
 
 - **Breaking:** `trailing_comment` schema redesigned to mirror include
@@ -54,5 +56,6 @@ Initial release. Feature-complete for v1.
   `3` for any of rule-tree conflict, layer-5 ambiguity, action
   evaluation failure, or `allowed_include_dirs` validation failure.
 
-[Unreleased]: https://example.com/compare/0.1.0...HEAD
-[0.1.0]: https://example.com/releases/0.1.0
+[Unreleased]: https://github.com/inaku-Gyan/inclean/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/inaku-Gyan/inclean/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/inaku-Gyan/inclean/releases/tag/v0.1.0

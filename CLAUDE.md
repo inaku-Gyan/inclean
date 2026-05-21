@@ -73,6 +73,15 @@ cargo fmt       # format
 Integration fixtures live under `tests/fixtures/` (small fake libraries).
 Add a new fixture for any non-trivial behavior change.
 
+## Releasing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md#releasing). In short: bump
+`CHANGELOG.md` and `Cargo.toml` in one commit on `main`, then push a
+`vX.Y.Z` SemVer tag — that triggers `.github/workflows/release.yml`,
+which validates the tag, builds, and publishes to crates.io / PyPI /
+GitHub Releases. The workflow's `check-tag` job will fail the release
+if the tag doesn't equal `Cargo.toml`'s `version`.
+
 ## Conventions
 
 - Use `anyhow::Result` for high-level error returns; `thiserror` for typed
