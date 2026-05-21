@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use super::constants;
 use super::schema::{
     index_rules_by_name, AutoRelativeTo, IncludeForm, LoadedConfig, OutputForm, RawAction,
-    RawMatchResolved, RawRule, RuleLocator,
+    RawMatchResolved, RawRule, RawTrailingComment, RuleLocator, TrailingPolicy,
 };
 
 /// Where a rule was declared. Carried through to the matching engine so
@@ -53,6 +53,14 @@ pub struct ResolvedRule {
     pub allowed_include_dirs: Vec<String>,
     pub original_include_dirs: Vec<String>,
     pub action: ResolvedAction,
+    pub trailing_comment: Option<ResolvedTrailingComment>,
+}
+
+/// Trailing-comment configuration after defaults and `@std.*` substitution.
+#[derive(Debug, Clone)]
+pub struct ResolvedTrailingComment {
+    pub text: String,
+    pub policy: TrailingPolicy,
 }
 
 /// Layer-5 constraints after constant expansion.
@@ -229,6 +237,11 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
             .unwrap_or_else(default_action),
     };
 
+    let trailing_comment = match raw.trailing_comment.as_ref() {
+        Some(t) => Some(resolve_trailing_comment(t, &ctx)?),
+        None => parent.and_then(|p| p.trailing_comment.clone()),
+    };
+
     let origin = Origin {
         config_path: locator.config_path.to_path_buf(),
         config_dir: locator
@@ -251,7 +264,32 @@ fn merge(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         allowed_include_dirs,
         original_include_dirs,
         action,
+        trailing_comment,
     })
+}
+
+fn resolve_trailing_comment(
+    raw: &RawTrailingComment,
+    ctx: &str,
+) -> Result<ResolvedTrailingComment> {
+    let (text, policy) = match raw {
+        RawTrailingComment::Shortcut(s) => (s.clone(), TrailingPolicy::Prepend),
+        RawTrailingComment::Full { text, policy } => (
+            text.clone().unwrap_or_default(),
+            policy.unwrap_or(TrailingPolicy::Prepend),
+        ),
+    };
+    if text.is_empty() && policy != TrailingPolicy::Replace {
+        anyhow::bail!(
+            "{ctx}: `trailing_comment` with empty `text` is only valid when `policy = \"replace\"` (use it to strip the existing trailing comment); other policies need a non-empty text"
+        );
+    }
+    let text = with_ctx(
+        constants::substitute_in_string(&text),
+        ctx,
+        "trailing_comment.text",
+    )?;
+    Ok(ResolvedTrailingComment { text, policy })
 }
 
 fn resolve_match_resolved(raw: &RawMatchResolved, ctx: &str) -> Result<ResolvedMatchResolved> {
@@ -586,6 +624,108 @@ mod tests {
         );
         let map = resolve(&[cfg]).unwrap();
         assert_eq!(ancestors_of(&map, "c"), vec!["c", "b", "a"]);
+    }
+
+    #[test]
+    fn trailing_comment_shortcut_defaults_to_prepend() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = "// IWYU pragma: keep"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        assert_eq!(t.text, "// IWYU pragma: keep");
+        assert_eq!(t.policy, TrailingPolicy::Prepend);
+    }
+
+    #[test]
+    fn trailing_comment_inherits_from_parent() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "p"
+            trailing_comment = "// IWYU pragma: keep"
+
+            [[rule]]
+            name = "c"
+            extends = "p"
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["c"].trailing_comment.as_ref().unwrap();
+        assert_eq!(t.text, "// IWYU pragma: keep");
+    }
+
+    #[test]
+    fn trailing_comment_child_overrides_parent() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "p"
+            trailing_comment = "// parent"
+
+            [[rule]]
+            name = "c"
+            extends = "p"
+            trailing_comment = { text = "// child", policy = "replace" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["c"].trailing_comment.as_ref().unwrap();
+        assert_eq!(t.text, "// child");
+        assert_eq!(t.policy, TrailingPolicy::Replace);
+    }
+
+    #[test]
+    fn trailing_comment_empty_text_with_replace_strips() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { text = "", policy = "replace" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        assert!(t.text.is_empty());
+        assert_eq!(t.policy, TrailingPolicy::Replace);
+    }
+
+    #[test]
+    fn trailing_comment_empty_text_with_non_replace_errors() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { text = "", policy = "prepend" }
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("empty `text`"), "got: {msg}");
+        assert!(msg.contains("rule `r`"), "should pinpoint rule: {msg}");
+    }
+
+    #[test]
+    fn trailing_comment_no_text_with_default_policy_errors() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = {}
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        assert!(format!("{err:#}").contains("empty `text`"));
     }
 
     #[test]

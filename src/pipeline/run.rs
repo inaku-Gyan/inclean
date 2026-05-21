@@ -102,7 +102,7 @@ pub enum IncludeOutcome {
     },
     Rewritten {
         rule: String,
-        argument_range: Range<usize>,
+        edit_range: Range<usize>,
         new_text: String,
     },
     /// Action evaluation chose to abort the file or report an error.
@@ -501,29 +501,24 @@ fn evaluate_with_action<'a>(
     };
     let rule_name = rule.rule.name.clone();
     let rule_ref = rule.rule;
-    match action::evaluate(&m, include, relpath, project_root) {
+    match action::evaluate(&m, include, original, relpath, project_root) {
         Ok(Outcome::Keep) => (IncludeOutcome::Keep { rule: rule_name }, Some(rule_ref)),
         Ok(Outcome::Rewrite {
-            argument_range,
+            edit_range,
             new_text,
         }) => {
-            let unchanged = original
-                .get(argument_range.clone())
-                .map(|s| s == new_text)
-                .unwrap_or(false);
-            if unchanged {
-                (IncludeOutcome::Keep { rule: rule_name }, Some(rule_ref))
-            } else {
-                edits.push((argument_range.clone(), new_text.clone()));
-                (
-                    IncludeOutcome::Rewritten {
-                        rule: rule_name,
-                        argument_range,
-                        new_text,
-                    },
-                    Some(rule_ref),
-                )
-            }
+            // `action::evaluate` already collapses no-op rewrites to
+            // `Outcome::Keep`, so reaching this branch means the bytes
+            // truly differ — no need to double-check here.
+            edits.push((edit_range.clone(), new_text.clone()));
+            (
+                IncludeOutcome::Rewritten {
+                    rule: rule_name,
+                    edit_range,
+                    new_text,
+                },
+                Some(rule_ref),
+            )
         }
         Ok(Outcome::Error { message }) => (
             IncludeOutcome::Error {
@@ -570,15 +565,21 @@ fn run_validation(
 }
 
 /// Parse a freshly-formatted include argument like `"foo.h"` or `<bar.h>`
-/// into a `(form, content)` pair. Returns `None` for malformed inputs.
+/// into a `(form, content)` pair. The string may carry trailing whitespace
+/// and a comment (when the rule injected one) — those are stripped before
+/// pattern-matching the delimiters. Returns `None` for malformed inputs.
 fn parse_argument_text(s: &str) -> Option<(IncludeForm, String)> {
     let bytes = s.as_bytes();
-    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
-        Some((IncludeForm::Quote, s[1..s.len() - 1].to_string()))
-    } else if bytes.len() >= 2 && bytes[0] == b'<' && bytes[bytes.len() - 1] == b'>' {
-        Some((IncludeForm::Angle, s[1..s.len() - 1].to_string()))
-    } else {
-        Some((IncludeForm::Macro, s.to_string()))
+    match bytes.first() {
+        Some(&b'"') => {
+            let close = s[1..].find('"').map(|i| i + 1)?;
+            Some((IncludeForm::Quote, s[1..close].to_string()))
+        }
+        Some(&b'<') => {
+            let close = s[1..].find('>').map(|i| i + 1)?;
+            Some((IncludeForm::Angle, s[1..close].to_string()))
+        }
+        _ => Some((IncludeForm::Macro, s.to_string())),
     }
 }
 
