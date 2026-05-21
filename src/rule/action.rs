@@ -824,7 +824,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
             "#,
             &root,
         );
@@ -833,7 +833,7 @@ mod tests {
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: keep");
+                assert_eq!(new_text, "\"foo.h\"  // note");
             }
             _ => panic!("expected Rewrite, got {out:?}"),
         }
@@ -847,7 +847,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "/* IWYU pragma: keep */", policy = "prepend" }
+            trailing_comment = { text = "/* note */", policy = "prepend" }
             "#,
             &root,
         );
@@ -856,7 +856,7 @@ mod tests {
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  /* IWYU pragma: keep */ // note");
+                assert_eq!(new_text, "\"foo.h\"  /* note */ // note");
             }
             _ => panic!("expected Rewrite"),
         }
@@ -870,13 +870,13 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
             "#,
             &root,
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         // Simulate the post-first-apply state.
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // IWYU pragma: keep");
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // note");
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         assert_eq!(out, Outcome::Keep);
     }
@@ -889,7 +889,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
+            trailing_comment = { text = "// note-append", policy = "append" }
             "#,
             &root,
         );
@@ -898,7 +898,7 @@ mod tests {
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\" /* user */ // IWYU pragma: associated");
+                assert_eq!(new_text, "\"foo.h\" /* user */ // note-append");
             }
             _ => panic!("expected Rewrite"),
         }
@@ -912,16 +912,13 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
+            trailing_comment = { text = "// note-append", policy = "append" }
             "#,
             &root,
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing(
-            "foo.h",
-            IncludeForm::Quote,
-            " /* user */ // IWYU pragma: associated",
-        );
+        let (inc, src) =
+            inc_with_trailing("foo.h", IncludeForm::Quote, " /* user */ // note-append");
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         assert_eq!(out, Outcome::Keep);
     }
@@ -934,7 +931,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
+            trailing_comment = { text = "// note-replace", policy = "replace" }
             "#,
             &root,
         );
@@ -943,7 +940,7 @@ mod tests {
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: export");
+                assert_eq!(new_text, "\"foo.h\"  // note-replace");
             }
             _ => panic!("expected Rewrite"),
         }
@@ -980,7 +977,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// IWYU pragma: keep", policy = "fill_if_absent" }
+            trailing_comment = { text = "// note", policy = "fill_if_absent" }
             "#,
             &root,
         );
@@ -998,7 +995,7 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// IWYU pragma: keep", policy = "fill_if_absent" }
+            trailing_comment = { text = "// note", policy = "fill_if_absent" }
             "#,
             &root,
         );
@@ -1007,7 +1004,7 @@ mod tests {
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: keep");
+                assert_eq!(new_text, "\"foo.h\"  // note");
             }
             _ => panic!("expected Rewrite"),
         }
@@ -1045,18 +1042,18 @@ mod tests {
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
             "#,
             &root,
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
         // Existing alignment uses a single space — we should preserve it
         // rather than forcing two spaces in.
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " // note");
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " // user");
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         match out {
             Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\" // IWYU pragma: keep // note");
+                assert_eq!(new_text, "\"foo.h\" // note // user");
             }
             _ => panic!("expected Rewrite"),
         }

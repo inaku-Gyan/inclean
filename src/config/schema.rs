@@ -412,11 +412,11 @@ mod tests {
             r#"
             [[rule]]
             name = "r"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
             "#,
         );
         match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Shortcut(s) => assert_eq!(s, "// IWYU pragma: keep"),
+            RawTrailingComment::Shortcut(s) => assert_eq!(s, "// note"),
             _ => panic!("expected shortcut"),
         }
     }

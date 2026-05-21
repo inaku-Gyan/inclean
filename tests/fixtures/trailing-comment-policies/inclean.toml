@@ -21,22 +21,22 @@ original_include_dirs = [
 name = "internal-prepend"
 extends = "base"
 match_resolved = { under = "include/mylib/internal" }
-trailing_comment = { text = "/* IWYU pragma: keep */", policy = "prepend" }
+trailing_comment = { text = "/* note A */", policy = "prepend" }
 
 [[rule]]
 name = "private-fill"
 extends = "base"
 match_resolved = { under = "include/mylib/private" }
-trailing_comment = { text = "// IWYU pragma: private", policy = "fill_if_absent" }
+trailing_comment = { text = "// note B", policy = "fill_if_absent" }
 
 [[rule]]
 name = "helper-append"
 extends = "base"
 match_resolved = { under = "include/mylib/helper" }
-trailing_comment = { text = "// IWYU pragma: associated", policy = "append" }
+trailing_comment = { text = "// note C", policy = "append" }
 
 [[rule]]
 name = "legacy-replace"
 extends = "base"
 match_resolved = { under = "include/mylib/legacy" }
-trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
+trailing_comment = { text = "// note D", policy = "replace" }

@@ -633,12 +633,12 @@ mod tests {
             r#"
             [[rule]]
             name = "r"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
             "#,
         );
         let map = resolve(&[cfg]).unwrap();
         let t = map["r"].trailing_comment.as_ref().unwrap();
-        assert_eq!(t.text, "// IWYU pragma: keep");
+        assert_eq!(t.text, "// note");
         assert_eq!(t.policy, TrailingPolicy::Prepend);
     }
 
@@ -649,7 +649,7 @@ mod tests {
             r#"
             [[rule]]
             name = "p"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "// note"
 
             [[rule]]
             name = "c"
@@ -658,7 +658,7 @@ mod tests {
         );
         let map = resolve(&[cfg]).unwrap();
         let t = map["c"].trailing_comment.as_ref().unwrap();
-        assert_eq!(t.text, "// IWYU pragma: keep");
+        assert_eq!(t.text, "// note");
     }
 
     #[test]

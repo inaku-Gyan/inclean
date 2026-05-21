@@ -243,17 +243,19 @@ default**. The rewrite engine touches only the delimited argument
 (`"foo.h"` or `<foo.h>`), so `#include "foo.h"  // pulled in for FOO`
 keeps its trailing note across every action type.
 
-Opt in to **injecting** a trailing comment (IWYU pragmas being the
-common use case) by setting `trailing_comment` on a rule. It is a
-rule-level field, sits alongside `paths` / `action` / etc., and is
-inherited by `extends` like every other rule field.
+Opt in to **injecting** a trailing comment by setting
+`trailing_comment` on a rule. inclean treats the configured text as
+opaque, so it can carry whatever marker your downstream tooling
+expects — for example, an IWYU pragma like `// IWYU pragma: keep`.
+It is a rule-level field, sits alongside `paths` / `action` / etc.,
+and is inherited by `extends` like every other rule field.
 
 ```toml
 [[rule]]
-name = "internal-iwyu"
+name = "internal-keep"
 extends = "base"
 match_resolved = { under = "include/mylib/internal" }
-trailing_comment = "/* IWYU pragma: keep */"
+trailing_comment = "/* keep */"
 ```
 
 The string shortcut above expands to `policy = "prepend"`. The full
@@ -261,7 +263,7 @@ form lets you choose how the configured text composes with any
 pre-existing trailing comment:
 
 ```toml
-trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
+trailing_comment = { text = "// export", policy = "replace" }
 ```
 
 Available policies (the "no existing comment" case is the same for
