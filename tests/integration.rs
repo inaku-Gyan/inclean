@@ -99,7 +99,7 @@ fn flat_library_apply_rewrites_files_in_place() {
 }
 
 #[test]
-fn trailing_comment_apply_exercises_all_policies() {
+fn trailing_comment_apply_exercises_all_idioms() {
     let src = fixture_path("trailing-comment-policies");
     let dst = tmp();
     copy_dir(&src, &dst);
@@ -111,29 +111,35 @@ fn trailing_comment_apply_exercises_all_policies() {
 
     let after = fs::read_to_string(dst.join("src/main.c")).unwrap();
 
-    // prepend: text precedes the (empty) trailing — two-space gutter.
+    // Plain replace with `form = "block"`: empty trailing → `/* note A */`.
     assert!(
         after.contains("\"mylib/internal/foo.h\"  /* note A */"),
         "got:\n{after}"
     );
-    // fill_if_absent with existing user comment: keep user note verbatim.
-    assert!(after.contains("\"mylib/private/bar.h\"  // user note"));
+    // Fill-if-absent (`match = "^$"`) with existing user comment: regex
+    // doesn't match → trailing untouched.
     assert!(
-        !after.contains("bar.h\"  // user note  //") && !after.contains("bar.h\"  // note B"),
+        after.contains("\"mylib/private/bar.h\"  // user note"),
         "fill_if_absent must not touch the existing comment; got:\n{after}"
     );
-    // fill_if_absent with no existing comment: inject text.
-    assert!(after.contains("\"mylib/private/baz.h\"  // note B"));
-    // append: place text after existing block comment.
     assert!(
-        after.contains("\"mylib/helper/qux.h\" /* please keep */ // note C"),
+        !after.contains("bar.h\"  // user note  //") && !after.contains("bar.h\"  // note B"),
+        "fill_if_absent must not stack notes; got:\n{after}"
+    );
+    // Fill-if-absent with no existing comment: inject. `form = preserve`
+    // with no existing comment falls back to line style.
+    assert!(after.contains("\"mylib/private/baz.h\"  // note B"));
+    // Append-with-idempotency: existing `/* please keep */` keeps the
+    // block style (preserve) and gets " note C" appended to the body.
+    assert!(
+        after.contains("\"mylib/helper/qux.h\" /* please keep note C */"),
         "got:\n{after}"
     );
-    // replace: text overwrites the legacy comment.
+    // Plain replace (line form): overwrites the legacy comment.
     assert!(after.contains("\"mylib/legacy/old.h\"  // note D"));
     assert!(
         !after.contains("legacy comment to be overwritten"),
-        "replace policy should have removed the user note; got:\n{after}"
+        "replace should have removed the user note; got:\n{after}"
     );
 
     fs::remove_dir_all(&dst).ok();
@@ -141,10 +147,13 @@ fn trailing_comment_apply_exercises_all_policies() {
 
 #[test]
 fn trailing_comment_apply_is_idempotent() {
-    // Re-applying must not stack copies of the configured text — the
-    // prepend / append idempotency check protects against that, and the
-    // replace / fill_if_absent paths converge on the byte-equality
-    // shortcut.
+    // Re-applying must not stack copies of the configured text. The new
+    // model relies on byte equality at the end of `finalize_outcome`:
+    // - plain replace runs produce identical bytes on the second pass;
+    // - the fill-if-absent rule's regex (`^$`) doesn't match once a
+    //   comment is present;
+    // - the append rule's non-greedy + optional-suffix pattern consumes
+    //   the already-appended " note C" on the second pass.
     let src = fixture_path("trailing-comment-policies");
     let dst = tmp();
     copy_dir(&src, &dst);
@@ -160,11 +169,10 @@ fn trailing_comment_apply_is_idempotent() {
     );
 
     let after = fs::read_to_string(dst.join("src/main.c")).unwrap();
-    // No duplicated trailing comments anywhere.
     assert_eq!(
         after.matches("note A").count(),
         1,
-        "prepend should not duplicate; got:\n{after}"
+        "replace should not duplicate; got:\n{after}"
     );
     assert_eq!(
         after.matches("note C").count(),

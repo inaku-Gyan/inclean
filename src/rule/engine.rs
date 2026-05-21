@@ -39,6 +39,10 @@ pub struct CompiledRule<'a> {
     /// Layer-5 path regex, pre-compiled. `None` if `match_resolved` is
     /// unset or only specifies `under`.
     pub resolved_regex: Option<Regex>,
+    /// `trailing_comment.match` regex, pre-compiled. `None` when the rule
+    /// has no `trailing_comment`. Always `Some` when `rule.trailing_comment`
+    /// is `Some` — the resolver guarantees a non-empty `match_regex`.
+    pub trailing_comment_regex: Option<Regex>,
     pub config_dir_relpath: PathBuf,
 }
 
@@ -59,12 +63,19 @@ impl<'a> CompiledRule<'a> {
             ),
             None => None,
         };
+        let trailing_comment_regex = match rule.trailing_comment.as_ref() {
+            Some(tc) => Some(Regex::new(&tc.match_regex).with_context(|| {
+                format!("rule `{}`: trailing_comment.match regex compile", rule.name)
+            })?),
+            None => None,
+        };
         let config_dir_relpath = strip_prefix_lossy(&rule.origin.config_dir, project_root);
         Ok(CompiledRule {
             rule,
             path_matcher,
             regex,
             resolved_regex,
+            trailing_comment_regex,
             config_dir_relpath,
         })
     }
@@ -850,6 +861,26 @@ mod tests {
         let root = PathBuf::from("/proj");
         let err = CompiledRule::new(rules.values().next().unwrap(), &root).unwrap_err();
         assert!(format!("{err:#}").contains("layer 4"));
+    }
+
+    #[test]
+    fn invalid_trailing_comment_match_regex_is_a_compile_error() {
+        let configs = vec![cfg_at(
+            "/proj/inclean.toml",
+            r#"
+            [[rule]]
+            name = "bad-trailing"
+            trailing_comment = { match = '[unclosed', to = "X" }
+            "#,
+        )];
+        let rules = resolve(&configs).unwrap();
+        let root = PathBuf::from("/proj");
+        let err = CompiledRule::new(rules.values().next().unwrap(), &root).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("trailing_comment.match"),
+            "expected pointer to trailing_comment.match, got: {msg}"
+        );
     }
 
     #[test]

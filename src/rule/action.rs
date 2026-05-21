@@ -5,17 +5,21 @@
 //! root. Output: an [`Outcome`] describing whether the include should be
 //! rewritten, kept as-is, or whether to abort the file with an error.
 //!
-//! Placeholder grammar in `rewrite.to` and `error.message` is `${name}`
-//! or `${N}` (regex capture). Use `$$` for a literal `$` (rarely needed).
+//! Placeholder grammar in `rewrite.to`, `error.message`, and
+//! `trailing_comment.to` is `${name}` or `${N}` (regex capture).
+//! `${comment.N}` / `${comment.text}` reference the `trailing_comment.match`
+//! captures and are only valid inside `trailing_comment.to`. Use `$$` for a
+//! literal `$` (rarely needed).
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 
 use super::engine::Match;
 use crate::config::inherit::{ResolvedAction, ResolvedTrailingComment};
-use crate::config::schema::{AutoRelativeTo, IncludeForm, OutputForm, TrailingPolicy};
+use crate::config::schema::{AutoRelativeTo, IncludeForm, OutputForm, TrailingForm};
 use crate::index::header_index;
 use crate::lex::include_line::Include;
 
@@ -67,10 +71,12 @@ pub fn evaluate(
         include,
         file_relpath,
         resolved: matched.resolved.as_deref(),
+        comment_captures: None,
     };
 
     let rule = matched.rule.rule;
     let trailing = rule.trailing_comment.as_ref();
+    let trailing_regex = matched.rule.trailing_comment_regex.as_ref();
 
     let new_arg: Option<String> = match &rule.action {
         // `error` aborts the file — trailing-comment settings are
@@ -96,7 +102,7 @@ pub fn evaluate(
         )?),
     };
 
-    finalize_outcome(include, source, new_arg, trailing, &ctx)
+    finalize_outcome(include, source, new_arg, trailing, trailing_regex, &ctx)
 }
 
 fn evaluate_auto_arg(
@@ -155,14 +161,15 @@ fn evaluate_auto_arg(
 }
 
 /// Combine the action's new argument (if any) with the rule's
-/// trailing-comment policy into a final `Outcome`. Idempotency is
-/// enforced here: when the resulting bytes match what's already in the
-/// source, the outcome collapses to `Keep`.
+/// trailing-comment substitution into a final `Outcome`. Idempotency falls
+/// out of the byte-equality collapse at the end: when the result equals
+/// what's already on disk, the outcome becomes `Keep`.
 fn finalize_outcome(
     include: &Include,
     source: &str,
     new_arg: Option<String>,
     trailing: Option<&ResolvedTrailingComment>,
+    trailing_regex: Option<&Regex>,
     ctx: &TemplateCtx<'_>,
 ) -> Result<Outcome> {
     let existing_arg = &source[include.argument_range.clone()];
@@ -170,9 +177,9 @@ fn finalize_outcome(
 
     let arg_text: String = new_arg.unwrap_or_else(|| existing_arg.to_string());
 
-    // No trailing-comment rule: behavior unchanged from before this
-    // feature — we only ever touch the argument range. Anything after the
-    // argument (whitespace, comments) is left to the file's own bytes.
+    // No trailing-comment rule: only touch the argument range. Anything
+    // after the argument (whitespace, comments) is left to the file's own
+    // bytes.
     let Some(config) = trailing else {
         if arg_text == existing_arg {
             return Ok(Outcome::Keep);
@@ -183,7 +190,13 @@ fn finalize_outcome(
         });
     };
 
-    let change = compute_trailing_change(config, existing_trailing, ctx)?;
+    // The resolver guarantees a compiled regex exists whenever the rule has
+    // `trailing_comment`. The `unwrap_or_else` branch is defensive — if it
+    // ever fires we treat the trailing as no-op rather than panic.
+    let change = match trailing_regex {
+        Some(re) => compute_trailing_change(config, re, existing_trailing, ctx)?,
+        None => TrailingChange::Unchanged,
+    };
     let new_trailing: String = match change {
         TrailingChange::Unchanged => existing_trailing.to_string(),
         TrailingChange::Set { trailing } => trailing,
@@ -201,85 +214,140 @@ fn finalize_outcome(
 }
 
 enum TrailingChange {
-    /// Leave existing trailing bytes alone (either policy says so or
-    /// idempotency detected the text is already where it should be).
+    /// Leave the existing trailing bytes alone (regex didn't match or the
+    /// trailing slice has no comment we know how to rewrite).
     Unchanged,
     /// Replace the trailing slice with this string (already includes any
-    /// leading whitespace).
+    /// leading whitespace; may be empty to strip the trailing comment).
     Set { trailing: String },
+}
+
+/// What the lexer's `trailing_range` looks like after we split it into
+/// whitespace + delimited body.
+struct ExistingTrailing<'a> {
+    /// Spaces / tabs between the argument and the delimiter (or all the
+    /// way to EOL if there's no comment).
+    leading_ws: &'a str,
+    /// `Some(_)` only when a `//` or `/* */` comment is present.
+    style: Option<ExistingStyle>,
+    /// Stripped comment body. Empty string when there's no comment. For
+    /// existing `// foo` / `/* foo */` we shave off one space of padding on
+    /// each side so that regex authors can write `^foo$` and have it match
+    /// the obvious case.
+    body: &'a str,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ExistingStyle {
+    Line,
+    Block,
+}
+
+fn parse_existing_trailing(raw: &str) -> ExistingTrailing<'_> {
+    let ws_end = raw
+        .bytes()
+        .position(|b| b != b' ' && b != b'\t')
+        .unwrap_or(raw.len());
+    let (leading_ws, rest) = raw.split_at(ws_end);
+
+    if let Some(after) = rest.strip_prefix("//") {
+        // Trim only one leading space of padding so that a user's `// foo`
+        // surfaces as `"foo"` in regex / `${comment.0}`. Trailing whitespace
+        // inside a line comment is rare and harmless to keep verbatim.
+        let body = after.strip_prefix(' ').unwrap_or(after);
+        return ExistingTrailing {
+            leading_ws,
+            style: Some(ExistingStyle::Line),
+            body,
+        };
+    }
+    if rest.len() >= 4 && rest.starts_with("/*") && rest.ends_with("*/") {
+        let inner = &rest[2..rest.len() - 2];
+        let inner = inner.strip_prefix(' ').unwrap_or(inner);
+        let inner = inner.strip_suffix(' ').unwrap_or(inner);
+        return ExistingTrailing {
+            leading_ws,
+            style: Some(ExistingStyle::Block),
+            body: inner,
+        };
+    }
+
+    // No comment, or malformed trailing (e.g. `/* never closed`). Defensive
+    // fallback — the lexer's `trailing_range` should not produce malformed
+    // cases since it stops at EOL.
+    ExistingTrailing {
+        leading_ws,
+        style: None,
+        body: "",
+    }
 }
 
 fn compute_trailing_change(
     config: &ResolvedTrailingComment,
+    comment_regex: &Regex,
     existing_trailing: &str,
     ctx: &TemplateCtx<'_>,
 ) -> Result<TrailingChange> {
-    let ws_end = existing_trailing
-        .bytes()
-        .position(|b| b != b' ' && b != b'\t')
-        .unwrap_or(existing_trailing.len());
-    let existing_ws = &existing_trailing[..ws_end];
-    let existing_comment = &existing_trailing[ws_end..];
+    let parsed = parse_existing_trailing(existing_trailing);
 
-    let subst_text = substitute(&config.text, ctx)?;
+    // Run the regex against the stripped body (empty when no comment).
+    let caps = match comment_regex.captures(parsed.body) {
+        Some(c) => c,
+        None => return Ok(TrailingChange::Unchanged),
+    };
+    let comment_captures: Vec<String> = caps
+        .iter()
+        .map(|m| m.map(|s| s.as_str().to_string()).unwrap_or_default())
+        .collect();
 
-    // Idempotency checks for prepend/append — without these, repeat
-    // `apply` runs would stack copies of `subst_text`. Replace and
-    // FillIfAbsent are naturally idempotent because they don't compose
-    // with the existing comment text.
-    match config.policy {
-        TrailingPolicy::Prepend
-            if !subst_text.is_empty() && existing_comment.starts_with(&subst_text) =>
-        {
-            return Ok(TrailingChange::Unchanged);
-        }
-        TrailingPolicy::Append
-            if !subst_text.is_empty() && existing_comment.ends_with(&subst_text) =>
-        {
-            return Ok(TrailingChange::Unchanged);
-        }
-        _ => {}
+    // A short-lived ctx that exposes the comment captures only for this
+    // substitution. Constructing a fresh struct (instead of mutating the
+    // caller's ctx) keeps the borrow scoped to `comment_captures` here.
+    let inner_ctx = TemplateCtx {
+        captures: ctx.captures,
+        include: ctx.include,
+        file_relpath: ctx.file_relpath,
+        resolved: ctx.resolved,
+        comment_captures: Some(&comment_captures),
+    };
+    let new_body = substitute(&config.to, &inner_ctx)?;
+
+    // Empty body means: strip the trailing comment entirely (whitespace +
+    // delimiters + body). `spacing` / `form` are ignored in this branch —
+    // otherwise we'd leave dangling spaces at end-of-line.
+    if new_body.is_empty() {
+        return Ok(TrailingChange::Set {
+            trailing: String::new(),
+        });
     }
 
-    let new_body: String = match config.policy {
-        TrailingPolicy::Prepend => {
-            if existing_comment.is_empty() {
-                subst_text
-            } else {
-                format!("{subst_text} {existing_comment}")
-            }
-        }
-        TrailingPolicy::Append => {
-            if existing_comment.is_empty() {
-                subst_text
-            } else {
-                format!("{existing_comment} {subst_text}")
-            }
-        }
-        TrailingPolicy::Replace => subst_text,
-        TrailingPolicy::FillIfAbsent => {
-            if existing_comment.is_empty() {
-                subst_text
-            } else {
-                return Ok(TrailingChange::Unchanged);
-            }
-        }
+    // Pick output style.
+    let out_style = match config.form {
+        TrailingForm::Line => ExistingStyle::Line,
+        TrailingForm::Block => ExistingStyle::Block,
+        TrailingForm::Preserve => parsed.style.unwrap_or(ExistingStyle::Line),
     };
 
-    // Leading whitespace: keep the user's spacing when present so we
-    // don't disturb hand-aligned columns; otherwise default to two
-    // spaces. When the result has no body at all (Replace with empty
-    // text → strip), emit nothing.
-    let leading_ws = if new_body.is_empty() {
-        String::new()
-    } else if existing_ws.is_empty() {
-        "  ".to_string()
-    } else {
-        existing_ws.to_string()
+    let wrapped = match out_style {
+        ExistingStyle::Line => format!("// {new_body}"),
+        ExistingStyle::Block => format!("/* {new_body} */"),
+    };
+
+    let leading_ws = match config.spacing {
+        Some(n) => " ".repeat(n as usize),
+        None => {
+            // Preserve hand-aligned whitespace; default to two spaces when
+            // there was nothing before.
+            if parsed.leading_ws.is_empty() {
+                "  ".to_string()
+            } else {
+                parsed.leading_ws.to_string()
+            }
+        }
     };
 
     Ok(TrailingChange::Set {
-        trailing: format!("{leading_ws}{new_body}"),
+        trailing: format!("{leading_ws}{wrapped}"),
     })
 }
 
@@ -330,6 +398,9 @@ struct TemplateCtx<'a> {
     /// Project-root-relative path produced by layer 5. `None` when the
     /// matching rule had no `match_resolved` block.
     resolved: Option<&'a Path>,
+    /// Captures of `trailing_comment.match`. Only `Some(_)` while
+    /// substituting `trailing_comment.to`; elsewhere `${comment.*}` errors.
+    comment_captures: Option<&'a [String]>,
 }
 
 fn substitute(template: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
@@ -363,13 +434,32 @@ fn substitute(template: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
 }
 
 fn resolve_placeholder(name: &str, ctx: &TemplateCtx<'_>) -> Result<String> {
-    // Numeric capture group?
+    // Numeric capture group? Layer-4 captures, available everywhere a
+    // template runs (including `trailing_comment.to`).
     if let Ok(n) = name.parse::<usize>() {
         return ctx
             .captures
             .get(n)
             .cloned()
             .with_context(|| format!("placeholder `${{{n}}}` exceeds available captures"));
+    }
+
+    // `${comment.*}` — only valid inside `trailing_comment.to` (the only
+    // call site that sets `ctx.comment_captures`).
+    if let Some(rest) = name.strip_prefix("comment.") {
+        let caps = ctx.comment_captures.with_context(|| {
+            format!("placeholder `${{{name}}}` is only valid inside `trailing_comment.to`")
+        })?;
+        if rest == "text" {
+            return Ok(caps.first().cloned().unwrap_or_default());
+        }
+        let idx: usize = rest.parse().with_context(|| {
+            format!("placeholder `${{comment.{rest}}}` is not a valid capture index")
+        })?;
+        return caps
+            .get(idx)
+            .cloned()
+            .with_context(|| format!("placeholder `${{comment.{idx}}}` exceeds available captures"));
     }
 
     Ok(match name {
@@ -792,7 +882,7 @@ mod tests {
         }
     }
 
-    // ---- Trailing-comment policy tests ------------------------------------
+    // ---- Trailing-comment tests -------------------------------------------
 
     /// Build an include + matching source that includes an arbitrary
     /// trailing string after the argument. The argument is rendered in
@@ -816,202 +906,327 @@ mod tests {
         (include, source)
     }
 
-    #[test]
-    fn trailing_prepend_into_empty_inserts_text() {
+    fn run(toml: &str, captures: Vec<String>, trailing: &str) -> Outcome {
         let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
-            r#"
-            [[rule]]
-            name = "r"
-            action = { type = "keep" }
-            trailing_comment = "// note"
-            "#,
-            &root,
-        );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        let (compiled, _) = build_one_rule(toml, &root);
+        let m = matched(&compiled, captures);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, trailing);
+        evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap()
+    }
+
+    fn assert_rewrite(out: Outcome, expected: &str) {
         match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // note");
-            }
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, expected),
             _ => panic!("expected Rewrite, got {out:?}"),
         }
     }
 
     #[test]
-    fn trailing_prepend_places_text_before_existing_comment() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_to_empty_strips_existing() {
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "/* note */", policy = "prepend" }
+            trailing_comment = { to = "" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "  // some note",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // note");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  /* note */ // note");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        assert_rewrite(out, "\"foo.h\"");
     }
 
     #[test]
-    fn trailing_prepend_is_idempotent_on_reapply() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_to_empty_noop_when_absent() {
+        // No comment and `to = ""` means "result is empty trailing"; bytes
+        // already match → Keep.
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = "// note"
+            trailing_comment = { to = "" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        // Simulate the post-first-apply state.
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // note");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
         assert_eq!(out, Outcome::Keep);
     }
 
     #[test]
-    fn trailing_append_places_text_after_existing_comment() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_default_match_overwrites_existing() {
+        // Default match is `.*` → captures any existing comment and the
+        // template emits a fresh `// note` body. `form = preserve` keeps
+        // the existing `//` style.
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// note-append", policy = "append" }
+            trailing_comment = { to = "note" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "  // old",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " /* user */");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\" /* user */ // note-append");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        // Existing whitespace preserved, style preserved as line.
+        assert_rewrite(out, "\"foo.h\"  // note");
     }
 
     #[test]
-    fn trailing_append_is_idempotent_on_reapply() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
-            r#"
+    fn trailing_match_empty_only_injects_when_absent() {
+        let toml = r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// note-append", policy = "append" }
-            "#,
-            &root,
+            trailing_comment = { match = "^$", to = "note" }
+            "#;
+        // No existing comment → regex matches empty body → inject.
+        assert_rewrite(
+            run(toml, vec!["foo.h".into()], ""),
+            "\"foo.h\"  // note",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) =
-            inc_with_trailing("foo.h", IncludeForm::Quote, " /* user */ // note-append");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
+        // Existing comment → regex doesn't match → trailing left alone.
+        let out = run(toml, vec!["foo.h".into()], "  // user");
         assert_eq!(out, Outcome::Keep);
     }
 
     #[test]
-    fn trailing_replace_overwrites_existing() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_comment_captures_into_template() {
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// note-replace", policy = "replace" }
+            trailing_comment = { match = '^todo: (.*)$', to = "fixme: ${comment.1}" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "  // todo: revisit",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // old note");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // note-replace");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        assert_rewrite(out, "\"foo.h\"  // fixme: revisit");
     }
 
     #[test]
-    fn trailing_replace_with_empty_strips_existing() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_comment_text_alias_matches_full_body() {
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "", policy = "replace" }
+            trailing_comment = { to = "X ${comment.text}" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "  // body",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // some note");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"");
-            }
-            _ => panic!("expected Rewrite, got {out:?}"),
-        }
+        assert_rewrite(out, "\"foo.h\"  // X body");
     }
 
     #[test]
-    fn trailing_fill_if_absent_leaves_existing_alone() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_form_line_overrides_block_style() {
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// note", policy = "fill_if_absent" }
+            trailing_comment = { to = "X", form = "line" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            " /* old */",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // user");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        assert_eq!(out, Outcome::Keep);
+        assert_rewrite(out, "\"foo.h\" // X");
     }
 
     #[test]
-    fn trailing_fill_if_absent_injects_when_missing() {
-        let root = PathBuf::from("/proj");
-        let (compiled, _) = build_one_rule(
+    fn trailing_form_block_overrides_line_style() {
+        let out = run(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = { text = "// note", policy = "fill_if_absent" }
+            trailing_comment = { to = "X", form = "block" }
             "#,
-            &root,
+            vec!["foo.h".into()],
+            "  // old",
         );
-        let m = matched(&compiled, vec!["foo.h".into()]);
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // note");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        assert_rewrite(out, "\"foo.h\"  /* X */");
     }
 
     #[test]
-    fn trailing_supports_placeholders() {
+    fn trailing_form_preserve_keeps_block_style() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            " /* old */",
+        );
+        assert_rewrite(out, "\"foo.h\" /* X */");
+    }
+
+    #[test]
+    fn trailing_form_preserve_defaults_to_line_when_no_existing_comment() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            "",
+        );
+        assert_rewrite(out, "\"foo.h\"  // X");
+    }
+
+    #[test]
+    fn trailing_spacing_zero_butts_delimiter_against_argument() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X", spacing = 0 }
+            "#,
+            vec!["foo.h".into()],
+            "",
+        );
+        assert_rewrite(out, "\"foo.h\"// X");
+    }
+
+    #[test]
+    fn trailing_spacing_n_overrides_existing_whitespace() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X", spacing = 4 }
+            "#,
+            vec!["foo.h".into()],
+            " // old",
+        );
+        assert_rewrite(out, "\"foo.h\"    // X");
+    }
+
+    #[test]
+    fn trailing_spacing_default_preserves_existing_whitespace() {
+        // Single-space alignment should round-trip — the default policy is
+        // "keep whatever whitespace was already there."
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            " // old",
+        );
+        assert_rewrite(out, "\"foo.h\" // X");
+    }
+
+    #[test]
+    fn trailing_spacing_default_falls_back_to_two_spaces() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            "",
+        );
+        assert_rewrite(out, "\"foo.h\"  // X");
+    }
+
+    #[test]
+    fn trailing_existing_block_inner_padding_is_normalized() {
+        // Inner padding of one space on each side is shaved when we read
+        // the existing body. The template here just echoes that body.
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "[${comment.0}]" }
+            "#,
+            vec!["foo.h".into()],
+            "  /* X */",
+        );
+        assert_rewrite(out, "\"foo.h\"  /* [X] */");
+    }
+
+    #[test]
+    fn trailing_idempotent_plain_replace() {
+        // Default match `.*` + literal `to`. First run rewrites; second run
+        // produces identical bytes → Keep.
+        let out1 = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            "  // old",
+        );
+        assert_rewrite(out1, "\"foo.h\"  // X");
+        // Second run: trailing is now "  // X".
+        let out2 = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "X" }
+            "#,
+            vec!["foo.h".into()],
+            "  // X",
+        );
+        assert_eq!(out2, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_idempotent_optional_prefix_prepend() {
+        // The documented prepend idiom for the `regex` crate (no lookaround):
+        // an optional non-capturing group eats the prefix when it's already
+        // there, so the captured tail is the same on both runs.
+        let toml = r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { match = '^(?:X )?(.*)$', to = "X ${comment.1}" }
+            "#;
+        let out1 = run(toml, vec!["foo.h".into()], "  // foo");
+        assert_rewrite(out1, "\"foo.h\"  // X foo");
+        // Second run: body is "X foo"; the `(?:X )?` eats the prefix, capture
+        // group is still "foo", template re-emits "X foo" → bytes unchanged.
+        let out2 = run(toml, vec!["foo.h".into()], "  // X foo");
+        assert_eq!(out2, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_to_supports_layer4_captures() {
+        // `${1}` inside `trailing_comment.to` still refers to layer-4
+        // include captures, not comment captures.
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            match = '^(.+)\.h$'
+            action = { type = "keep" }
+            trailing_comment = { to = "for ${1}" }
+            "#,
+            vec!["foo.h".into(), "foo".into()],
+            "",
+        );
+        assert_rewrite(out, "\"foo.h\"  // for foo");
+    }
+
+    #[test]
+    fn trailing_to_supports_resolved_basename() {
         let root = PathBuf::from("/proj");
         let (compiled, _) = build_one_rule(
             r#"
@@ -1019,43 +1234,73 @@ mod tests {
             name = "r"
             match_resolved = { under = "src" }
             action = { type = "keep" }
-            trailing_comment = "// for ${resolved.basename}"
+            trailing_comment = { to = "for ${resolved.basename}" }
             "#,
             &root,
         );
         let m = matched_resolved(&compiled, vec!["foo.h".into()], PathBuf::from("src/foo.h"));
         let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
         let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\"  // for foo.h");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        assert_rewrite(out, "\"foo.h\"  // for foo.h");
     }
 
     #[test]
-    fn trailing_preserves_existing_whitespace_alignment() {
+    fn trailing_to_supports_dollar_dollar_escape() {
+        let out = run(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "keep" }
+            trailing_comment = { to = "price$$1" }
+            "#,
+            vec!["foo.h".into()],
+            "",
+        );
+        assert_rewrite(out, "\"foo.h\"  // price$1");
+    }
+
+    #[test]
+    fn comment_placeholder_outside_trailing_to_errors() {
+        // Using `${comment.0}` in `rewrite.to` is a config-context error:
+        // there are no comment captures in scope outside trailing rendering.
+        let root = PathBuf::from("/proj");
+        let (compiled, _) = build_one_rule(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "rewrite", to = "${comment.0}" }
+            "#,
+            &root,
+        );
+        let m = matched(&compiled, vec!["foo.h".into()]);
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "");
+        let err = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("only valid inside `trailing_comment.to`"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn comment_placeholder_unknown_index_errors() {
         let root = PathBuf::from("/proj");
         let (compiled, _) = build_one_rule(
             r#"
             [[rule]]
             name = "r"
             action = { type = "keep" }
-            trailing_comment = "// note"
+            trailing_comment = { match = '^(.*)$', to = "${comment.5}" }
             "#,
             &root,
         );
         let m = matched(&compiled, vec!["foo.h".into()]);
-        // Existing alignment uses a single space — we should preserve it
-        // rather than forcing two spaces in.
-        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, " // user");
-        let out = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap();
-        match out {
-            Outcome::Rewrite { new_text, .. } => {
-                assert_eq!(new_text, "\"foo.h\" // note // user");
-            }
-            _ => panic!("expected Rewrite"),
-        }
+        let (inc, src) = inc_with_trailing("foo.h", IncludeForm::Quote, "  // body");
+        let err = evaluate(&m, &inc, &src, Path::new("src/main.c"), &root).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("exceeds available captures"),
+            "got: {msg}"
+        );
     }
 }
