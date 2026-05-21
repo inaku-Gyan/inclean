@@ -180,14 +180,3 @@ jobs:
           files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
-
-  publish-winget:
-    name: publish to WinGet
-    needs: gh-release
-    runs-on: windows-latest
-    steps:
-      - uses: vedantmgoyal2009/winget-releaser@v2
-        with:
-          identifier: inakuGyan.inclean
-          installers-regex: '\.zip$'
-          token: ${{ secrets.WINGET_TOKEN }}
