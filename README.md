@@ -1,5 +1,7 @@
 # inclean
 
+_English | [简体中文](README.zh-CN.md)_
+
 A C/C++ `#include` path normalizer.
 
 Many legacy C/C++ libraries `#include` headers by bare filename
@@ -133,7 +135,10 @@ for the full breakdown.
 
 ## Status
 
-`0.1` — feature-complete for v1. See [CHANGELOG.md](CHANGELOG.md).
+`0.1.1` — current. Includes a breaking change to the
+`trailing_comment` action schema; see
+[CHANGELOG.md](CHANGELOG.md) for the migration note. Feature-complete
+for v1.
 
 ## License
 

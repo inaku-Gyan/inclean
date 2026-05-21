@@ -24,6 +24,10 @@ behavior. For an end-to-end walkthrough, see the
     - [`keep`](#keep)
     - [`error`](#error)
   - [Trailing comments (`trailing_comment`)](#trailing-comments-trailing_comment)
+    - [Fields](#fields)
+    - [Idempotency](#idempotency)
+    - [Whitespace and inner padding](#whitespace-and-inner-padding)
+    - [`//` line-comment caveat](#-line-comment-caveat)
   - [`${...}` placeholders](#-placeholders)
   - [`@std.*` built-in constants](#std-built-in-constants)
   - [`allowed_include_dirs` semantics](#allowed_include_dirs-semantics)
@@ -237,6 +241,12 @@ exit 3).
 
 ## Trailing comments (`trailing_comment`)
 
+> **v0.1.1 breaking change.** The `trailing_comment` schema was
+> redesigned in 0.1.1. The old `policy` / `text` fields are gone;
+> configs that worked under 0.1.0 must be rewritten using the new
+> `{ match, to, form, spacing }` shape documented below. See
+> [CHANGELOG.md](../CHANGELOG.md) for the full migration note.
+
 Anything written after the `#include` argument — leading whitespace
 plus the trailing comment, if any — is **preserved verbatim by
 default**. The rewrite engine touches only the delimited argument
@@ -272,12 +282,12 @@ trailing_comment = {
 
 ### Fields
 
-| Field | Type | Default | Notes |
-| ----- | ---- | ------- | ----- |
-| `match` | regex | `".*"` | Runs against the **stripped** existing comment body — i.e. the text inside `//` or `/* */`, with one space of padding shaved off each side. When the line has no trailing comment the regex is run against the empty string `""`, so `match = "^$"` is the "only inject when absent" idiom. **If the regex does not match, the rule leaves the existing trailing bytes untouched** — the rule's include-argument action still runs. |
-| `to` | template | required | The **stripped** body of the new comment (no `//`, no `/* */`). Supports the regular `${...}` placeholder grammar, plus `${comment.N}` / `${comment.text}` for the `match` regex's capture groups (see the placeholder section below). Setting `to = ""` removes the trailing comment entirely (whitespace + delimiters + body) — `form` and `spacing` are ignored in that branch. |
-| `form` | `"line"` / `"block"` / `"preserve"` | `"preserve"` | `"line"` emits `// <body>`, `"block"` emits `/* <body> */`. `"preserve"` reuses the existing comment's style, falling back to `"line"` when the line had no comment to begin with. |
-| `spacing` | non-negative integer | (preserve) | When set, emits exactly this many spaces between the argument and the `//` / `/*`. When unset, preserves whatever whitespace was already in front of the comment, falling back to two spaces when there was no existing whitespace/comment. |
+| Field     | Type                                | Default      | Notes                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------- | ----------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `match`   | regex                               | `".*"`       | Runs against the **stripped** existing comment body — i.e. the text inside `//` or `/* */`, with one space of padding shaved off each side. When the line has no trailing comment the regex is run against the empty string `""`, so `match = "^$"` is the "only inject when absent" idiom. **If the regex does not match, the rule leaves the existing trailing bytes untouched** — the rule's include-argument action still runs. |
+| `to`      | template                            | required     | The **stripped** body of the new comment (no `//`, no `/* */`). Supports the regular `${...}` placeholder grammar, plus `${comment.N}` / `${comment.text}` for the `match` regex's capture groups (see the placeholder section below). Setting `to = ""` removes the trailing comment entirely (whitespace + delimiters + body) — `form` and `spacing` are ignored in that branch.                                                  |
+| `form`    | `"line"` / `"block"` / `"preserve"` | `"preserve"` | `"line"` emits `// <body>`, `"block"` emits `/* <body> */`. `"preserve"` reuses the existing comment's style, falling back to `"line"` when the line had no comment to begin with.                                                                                                                                                                                                                                                  |
+| `spacing` | non-negative integer                | (preserve)   | When set, emits exactly this many spaces between the argument and the `//` / `/*`. When unset, preserves whatever whitespace was already in front of the comment, falling back to two spaces when there was no existing whitespace/comment.                                                                                                                                                                                         |
 
 Both `match` and `to` go through `@std.*` constant expansion, just
 like layer-4 `match` and `rewrite.to`.
@@ -339,21 +349,21 @@ explicitly.
 Available in `rewrite.to`, `error.message`, and `trailing_comment.to`
 (the comment-only placeholders are scoped to the last).
 
-| Placeholder            | Meaning                                                                                       |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `${0}`                 | The full stripped include text                                                                |
-| `${1}`, `${2}`, …      | Capture groups from layer-4 `match`                                                           |
-| `${file.path}`         | Source file path (project-root-relative)                                                      |
-| `${file.relpath}`      | Same as `${file.path}`                                                                        |
-| `${file.dir}`          | Directory of the source file                                                                  |
-| `${resolved.path}`     | Resolved file's project-root-relative path _(layer 5 only)_                                   |
-| `${resolved.relpath}`  | Same as `${resolved.path}`                                                                    |
-| `${resolved.dir}`      | Directory of the resolved file                                                                |
-| `${resolved.basename}` | Basename of the resolved file                                                                 |
-| `${comment.0}`         | The full match of `trailing_comment.match` _(only inside `trailing_comment.to`)_              |
-| `${comment.text}`      | Alias for `${comment.0}`                                                                      |
+| Placeholder                       | Meaning                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------- |
+| `${0}`                            | The full stripped include text                                                     |
+| `${1}`, `${2}`, …                 | Capture groups from layer-4 `match`                                                |
+| `${file.path}`                    | Source file path (project-root-relative)                                           |
+| `${file.relpath}`                 | Same as `${file.path}`                                                             |
+| `${file.dir}`                     | Directory of the source file                                                       |
+| `${resolved.path}`                | Resolved file's project-root-relative path _(layer 5 only)_                        |
+| `${resolved.relpath}`             | Same as `${resolved.path}`                                                         |
+| `${resolved.dir}`                 | Directory of the resolved file                                                     |
+| `${resolved.basename}`            | Basename of the resolved file                                                      |
+| `${comment.0}`                    | The full match of `trailing_comment.match` _(only inside `trailing_comment.to`)_   |
+| `${comment.text}`                 | Alias for `${comment.0}`                                                           |
 | `${comment.1}`, `${comment.2}`, … | Capture groups from `trailing_comment.match` _(only inside `trailing_comment.to`)_ |
-| `$$`                   | Literal `$`                                                                                   |
+| `$$`                              | Literal `$`                                                                        |
 
 `${resolved.*}` placeholders require layer 5 to have run; using them
 in a rule without `match_resolved` is an error. `${comment.*}`
