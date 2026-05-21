@@ -77,34 +77,52 @@ pub struct RawRule {
 
 /// Trailing-comment injection. Two TOML shapes:
 ///
-/// - Shortcut: a bare string, equivalent to `{ text = "...", policy = "prepend" }`.
-/// - Full: `{ text = "...", policy = "prepend" | "append" | "replace" | "fill_if_absent" }`.
+/// - Shortcut: a bare string, equivalent to `{ to = "<string>" }` with
+///   default `match` / `form` / `spacing`. The empty string is rejected
+///   (use the table form with `to = ""` to strip the trailing comment).
+/// - Full: `{ match?, to, form?, spacing? }`.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum RawTrailingComment {
     Shortcut(String),
-    Full {
-        #[serde(default)]
-        text: Option<String>,
-        #[serde(default)]
-        policy: Option<TrailingPolicy>,
-    },
+    Full(RawTrailingCommentFull),
 }
 
-/// How a configured trailing-comment text combines with any pre-existing
-/// trailing comment on the include line.
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RawTrailingCommentFull {
+    /// Regex over the stripped existing comment body. Optional; defaults
+    /// to `".*"` at resolve time. Empty existing comment is matched as `""`.
+    #[serde(rename = "match", default)]
+    pub match_regex: Option<String>,
+
+    /// Template for the new comment's stripped body. `Option` so we can
+    /// distinguish "missing" (config error) from "empty" (`to = ""` means
+    /// strip the trailing comment).
+    #[serde(default)]
+    pub to: Option<String>,
+
+    /// `"line"`, `"block"`, or `"preserve"`. Defaults to `Preserve`.
+    #[serde(default)]
+    pub form: Option<TrailingForm>,
+
+    /// Number of spaces before the comment delimiter. `None` preserves the
+    /// existing leading whitespace, falling back to two spaces.
+    #[serde(default)]
+    pub spacing: Option<u32>,
+}
+
+/// Delimiter style for the new trailing comment.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TrailingPolicy {
-    /// Default. Place `text` before any existing trailing comment.
-    Prepend,
-    /// Place `text` after any existing trailing comment.
-    Append,
-    /// Replace any existing trailing comment with `text`. An empty `text`
-    /// strips the trailing comment entirely.
-    Replace,
-    /// Only inject `text` when there is no existing trailing comment.
-    FillIfAbsent,
+#[serde(rename_all = "lowercase")]
+pub enum TrailingForm {
+    /// `// content`
+    Line,
+    /// `/* content */`
+    Block,
+    /// Keep whatever style the existing comment used; default to `Line`
+    /// when there was no existing comment.
+    Preserve,
 }
 
 /// Layer-5 constraint shape. At least one field must be specified.
@@ -412,56 +430,97 @@ mod tests {
             r#"
             [[rule]]
             name = "r"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "note"
             "#,
         );
         match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Shortcut(s) => assert_eq!(s, "// IWYU pragma: keep"),
+            RawTrailingComment::Shortcut(s) => assert_eq!(s, "note"),
             _ => panic!("expected shortcut"),
         }
     }
 
     #[test]
-    fn trailing_comment_full_form_parses() {
+    fn trailing_comment_full_form_parses_all_fields() {
         let cfg = parse_str(
             r#"
             [[rule]]
             name = "r"
-            trailing_comment = { text = "// X", policy = "replace" }
+            trailing_comment = { match = "^$", to = "X", form = "block", spacing = 4 }
             "#,
         );
         match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Full { text, policy } => {
-                assert_eq!(text.as_deref(), Some("// X"));
-                assert_eq!(*policy, Some(TrailingPolicy::Replace));
+            RawTrailingComment::Full(f) => {
+                assert_eq!(f.match_regex.as_deref(), Some("^$"));
+                assert_eq!(f.to.as_deref(), Some("X"));
+                assert_eq!(f.form, Some(TrailingForm::Block));
+                assert_eq!(f.spacing, Some(4));
             }
             _ => panic!("expected full"),
         }
     }
 
     #[test]
-    fn trailing_comment_all_policies_parse() {
+    fn trailing_comment_form_variants_parse() {
         for (name, expected) in [
-            ("prepend", TrailingPolicy::Prepend),
-            ("append", TrailingPolicy::Append),
-            ("replace", TrailingPolicy::Replace),
-            ("fill_if_absent", TrailingPolicy::FillIfAbsent),
+            ("line", TrailingForm::Line),
+            ("block", TrailingForm::Block),
+            ("preserve", TrailingForm::Preserve),
         ] {
             let body = format!(
                 r#"
                 [[rule]]
                 name = "r"
-                trailing_comment = {{ text = "// X", policy = "{name}" }}
+                trailing_comment = {{ to = "X", form = "{name}" }}
                 "#
             );
             let cfg = parse_str(&body);
             match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-                RawTrailingComment::Full { policy, .. } => {
-                    assert_eq!(*policy, Some(expected));
-                }
+                RawTrailingComment::Full(f) => assert_eq!(f.form, Some(expected)),
                 _ => panic!("expected full"),
             }
         }
+    }
+
+    #[test]
+    fn trailing_comment_full_form_minimal_to() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { to = "X" }
+            "#,
+        );
+        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
+            RawTrailingComment::Full(f) => {
+                assert_eq!(f.to.as_deref(), Some("X"));
+                assert!(f.match_regex.is_none());
+                assert!(f.form.is_none());
+                assert!(f.spacing.is_none());
+            }
+            _ => panic!("expected full"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_legacy_policy_field_is_rejected() {
+        // The old `policy` / `text` fields have been replaced; surfacing them
+        // as unknown ensures users get a clear migration error rather than a
+        // silently ignored field.
+        let err = parse(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { text = "X", policy = "prepend" }
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        // toml's "unknown field" error mentions at least one of the rejected keys.
+        assert!(
+            msg.contains("policy") || msg.contains("text") || msg.contains("unknown field"),
+            "expected unknown-field error mentioning policy/text, got: {msg}"
+        );
     }
 
     #[test]

@@ -1,0 +1,10 @@
+[project]
+root = "."
+
+# Abstract base — concrete `paths` and `original_include_dirs` are set by
+# each module's sub-config.
+
+[[rule]]
+name = "base"
+forms = ["quote"]
+allowed_include_dirs = ["include"]

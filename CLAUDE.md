@@ -68,9 +68,6 @@ cargo check     # fast type-check
 cargo test      # unit + integration tests
 cargo clippy    # lints
 cargo fmt       # format
-
-# Run perf benchmarks (11k-file synthetic project, release mode):
-cargo test --release --test perf -- --ignored --nocapture
 ```
 
 Integration fixtures live under `tests/fixtures/` (small fake libraries).

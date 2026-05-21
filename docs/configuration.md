@@ -243,85 +243,122 @@ default**. The rewrite engine touches only the delimited argument
 (`"foo.h"` or `<foo.h>`), so `#include "foo.h"  // pulled in for FOO`
 keeps its trailing note across every action type.
 
-Opt in to **injecting** a trailing comment (IWYU pragmas being the
-common use case) by setting `trailing_comment` on a rule. It is a
-rule-level field, sits alongside `paths` / `action` / etc., and is
-inherited by `extends` like every other rule field.
+Opt in to rewriting the trailing comment by setting `trailing_comment`
+on a rule. The shape mirrors the include action: a `match` regex
+selects which existing comments the rule applies to, and a `to`
+template — supporting `${...}` placeholders — produces the new
+comment body. `form` switches between `//` and `/* */` (the way
+`form = "quote"` / `form = "angle"` switches between `"..."` /
+`<...>` for include paths), and `spacing` controls the number of
+spaces that go between the include argument and the new comment.
+
+The field is rule-level and inherited via `extends` like every other
+rule field.
 
 ```toml
-[[rule]]
-name = "internal-iwyu"
-extends = "base"
-match_resolved = { under = "include/mylib/internal" }
-trailing_comment = "/* IWYU pragma: keep */"
+# Shortcut: a bare string is sugar for `{ to = "<string>" }` with
+# every other field defaulted. The empty string is rejected — use the
+# table form with `to = ""` to delete the trailing comment.
+trailing_comment = "keep"
+
+# Full table form.
+trailing_comment = {
+  match   = "^$",        # optional; default ".*"
+  to      = "X ${comment.0}",  # required
+  form    = "line",      # optional; "line" | "block" | "preserve" (default)
+  spacing = 2,           # optional; default = preserve existing, fall back to 2
+}
 ```
 
-The string shortcut above expands to `policy = "prepend"`. The full
-form lets you choose how the configured text composes with any
-pre-existing trailing comment:
+### Fields
 
-```toml
-trailing_comment = { text = "// IWYU pragma: export", policy = "replace" }
-```
+| Field | Type | Default | Notes |
+| ----- | ---- | ------- | ----- |
+| `match` | regex | `".*"` | Runs against the **stripped** existing comment body — i.e. the text inside `//` or `/* */`, with one space of padding shaved off each side. When the line has no trailing comment the regex is run against the empty string `""`, so `match = "^$"` is the "only inject when absent" idiom. **If the regex does not match, the rule leaves the existing trailing bytes untouched** — the rule's include-argument action still runs. |
+| `to` | template | required | The **stripped** body of the new comment (no `//`, no `/* */`). Supports the regular `${...}` placeholder grammar, plus `${comment.N}` / `${comment.text}` for the `match` regex's capture groups (see the placeholder section below). Setting `to = ""` removes the trailing comment entirely (whitespace + delimiters + body) — `form` and `spacing` are ignored in that branch. |
+| `form` | `"line"` / `"block"` / `"preserve"` | `"preserve"` | `"line"` emits `// <body>`, `"block"` emits `/* <body> */`. `"preserve"` reuses the existing comment's style, falling back to `"line"` when the line had no comment to begin with. |
+| `spacing` | non-negative integer | (preserve) | When set, emits exactly this many spaces between the argument and the `//` / `/*`. When unset, preserves whatever whitespace was already in front of the comment, falling back to two spaces when there was no existing whitespace/comment. |
 
-Available policies (the "no existing comment" case is the same for
-all four — `text` is injected with a two-space gutter after the
-argument):
+Both `match` and `to` go through `@std.*` constant expansion, just
+like layer-4 `match` and `rewrite.to`.
 
-| policy             | When the include already has a trailing comment             |
-| ------------------ | ----------------------------------------------------------- |
-| `prepend` (default)| `text` + one space + the existing comment                   |
-| `append`           | Existing comment + one space + `text`                       |
-| `replace`          | Replace existing trailing content with `text`               |
-| `fill_if_absent`   | Leave the existing comment untouched, inject nothing        |
+### Idempotency
 
-An empty `text` is only valid with `policy = "replace"` — that is the
-explicit "strip the trailing comment" form. Other policies reject
-empty text at config load.
+There is no built-in "don't double-apply" guard — re-running
+`inclean apply` is a no-op precisely when the regex + template
+re-produce the same bytes that are already on disk. Two patterns
+cover the common cases:
 
-`text` runs through the same `${...}` placeholder engine as
-`rewrite.to`, including layer-5 placeholders such as
-`${resolved.basename}` when the rule sets `match_resolved`. Use
-`@std.*` constants in it just like any other template.
+- **Plain replace is naturally idempotent.** `{ to = "X" }` (default
+  match `.*`) always overwrites the existing body with `X`, so the
+  second run produces identical bytes and falls into `Outcome::Keep`.
+- **Idempotent prepend / append** use an optional non-capturing
+  group to consume the prefix or suffix when it's already there,
+  then put it back via the template. The Rust `regex` crate doesn't
+  support lookaround, so this is the idiom that works:
 
-**Whitespace.** When the include already has whitespace before its
-existing trailing comment, that exact whitespace is preserved. When
-there was no trailing content at all and a new comment is being
-injected, two spaces are inserted between the argument and the text.
+  ```toml
+  # Prepend "X " in front of the existing body, idempotent across runs.
+  trailing_comment = { match = '^(?:X )?(.*)$', to = "X ${comment.1}" }
 
-**Apply is idempotent.** Re-running `inclean apply` does not stack
-copies of the configured text — `prepend` / `append` detect an
-already-applied insertion by exact byte match against the existing
-comment's start / end; `replace` and `fill_if_absent` converge to a
-no-op when the resulting bytes equal what's already on disk.
+  # Append " X" after the existing body, idempotent across runs.
+  trailing_comment = { match = '^(.*?)(?: X)?$', to = "${comment.1} X" }
 
-**`//` line-comment caveat.** A `//` comment extends to end-of-line,
-so a single `#include` line can hold at most one `//`-style comment.
-If a rule combines `text` and an existing user comment via `prepend`
-or `append`, you must use `/* ... */` for at least one of the two if
-you want both to survive — otherwise the second `//` ends up swallowed
-by the first. inclean does not auto-convert comment forms; that's a
-deliberate choice you make in the config.
+  # Only inject when there is no existing comment (the old "fill_if_absent").
+  trailing_comment = { match = "^$", to = "X" }
+
+  # Replace any existing comment with X (the old "replace").
+  trailing_comment = { to = "X" }
+
+  # Strip the trailing comment entirely.
+  trailing_comment = { to = "" }
+  ```
+
+### Whitespace and inner padding
+
+Reading an existing comment, inclean shaves a single space of
+padding off the inner edges of `//` and `/* */`, so `// foo` and
+`/* foo */` both expose `foo` to the regex and to `${comment.0}`.
+On output, line and block forms always emit one space of inner
+padding (`// X`, `/* X */`) regardless of the input — there is no
+configuration for that.
+
+### `//` line-comment caveat
+
+A `//` comment extends to end-of-line, so a single `#include` line
+can hold at most one `//`-style comment. If your template appends
+to an existing `//` comment, the result is still a single `//`
+comment (because the template controls the body, not the
+delimiters). The case to watch is `form = "preserve"` with an
+existing `//` comment plus a template that introduces something
+the line cannot represent — in those cases set `form = "block"`
+explicitly.
 
 ## `${...}` placeholders
 
-Available in `rewrite.to` and `error.message`:
+Available in `rewrite.to`, `error.message`, and `trailing_comment.to`
+(the comment-only placeholders are scoped to the last).
 
-| Placeholder            | Meaning                                                     |
-| ---------------------- | ----------------------------------------------------------- |
-| `${0}`                 | The full stripped include text                              |
-| `${1}`, `${2}`, …      | Capture groups from layer-4 `match`                         |
-| `${file.path}`         | Source file path (project-root-relative)                    |
-| `${file.relpath}`      | Same as `${file.path}`                                      |
-| `${file.dir}`          | Directory of the source file                                |
-| `${resolved.path}`     | Resolved file's project-root-relative path _(layer 5 only)_ |
-| `${resolved.relpath}`  | Same as `${resolved.path}`                                  |
-| `${resolved.dir}`      | Directory of the resolved file                              |
-| `${resolved.basename}` | Basename of the resolved file                               |
-| `$$`                   | Literal `$`                                                 |
+| Placeholder            | Meaning                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| `${0}`                 | The full stripped include text                                                                |
+| `${1}`, `${2}`, …      | Capture groups from layer-4 `match`                                                           |
+| `${file.path}`         | Source file path (project-root-relative)                                                      |
+| `${file.relpath}`      | Same as `${file.path}`                                                                        |
+| `${file.dir}`          | Directory of the source file                                                                  |
+| `${resolved.path}`     | Resolved file's project-root-relative path _(layer 5 only)_                                   |
+| `${resolved.relpath}`  | Same as `${resolved.path}`                                                                    |
+| `${resolved.dir}`      | Directory of the resolved file                                                                |
+| `${resolved.basename}` | Basename of the resolved file                                                                 |
+| `${comment.0}`         | The full match of `trailing_comment.match` _(only inside `trailing_comment.to`)_              |
+| `${comment.text}`      | Alias for `${comment.0}`                                                                      |
+| `${comment.1}`, `${comment.2}`, … | Capture groups from `trailing_comment.match` _(only inside `trailing_comment.to`)_ |
+| `$$`                   | Literal `$`                                                                                   |
 
 `${resolved.*}` placeholders require layer 5 to have run; using them
-in a rule without `match_resolved` is an error.
+in a rule without `match_resolved` is an error. `${comment.*}`
+placeholders may only appear in `trailing_comment.to`; using them
+elsewhere (e.g. in `rewrite.to`) is an error.
 
 ## `@std.*` built-in constants
 

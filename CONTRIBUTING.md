@@ -20,9 +20,6 @@ cargo check                # fast type-check
 cargo test                 # unit + integration tests
 cargo clippy --all-targets # lints
 cargo fmt                  # format
-
-# Run perf benchmarks (10k-file synthetic project, release mode):
-cargo test --release --test perf -- --ignored --nocapture
 ```
 
 All four of `cargo test`, `cargo clippy --all-targets`, and
@@ -39,7 +36,6 @@ module-by-module map. In short:
 - `src/config/*`, `src/lex/*`, `src/rule/*`, `src/index/*`,
   `src/validate/*` — the matching pipeline's building blocks.
 - `tests/integration.rs` + `tests/fixtures/` — end-to-end tests.
-- `tests/perf.rs` — `#[ignore]`-gated benchmarks.
 
 ## Adding a feature or fixing a bug
 

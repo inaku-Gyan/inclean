@@ -1,0 +1,17 @@
+[project]
+root = "."
+
+# Any include matching `^deprecated_` triggers the error action with a
+# message that substitutes the include's content. Exit code 2.
+
+[[rule]]
+name = "base"
+paths = ["src/**"]
+forms = ["quote"]
+action = { type = "keep" }
+
+[[rule]]
+name = "deprecated"
+extends = "base"
+match = '^deprecated_'
+action = { type = "error", message = "include `${include.text}` is deprecated" }

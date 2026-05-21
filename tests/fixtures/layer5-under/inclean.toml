@@ -1,0 +1,19 @@
+[project]
+root = "."
+
+# Base resolves via src/internal but keeps includes verbatim; child uses
+# layer 5 to narrow to actually-resolved-under-internal files and rewrites
+# them to a canonical `mylib/internal/<basename>` form.
+
+[[rule]]
+name = "base"
+paths = ["src/**"]
+forms = ["quote"]
+original_include_dirs = ["src/internal"]
+action = { type = "keep" }
+
+[[rule]]
+name = "internal"
+extends = "base"
+match_resolved = { under = "src/internal" }
+action = { type = "rewrite", to = "mylib/internal/${resolved.basename}" }

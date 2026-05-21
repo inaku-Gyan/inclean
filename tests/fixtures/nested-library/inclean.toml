@@ -1,0 +1,12 @@
+[project]
+root = "."
+
+[[rule]]
+name = "base"
+paths = ["src/**"]
+forms = ["quote"]
+allowed_include_dirs = ["include"]
+original_include_dirs = [
+    "include/mylib/core",
+    "include/mylib/core/detail",
+]

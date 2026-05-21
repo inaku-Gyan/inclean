@@ -1,0 +1,60 @@
+# Fixture exercising the redesigned `trailing_comment` shape (regex match
+# + template `to` + `form` + `spacing`). Each rule narrows by
+# `match_resolved.under` so a single include in main.c hits exactly one
+# rule.
+#
+# This file deliberately covers each of the four idioms that used to be
+# the `prepend` / `append` / `replace` / `fill_if_absent` policies, now
+# expressed in the unified schema:
+#   - plain replace (default `match = ".*"`)
+#   - fill-if-absent  (`match = "^$"`)
+#   - append-with-idempotency (non-greedy capture + optional suffix)
+#   - line-vs-block `form` switching
+
+[project]
+root = "."
+
+[[rule]]
+name = "base"
+paths = ["src/**"]
+forms = ["quote"]
+allowed_include_dirs = ["include"]
+original_include_dirs = [
+    "include/mylib/internal",
+    "include/mylib/private",
+    "include/mylib/helper",
+    "include/mylib/legacy",
+]
+
+# Replace-style with `form = "block"`. Default `match = ".*"` overwrites
+# whatever was there (or fills when empty). Naturally idempotent because
+# both runs produce identical bytes.
+[[rule]]
+name = "internal-replace-block"
+extends = "base"
+match_resolved = { under = "include/mylib/internal" }
+trailing_comment = { to = "note A", form = "block" }
+
+# Fill-if-absent: `match = "^$"` only matches when there's no existing
+# trailing comment. Skips lines that already have one.
+[[rule]]
+name = "private-fill"
+extends = "base"
+match_resolved = { under = "include/mylib/private" }
+trailing_comment = { match = "^$", to = "note B" }
+
+# Append-style with built-in idempotency. The non-greedy capture + optional
+# `(?: note C)?` consume any already-appended suffix on the second run, so
+# the template re-emits the same bytes.
+[[rule]]
+name = "helper-append"
+extends = "base"
+match_resolved = { under = "include/mylib/helper" }
+trailing_comment = { match = '^(.*?)(?: note C)?$', to = "${comment.1} note C" }
+
+# Plain replace: default match `.*`, line form.
+[[rule]]
+name = "legacy-replace"
+extends = "base"
+match_resolved = { under = "include/mylib/legacy" }
+trailing_comment = { to = "note D" }

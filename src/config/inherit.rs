@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use super::constants;
 use super::schema::{
     index_rules_by_name, AutoRelativeTo, IncludeForm, LoadedConfig, OutputForm, RawAction,
-    RawMatchResolved, RawRule, RawTrailingComment, RuleLocator, TrailingPolicy,
+    RawMatchResolved, RawRule, RawTrailingComment, RuleLocator, TrailingForm,
 };
 
 /// Where a rule was declared. Carried through to the matching engine so
@@ -57,10 +57,19 @@ pub struct ResolvedRule {
 }
 
 /// Trailing-comment configuration after defaults and `@std.*` substitution.
+///
+/// `match_regex` is matched against the *stripped* existing trailing comment
+/// (the text inside `//` or `/* */`, with one space of padding shaved off);
+/// `".*"` by default. `to` is the new comment's stripped body (no
+/// delimiters); empty `to` means "strip the trailing comment entirely".
+/// `spacing` of `None` preserves whatever whitespace was already there,
+/// falling back to two spaces when no whitespace was present.
 #[derive(Debug, Clone)]
 pub struct ResolvedTrailingComment {
-    pub text: String,
-    pub policy: TrailingPolicy,
+    pub match_regex: String,
+    pub to: String,
+    pub form: TrailingForm,
+    pub spacing: Option<u32>,
 }
 
 /// Layer-5 constraints after constant expansion.
@@ -272,24 +281,46 @@ fn resolve_trailing_comment(
     raw: &RawTrailingComment,
     ctx: &str,
 ) -> Result<ResolvedTrailingComment> {
-    let (text, policy) = match raw {
-        RawTrailingComment::Shortcut(s) => (s.clone(), TrailingPolicy::Prepend),
-        RawTrailingComment::Full { text, policy } => (
-            text.clone().unwrap_or_default(),
-            policy.unwrap_or(TrailingPolicy::Prepend),
-        ),
+    let (match_regex_raw, to_raw, form, spacing) = match raw {
+        RawTrailingComment::Shortcut(s) => {
+            if s.is_empty() {
+                anyhow::bail!(
+                    "{ctx}: `trailing_comment` shortcut must be a non-empty string; \
+                     use the table form `{{ to = \"\" }}` to strip the trailing comment"
+                );
+            }
+            (None, s.clone(), TrailingForm::Preserve, None)
+        }
+        RawTrailingComment::Full(f) => {
+            let to =
+                f.to.clone()
+                    .ok_or_else(|| anyhow::anyhow!("{ctx}: `trailing_comment.to` is required"))?;
+            (
+                f.match_regex.clone(),
+                to,
+                f.form.unwrap_or(TrailingForm::Preserve),
+                f.spacing,
+            )
+        }
     };
-    if text.is_empty() && policy != TrailingPolicy::Replace {
-        anyhow::bail!(
-            "{ctx}: `trailing_comment` with empty `text` is only valid when `policy = \"replace\"` (use it to strip the existing trailing comment); other policies need a non-empty text"
-        );
-    }
-    let text = with_ctx(
-        constants::substitute_in_string(&text),
+
+    let match_regex_raw = match_regex_raw.unwrap_or_else(|| ".*".to_string());
+    let match_regex = with_ctx(
+        constants::substitute_in_string(&match_regex_raw),
         ctx,
-        "trailing_comment.text",
+        "trailing_comment.match",
     )?;
-    Ok(ResolvedTrailingComment { text, policy })
+    let to = with_ctx(
+        constants::substitute_in_string(&to_raw),
+        ctx,
+        "trailing_comment.to",
+    )?;
+    Ok(ResolvedTrailingComment {
+        match_regex,
+        to,
+        form,
+        spacing,
+    })
 }
 
 fn resolve_match_resolved(raw: &RawMatchResolved, ctx: &str) -> Result<ResolvedMatchResolved> {
@@ -627,19 +658,126 @@ mod tests {
     }
 
     #[test]
-    fn trailing_comment_shortcut_defaults_to_prepend() {
+    fn trailing_comment_shortcut_fills_defaults() {
         let cfg = load(
             "/p/inclean.toml",
             r#"
             [[rule]]
             name = "r"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "note"
             "#,
         );
         let map = resolve(&[cfg]).unwrap();
         let t = map["r"].trailing_comment.as_ref().unwrap();
-        assert_eq!(t.text, "// IWYU pragma: keep");
-        assert_eq!(t.policy, TrailingPolicy::Prepend);
+        assert_eq!(t.to, "note");
+        assert_eq!(t.match_regex, ".*");
+        assert_eq!(t.form, TrailingForm::Preserve);
+        assert_eq!(t.spacing, None);
+    }
+
+    #[test]
+    fn trailing_comment_full_form_minimal_fills_defaults() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { to = "X" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        assert_eq!(t.to, "X");
+        assert_eq!(t.match_regex, ".*");
+        assert_eq!(t.form, TrailingForm::Preserve);
+        assert_eq!(t.spacing, None);
+    }
+
+    #[test]
+    fn trailing_comment_full_form_round_trips_all_fields() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { match = "^$", to = "X", form = "block", spacing = 4 }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        assert_eq!(t.match_regex, "^$");
+        assert_eq!(t.to, "X");
+        assert_eq!(t.form, TrailingForm::Block);
+        assert_eq!(t.spacing, Some(4));
+    }
+
+    #[test]
+    fn trailing_comment_to_empty_is_allowed_in_table_form() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { to = "" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        assert!(t.to.is_empty());
+    }
+
+    #[test]
+    fn trailing_comment_shortcut_empty_is_rejected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = ""
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("non-empty"), "got: {msg}");
+        assert!(msg.contains("rule `r`"), "should pinpoint rule: {msg}");
+    }
+
+    #[test]
+    fn trailing_comment_full_form_missing_to_is_rejected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { match = ".*" }
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("`trailing_comment.to` is required"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_match_supports_std_constants() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = { match = "^(@std.c89.system_headers_or)$", to = "X" }
+            "#,
+        );
+        let map = resolve(&[cfg]).unwrap();
+        let t = map["r"].trailing_comment.as_ref().unwrap();
+        // The @std.*_or constants expand into a regex alternation.
+        assert!(
+            t.match_regex.contains(r"stdio\.h"),
+            "got: {}",
+            t.match_regex
+        );
     }
 
     #[test]
@@ -649,7 +787,7 @@ mod tests {
             r#"
             [[rule]]
             name = "p"
-            trailing_comment = "// IWYU pragma: keep"
+            trailing_comment = "note"
 
             [[rule]]
             name = "c"
@@ -658,7 +796,7 @@ mod tests {
         );
         let map = resolve(&[cfg]).unwrap();
         let t = map["c"].trailing_comment.as_ref().unwrap();
-        assert_eq!(t.text, "// IWYU pragma: keep");
+        assert_eq!(t.to, "note");
     }
 
     #[test]
@@ -668,64 +806,19 @@ mod tests {
             r#"
             [[rule]]
             name = "p"
-            trailing_comment = "// parent"
+            trailing_comment = "parent"
 
             [[rule]]
             name = "c"
             extends = "p"
-            trailing_comment = { text = "// child", policy = "replace" }
+            trailing_comment = { to = "child", form = "block", spacing = 1 }
             "#,
         );
         let map = resolve(&[cfg]).unwrap();
         let t = map["c"].trailing_comment.as_ref().unwrap();
-        assert_eq!(t.text, "// child");
-        assert_eq!(t.policy, TrailingPolicy::Replace);
-    }
-
-    #[test]
-    fn trailing_comment_empty_text_with_replace_strips() {
-        let cfg = load(
-            "/p/inclean.toml",
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = { text = "", policy = "replace" }
-            "#,
-        );
-        let map = resolve(&[cfg]).unwrap();
-        let t = map["r"].trailing_comment.as_ref().unwrap();
-        assert!(t.text.is_empty());
-        assert_eq!(t.policy, TrailingPolicy::Replace);
-    }
-
-    #[test]
-    fn trailing_comment_empty_text_with_non_replace_errors() {
-        let cfg = load(
-            "/p/inclean.toml",
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = { text = "", policy = "prepend" }
-            "#,
-        );
-        let err = resolve(&[cfg]).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("empty `text`"), "got: {msg}");
-        assert!(msg.contains("rule `r`"), "should pinpoint rule: {msg}");
-    }
-
-    #[test]
-    fn trailing_comment_no_text_with_default_policy_errors() {
-        let cfg = load(
-            "/p/inclean.toml",
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = {}
-            "#,
-        );
-        let err = resolve(&[cfg]).unwrap_err();
-        assert!(format!("{err:#}").contains("empty `text`"));
+        assert_eq!(t.to, "child");
+        assert_eq!(t.form, TrailingForm::Block);
+        assert_eq!(t.spacing, Some(1));
     }
 
     #[test]

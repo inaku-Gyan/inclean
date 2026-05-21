@@ -1,0 +1,14 @@
+[project]
+root = "."
+
+[[rule]]
+name = "a"
+paths = ["src/**"]
+forms = ["quote"]
+action = { type = "keep" }
+
+[[rule]]
+name = "b"
+paths = ["src/**"]
+forms = ["quote"]
+action = { type = "keep" }
