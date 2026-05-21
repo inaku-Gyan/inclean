@@ -1,6 +1,7 @@
 name: test
 
 on:
+  workflow_call:
   pull_request:
     paths-ignore: &non-src-code-paths
       - "**/*.md"
@@ -38,6 +39,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
+    needs: lint
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:

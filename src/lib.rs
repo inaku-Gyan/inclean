@@ -4,4 +4,5 @@ pub mod index;
 pub mod lex;
 pub mod pipeline;
 pub mod rule;
+pub mod util;
 pub mod validate;

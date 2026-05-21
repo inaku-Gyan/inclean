@@ -301,8 +301,12 @@ pub fn render_diff(summary: &Summary) -> String {
     for f in &summary.files {
         let Some(new) = &f.rewritten else { continue };
         let diff = TextDiff::from_lines(&f.original, new);
-        let a_label = format!("a/{}", f.relpath.display());
-        let b_label = format!("b/{}", f.relpath.display());
+
+        use crate::util::PathSlashExt;
+        let path_str = f.relpath.to_slash();
+
+        let a_label = format!("a/{}", path_str);
+        let b_label = format!("b/{}", path_str);
         let body = diff
             .unified_diff()
             .context_radius(3)
