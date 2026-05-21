@@ -62,7 +62,7 @@ jobs:
 
   publish-crate:
     name: publish to crates.io
-    needs: [verify, check-tag]
+    needs: [gh-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -183,7 +183,7 @@ jobs:
 
   gh-release:
     name: create GitHub Release
-    needs: [build, publish-crate]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

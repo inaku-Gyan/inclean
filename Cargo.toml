@@ -1,6 +1,6 @@
 [package]
 name = "inclean"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "BSD-3-Clause"
 description = "A C/C++ #include path normalizer that rewrites includes to resolve cleanly against a minimal -I set."
@@ -11,7 +11,7 @@ keywords = ["cpp", "include", "cli", "refactoring", "c"]
 categories = ["command-line-utilities", "development-tools"]
 
 [package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.{ archive-suffix }"
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
 bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
