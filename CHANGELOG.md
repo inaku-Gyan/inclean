@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `trailing_comment` schema redesigned to mirror include
+  action handling. The four `policy` values (`prepend` / `append` /
+  `replace` / `fill_if_absent`) and the `text` field are gone; the new
+  shape is `{ match, to, form, spacing }` where `match` is a regex
+  over the stripped existing comment body, `to` is the new comment
+  body template (with new `${comment.N}` / `${comment.text}`
+  placeholders), `form` switches between `"line"` / `"block"` /
+  `"preserve"`, and `spacing` controls the gutter before the
+  delimiter. `to = ""` removes the trailing comment entirely. See
+  `docs/configuration.md` for the migration table and the idempotent
+  prepend / append idioms in the Rust `regex` dialect.
+
 ## [0.1.0] — 2026-05-21
 
 Initial release. Feature-complete for v1.
