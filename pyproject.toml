@@ -24,4 +24,3 @@ Issues = "https://github.com/inaku-Gyan/inclean/issues"
 [tool.maturin]
 bindings = "bin"
 manifest-path = "Cargo.toml"
-strip = true

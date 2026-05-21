@@ -57,90 +57,127 @@ jobs:
       - name: cargo publish
         run: cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
 
-  publish-pypi:
-    name: publish to PyPI
+  build:
+    name: build ${{ matrix.triple }}
     needs: [verify, check-tag]
-    uses: ./.github/workflows/release_pypi.yml
-    permissions:
-      id-token: write
-      contents: read
-
-  build-binaries:
-    name: build ${{ matrix.target }}
-    needs: publish-crate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64
+            triple: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64
+            triple: aarch64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: x86_64
+            triple: x86_64-apple-darwin
             archive: tar.gz
           - os: macos-latest
-            target: aarch64-apple-darwin
+            target: aarch64
+            triple: aarch64-apple-darwin
             archive: tar.gz
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            target: x64
+            triple: x86_64-pc-windows-msvc
             archive: zip
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: PyO3/maturin-action@v1
         with:
-          targets: ${{ matrix.target }}
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+          sccache: "true"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/upload-artifact@v4
         with:
-          key: ${{ matrix.target }}
+          name: wheels-${{ matrix.triple }}
+          path: dist/*.whl
+          if-no-files-found: error
 
-      - name: cargo build --release
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: package (tar.gz)
+      - name: package binary (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           set -euo pipefail
-          stage="${BIN_NAME}-${{ matrix.target }}"
-          mkdir -p "dist/${stage}"
-          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "dist/${stage}/"
-          cp README.md LICENSE "dist/${stage}/"
-          tar -czf "dist/${stage}.tar.gz" -C dist "${stage}"
-          rm -rf "dist/${stage}"
+          stage="${BIN_NAME}-${{ matrix.triple }}"
+          mkdir -p "bins/${stage}"
+          cp "target/${{ matrix.triple }}/release/${BIN_NAME}" "bins/${stage}/"
+          cp README.md LICENSE "bins/${stage}/"
+          tar -czf "bins/${stage}.tar.gz" -C bins "${stage}"
+          rm -rf "bins/${stage}"
 
-      - name: package (zip)
+      - name: package binary (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $stage = "$env:BIN_NAME-${{ matrix.target }}"
-          New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/$env:BIN_NAME.exe" "dist/$stage/"
-          Copy-Item README.md, LICENSE "dist/$stage/"
-          Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
-          Remove-Item -Recurse -Force "dist/$stage"
+          $stage = "$env:BIN_NAME-${{ matrix.triple }}"
+          New-Item -ItemType Directory -Force -Path "bins/$stage" | Out-Null
+          Copy-Item "target/${{ matrix.triple }}/release/$env:BIN_NAME.exe" "bins/$stage/"
+          Copy-Item README.md, LICENSE "bins/$stage/"
+          Compress-Archive -Path "bins/$stage/*" -DestinationPath "bins/$stage.zip"
+          Remove-Item -Recurse -Force "bins/$stage"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: dist/*
+          name: bins-${{ matrix.triple }}
+          path: bins/*
           if-no-files-found: error
+
+  sdist:
+    name: sdist
+    needs: [verify, check-tag]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   gh-release:
     name: create GitHub Release
-    needs: build-binaries
+    needs: [build, publish-crate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
+          pattern: bins-*
           path: dist
+          merge-multiple: true
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*
+          files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
 
