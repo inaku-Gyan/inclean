@@ -40,6 +40,7 @@ jobs:
           echo "tag '$REF_NAME' is valid SemVer"
 
   verify:
+    needs: check-tag
     name: verify
     uses: ./.github/workflows/test.yml
 
