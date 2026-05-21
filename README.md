@@ -18,11 +18,52 @@ After running `inclean`, consumers only `-I` the allowed directories.
 
 ## Install
 
-From source (Rust 1.91+):
+`inclean` is published to **crates.io**, **PyPI**, and as prebuilt
+binaries on **GitHub Releases**. Pick whichever ecosystem you already
+have on your machine.
+
+### Via PyPI (Python wheels — no Rust toolchain needed)
+
+Three options:
 
 ```sh
-cargo install --path .
+uv tool install inclean      # isolated, fastest
+pipx install inclean         # isolated
+pip install inclean          # into the current environment
 ```
+
+The wheels ship the native binary built by maturin; `inclean` lands on
+your `PATH` the same way `ruff` or `uv` do. Requires Python ≥ 3.8.
+
+### Via cargo
+
+Two options:
+
+```sh
+cargo binstall inclean       # prebuilt binary from GitHub Releases (no compilation)
+cargo install inclean        # build from crates.io
+```
+
+`cargo binstall` fetches inclean's binstall metadata from crates.io and downloads the
+matching prebuilt archive from this repo's GitHub Releases (no
+compilation).
+`cargo binstall` is a third-party cargo subcommand — install it first
+via [cargo-bins/cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
+if you don't already have it.
+
+`cargo install` downloads the source from crates.io and compiles it locally.
+
+### Prebuilt binaries (no package manager)
+
+Download a tarball for your platform from the
+[latest GitHub Release](https://github.com/inaku-Gyan/inclean/releases/latest)
+and put `inclean` (or `inclean.exe`) on your `PATH`. Released targets:
+
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`
 
 ## Quick start
 
