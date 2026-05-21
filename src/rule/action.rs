@@ -228,15 +228,15 @@ fn compute_trailing_change(
     // FillIfAbsent are naturally idempotent because they don't compose
     // with the existing comment text.
     match config.policy {
-        TrailingPolicy::Prepend => {
-            if !subst_text.is_empty() && existing_comment.starts_with(&subst_text) {
-                return Ok(TrailingChange::Unchanged);
-            }
+        TrailingPolicy::Prepend
+            if !subst_text.is_empty() && existing_comment.starts_with(&subst_text) =>
+        {
+            return Ok(TrailingChange::Unchanged);
         }
-        TrailingPolicy::Append => {
-            if !subst_text.is_empty() && existing_comment.ends_with(&subst_text) {
-                return Ok(TrailingChange::Unchanged);
-            }
+        TrailingPolicy::Append
+            if !subst_text.is_empty() && existing_comment.ends_with(&subst_text) =>
+        {
+            return Ok(TrailingChange::Unchanged);
         }
         _ => {}
     }
