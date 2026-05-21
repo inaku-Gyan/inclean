@@ -165,10 +165,6 @@ All exported from [src/pipeline/run.rs](../src/pipeline/run.rs).
   copies the fixture to a tempdir (non-destructive), drives the CLI
   binary (or the library API), and asserts on `Summary` shape or
   diffed output.
-- **`tests/perf.rs`** — synthetic benchmarks gated by `#[ignore]`.
-  Generates a 10k-file fake C project; run with
-  `cargo test --release --test perf -- --ignored --nocapture` to
-  exercise the rayon path under realistic file counts.
 - Per-module unit tests live alongside the code (`mod tests { … }`
   inside each `.rs`). Notably, `pipeline::run::tests` contains the
   highest-level integration coverage that doesn't go through the CLI

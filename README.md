@@ -92,10 +92,7 @@ for the full breakdown.
 
 ## Status
 
-`0.1` — feature-complete for v1. See [CHANGELOG.md](CHANGELOG.md). The
-synthetic 10k-file perf benchmark in [tests/perf.rs](tests/perf.rs)
-runs `full` mode in well under 100 ms on a release build
-(`cargo test --release --test perf -- --ignored --nocapture`).
+`0.1` — feature-complete for v1. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
