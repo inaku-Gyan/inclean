@@ -2,7 +2,7 @@
 //!
 //! Default: print to stdout.
 //! `--output <PATH>`: write to a file (overwrites).
-//! `--check`: regenerate and diff against `schemas/inclean.schema.json`,
+//! `--check <PATH>`: regenerate and diff against `<PATH>`,
 //! exit 2 on drift. Used by CI.
 
 use std::path::{Path, PathBuf};
@@ -12,25 +12,24 @@ use schemars::generate::SchemaSettings;
 
 use crate::config::schema::RawConfig;
 
-const COMMITTED_SCHEMA_PATH: &str = "schemas/inclean.schema.json";
-
 #[derive(clap::Args, Debug)]
 pub struct SchemaArgs {
     /// Write the schema to this path instead of stdout.
     #[arg(short, long, conflicts_with = "check")]
     pub output: Option<PathBuf>,
 
-    /// Regenerate the schema and diff against schemas/inclean.schema.json.
-    /// Exit 2 if out of date. Intended for CI; runs from the repo root.
-    #[arg(long)]
-    pub check: bool,
+    /// Regenerate the schema and diff against the schema file at PATH.
+    /// Exit 2 if out of date. Used by CI to enforce that the committed
+    /// schema matches the source.
+    #[arg(long, value_name = "PATH")]
+    pub check: Option<PathBuf>,
 }
 
 pub fn run(args: SchemaArgs) -> Result<u8> {
     let rendered = render()?;
 
-    if args.check {
-        return check_against_committed(&rendered);
+    if let Some(check_path) = args.check {
+        return check_against(&check_path, &rendered);
     }
 
     match args.output {
@@ -79,8 +78,7 @@ fn render() -> Result<String> {
     Ok(out)
 }
 
-fn check_against_committed(rendered: &str) -> Result<u8> {
-    let path = Path::new(COMMITTED_SCHEMA_PATH);
+fn check_against(path: &Path, rendered: &str) -> Result<u8> {
     let on_disk =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     if on_disk == rendered {
@@ -88,7 +86,7 @@ fn check_against_committed(rendered: &str) -> Result<u8> {
     }
     eprintln!(
         "error: {} is out of date.\n\
-         The committed schema does not match the schema generated from the current source.\n\
+         It does not match the schema generated from the current source.\n\
          Regenerate it with:\n    cargo run -- schema --output {}\n",
         path.display(),
         path.display(),

@@ -44,7 +44,7 @@ module-by-module map. In short:
   ```sh
   cargo run -- schema --output schemas/inclean.schema.json
   ```
-  CI runs `cargo run -- schema --check` and will fail the PR if the
+  CI runs `cargo run -- schema --check schemas/inclean.schema.json` and will fail the PR if the
   committed schema is stale.
 
 ## Adding a feature or fixing a bug
@@ -88,7 +88,7 @@ Cut a release as follows:
 0. **Sanity-check the schema artifact.** Normally enforced by CI on
    every PR, but verify locally before tagging:
    ```sh
-   cargo run -- schema --check
+   cargo run -- schema --check schemas/inclean.schema.json
    ```
    Should exit 0.
 
