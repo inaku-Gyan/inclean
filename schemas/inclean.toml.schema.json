@@ -1,30 +1,11 @@
 {
-  "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.schema.json",
+  "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.toml.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "inclean.toml",
   "description": "Configuration schema for inclean. See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md",
   "type": "object",
   "properties": {
     "project": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RawProject"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "rule": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/RawRule"
-      }
-    }
-  },
-  "additionalProperties": false,
-  "$defs": {
-    "RawProject": {
       "description": "The `[project]` block. Intentionally minimal: only `root`. All other\nproject-wide values live on rules (with inheritance providing reuse).",
       "type": "object",
       "properties": {
@@ -36,15 +17,27 @@
           ]
         },
         "version": {
-          "description": "CLI version this config was written for. Required: missing or\nolder than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.\nDefaulted to `Option<String>` so a missing field surfaces via\n`discover::load_root_config` with a path-aware message, not via\na generic serde \"missing field\" error.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "CLI version this config was written for. Required: missing or\nolder than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.\nStored as `Option<String>` so a missing field surfaces via\n`discover::load_root_config` with a path-aware message, not via\na generic serde \"missing field\" error. The `schemars` attributes\noverride that wrapping for schema-generation so editors still see\nthe field as required and non-nullable.",
+          "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ]
     },
+    "rule": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RawRule"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "project"
+  ],
+  "$defs": {
     "RawRule": {
       "description": "A single `[[rule]]` entry, before defaulting / inheritance / constant\nexpansion. `Option<_>` distinguishes \"user did not specify\" from \"user\nwrote empty\".",
       "type": "object",
