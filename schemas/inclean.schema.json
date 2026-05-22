@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.schema.json",
+  "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.toml.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "inclean.toml",
   "description": "Configuration schema for inclean. See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md",

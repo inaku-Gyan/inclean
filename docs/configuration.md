@@ -7,7 +7,7 @@ behavior. For an end-to-end walkthrough, see the
 [architecture.md](architecture.md).
 
 > **Editor support.** A JSON Schema for `inclean.toml` lives at
-> [`schemas/inclean.schema.json`](../schemas/inclean.schema.json) in
+> [`schemas/inclean.toml.schema.json`](../schemas/inclean.toml.schema.json) in
 > the repo and is hosted on `raw.githubusercontent.com` for editors
 > that consume the `#:schema` directive. See the
 > [Editor support section of the README](../README.md#editor-support)
