@@ -14,7 +14,7 @@ use crate::config::discover::CONFIG_FILENAME;
 const SCHEMA_HEADER: &str = concat!(
     "#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v",
     env!("CARGO_PKG_VERSION"),
-    "/schemas/inclean.toml.schema.json\n\n",
+    "/schemas/inclean.toml.schema.json",
 );
 
 const TEMPLATE: &str = include_str!("template.inclean.toml");
@@ -44,7 +44,7 @@ fn construct_inclean_toml_template() -> String {
         .expect("remove_first_line: no newline found");
     let body =
         TEMPLATE[body_start + 1..].replace("{{CARGO_PKG_VERSION}}", env!("CARGO_PKG_VERSION"));
-    format!("{SCHEMA_HEADER}{body}")
+    format!("{SCHEMA_HEADER}\n{body}")
 }
 
 #[cfg(test)]
