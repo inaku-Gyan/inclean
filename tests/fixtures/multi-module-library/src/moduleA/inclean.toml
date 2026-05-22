@@ -1,5 +1,0 @@
-[[rule]]
-name = "moduleA"
-extends = "base"
-paths = ["src/moduleA/**"]
-original_include_dirs = ["include/modA"]

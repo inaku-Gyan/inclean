@@ -5,10 +5,9 @@
 //! path separator; only `**` does. Users who want "match at any depth"
 //! write `**/foo.c` rather than the gitignore `foo.c` shorthand.
 //!
-//! All paths in rules are **relative to the project root**. This applies
-//! to every config — sub-configs do not get implicit scoping; they must
-//! write the directory prefix themselves. (Simpler v1 semantics; can be
-//! relaxed later if it pinches.)
+//! All paths in rules are **relative to the resolved project root**
+//! (i.e. `<config_dir>/<[project].root>`), not to the config file's
+//! directory.
 //!
 //! Layer-2 behavior: when the matching glob contains wildcard meta-chars
 //! (`*`, `?`, `[`, `{`), the file's extension must appear in `extensions`

@@ -29,14 +29,14 @@
       "type": "object",
       "properties": {
         "root": {
-          "description": "Project root, defaults to the directory of the top-level\n`inclean.toml`. Resolved by `discover`.",
+          "description": "Project root, relative to the `inclean.toml` file's directory.\nOmitted or `\".\"` means \"this directory\". Resolved by\n`discover::resolve_project_root`.",
           "type": [
             "string",
             "null"
           ]
         },
         "version": {
-          "description": "CLI version this config was written for. Required: missing or\nolder than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.\nDefaulted to `Option<String>` so a missing field surfaces via\n`discover::validate_loaded` with a path-aware message, not via\na generic serde \"missing field\" error.",
+          "description": "CLI version this config was written for. Required: missing or\nolder than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.\nDefaulted to `Option<String>` so a missing field surfaces via\n`discover::load_root_config` with a path-aware message, not via\na generic serde \"missing field\" error.",
           "type": [
             "string",
             "null"

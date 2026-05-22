@@ -1,0 +1,15 @@
+# The `inclean.toml` sits at the top of the fixture, but the actual
+# project root lives one directory down at `lib/`. All paths below are
+# relative to the resolved project root (`<fixture>/lib`), not to this
+# file's location.
+
+[project]
+root = "lib"
+version = "0.2.0"
+
+[[rule]]
+name = "base"
+paths = ["src/**", "include/**"]
+forms = ["quote"]
+allowed_include_dirs = ["include"]
+original_include_dirs = ["include/mylib/internal"]

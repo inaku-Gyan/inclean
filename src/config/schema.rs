@@ -25,14 +25,15 @@ pub struct RawConfig {
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
-    /// Project root, defaults to the directory of the top-level
-    /// `inclean.toml`. Resolved by `discover`.
+    /// Project root, relative to the `inclean.toml` file's directory.
+    /// Omitted or `"."` means "this directory". Resolved by
+    /// `discover::resolve_project_root`.
     pub root: Option<String>,
 
     /// CLI version this config was written for. Required: missing or
     /// older than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.
     /// Defaulted to `Option<String>` so a missing field surfaces via
-    /// `discover::validate_loaded` with a path-aware message, not via
+    /// `discover::load_root_config` with a path-aware message, not via
     /// a generic serde "missing field" error.
     pub version: Option<String>,
 }
@@ -284,6 +285,23 @@ mod tests {
             "#,
         );
         assert_eq!(cfg.project.unwrap().root.unwrap(), "src");
+    }
+
+    #[test]
+    fn project_root_wrong_type_is_rejected() {
+        let err = parse(
+            r#"
+            [project]
+            root = 123
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("root") || msg.contains("string"),
+            "should mention `root`/`string`: {msg}"
+        );
     }
 
     #[test]

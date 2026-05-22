@@ -21,13 +21,17 @@ The original design plan lives in
 maintainer's machine, not committed). Read it before making non-trivial
 changes. Key design choices that drive the code shape:
 
-- **Configuration**: TOML, hierarchical (`inclean.toml` at project root,
-  optional `inclean.toml` in any sub-directory). The root config **must**
-  declare `[project]` with `root` set; sub-configs **must not** declare
-  `[project]` at all.
+- **Configuration**: TOML, single file. Exactly one `inclean.toml` per
+  project; extra copies anywhere under the project root are a hard
+  error. The config **must** declare a `[project]` block. `[project].root`
+  (default `"."`) is interpreted relative to the config file's
+  directory and resolves to the actual project root — so the config may
+  sit above the project root (e.g. `inclean.toml` at a repo top with
+  `root = "lib"`). All paths in rules are relative to the **resolved**
+  project root, not to the config file's directory.
 - **Rule model**: pure rule tree with single inheritance via `extends`. Rule
-  `name` is globally unique across all configs in the project. There is
-  **no `[defaults]` block** — users write a `base` rule and others extend it.
+  `name` is globally unique within the config. There is **no `[defaults]`
+  block** — users write a `base` rule and others extend it.
 - **`[project]` block is minimal**: only `root`. Everything else
   (`allowed_include_dirs`, `original_include_dirs`) lives on rules.
 - **Five-layer matching** (each layer has a default if unspecified):
