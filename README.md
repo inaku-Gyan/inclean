@@ -67,6 +67,16 @@ and put `inclean` (or `inclean.exe`) on your `PATH`. Released targets:
 - `aarch64-apple-darwin`
 - `x86_64-pc-windows-msvc`
 
+### From repo source
+
+Clone this repo and build from source:
+
+```sh
+git clone https://github.com/inaku-Gyan/inclean.git
+cd inclean
+cargo install --path .
+```
+
 ## Quick start
 
 `inclean` is driven by an `inclean.toml` placed at the root of the
