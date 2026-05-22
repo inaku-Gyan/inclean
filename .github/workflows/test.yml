@@ -35,6 +35,9 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features
 
+      - name: Schema drift check
+        run: cargo run --quiet -- schema --check
+
   test:
     needs: lint
     name: test (${{ matrix.os }})

@@ -36,6 +36,16 @@ module-by-module map. In short:
 - `src/config/*`, `src/lex/*`, `src/rule/*`, `src/index/*`,
   `src/validate/*` — the matching pipeline's building blocks.
 - `tests/integration.rs` + `tests/fixtures/` — end-to-end tests.
+- `schemas/inclean.schema.json` — generated JSON Schema for
+  `inclean.toml`, derived from the structs in `src/config/schema.rs`.
+  If you touch those structs (rename a field, add/remove a variant,
+  change a serde attribute), regenerate the artifact in the same
+  commit:
+  ```sh
+  cargo run -- schema --output schemas/inclean.schema.json
+  ```
+  CI runs `cargo run -- schema --check` and will fail the PR if the
+  committed schema is stale.
 
 ## Adding a feature or fixing a bug
 
@@ -75,6 +85,12 @@ and publishes to crates.io, PyPI, and GitHub Releases in one shot.
 
 Cut a release as follows:
 
+0. **Sanity-check the schema artifact.** Normally enforced by CI on
+   every PR, but verify locally before tagging:
+   ```sh
+   cargo run -- schema --check
+   ```
+   Should exit 0.
 1. **Update `CHANGELOG.md`.** Promote the `[Unreleased]` section to
    `[X.Y.Z] — YYYY-MM-DD` (today's date) and re-open an empty
    `[Unreleased]` above it. Update the reference links at the bottom.

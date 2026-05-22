@@ -9,6 +9,7 @@ mod check;
 mod diff;
 mod explain;
 mod init;
+mod schema;
 
 #[derive(Parser, Debug)]
 #[command(name = "inclean", version, about = "C/C++ #include path normalizer")]
@@ -48,6 +49,8 @@ enum Command {
         file: std::path::PathBuf,
         include: Option<String>,
     },
+    /// Emit (or validate) the JSON Schema for inclean.toml
+    Schema(schema::SchemaArgs),
 }
 
 #[derive(Args, Debug)]
@@ -88,6 +91,7 @@ pub fn run() -> ExitCode {
         Command::Diff { dir } => diff::run(dir),
         Command::Apply { dir } => apply::run(dir),
         Command::Explain { file, include } => explain::run(file, include),
+        Command::Schema(args) => schema::run(args),
     };
 
     match result {

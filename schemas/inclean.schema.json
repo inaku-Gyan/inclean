@@ -1,0 +1,393 @@
+{
+  "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "inclean.toml",
+  "description": "Configuration schema for inclean. See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md",
+  "type": "object",
+  "properties": {
+    "project": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RawProject"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rule": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RawRule"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RawProject": {
+      "description": "The `[project]` block. Intentionally minimal: only `root`. All other\nproject-wide values live on rules (with inheritance providing reuse).",
+      "type": "object",
+      "properties": {
+        "root": {
+          "description": "Project root, defaults to the directory of the top-level\n`inclean.toml`. Resolved by `discover`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawRule": {
+      "description": "A single `[[rule]]` entry, before defaulting / inheritance / constant\nexpansion. `Option<_>` distinguishes \"user did not specify\" from \"user\nwrote empty\".",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Globally unique across the entire project.",
+          "type": "string"
+        },
+        "extends": {
+          "description": "Name of the parent rule. `None` means this rule is a root of its\ninheritance tree (typically the conventional `base`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paths": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "forms": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/IncludeForm"
+          }
+        },
+        "match": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "match_resolved": {
+          "description": "Constraints on the file the include resolves to via the rule's\n`original_include_dirs`. A rule with this set additionally requires:\n  1. the include text resolves to exactly one file under\n     `original_include_dirs` (otherwise an ambiguity error is\n     surfaced for the user to narrow their `-I` list); and\n  2. the resolved file's project-root-relative path satisfies the\n     `under` / `match` constraints written here.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawMatchResolved"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_include_dirs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "original_include_dirs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawAction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trailing_comment": {
+          "description": "Optional trailing-comment injection. See [`RawTrailingComment`].",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawTrailingComment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "IncludeForm": {
+      "description": "The include \"form\": which quoting style of `#include` a rule applies to.",
+      "oneOf": [
+        {
+          "description": "`#include \"foo.h\"`",
+          "type": "string",
+          "const": "quote"
+        },
+        {
+          "description": "`#include <foo.h>`",
+          "type": "string",
+          "const": "angle"
+        },
+        {
+          "description": "`#include MY_HEADER` (macro-defined). v1: matching this form is an\nexplicit, configurable possibility but execution must error out.",
+          "type": "string",
+          "const": "macro"
+        }
+      ]
+    },
+    "RawMatchResolved": {
+      "description": "Layer-5 constraint shape. At least one field must be specified.",
+      "type": "object",
+      "properties": {
+        "under": {
+          "description": "Resolved file's project-root-relative path must start with this dir.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "match": {
+          "description": "Resolved file's project-root-relative path must match this regex.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawAction": {
+      "description": "The action a rule executes on a matched `#include`. Tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "Resolve the include via the rule's `original_include_dirs`, then\nemit a path relative to the chosen base. Default action if omitted.",
+          "type": "object",
+          "properties": {
+            "relative_to": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AutoRelativeTo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "form": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OutputForm"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "auto"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Replace the include text with `to`, supporting `${...}` placeholders.",
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string"
+            },
+            "form": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OutputForm"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "rewrite"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "to"
+          ]
+        },
+        {
+          "description": "Leave the include unchanged; stop trying further rules.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "keep"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Abort processing of the file with the user-provided message.",
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "message"
+          ]
+        }
+      ]
+    },
+    "AutoRelativeTo": {
+      "oneOf": [
+        {
+          "description": "Path relative to one of the rule's `allowed_include_dirs` (default).",
+          "type": "string",
+          "const": "allowed"
+        },
+        {
+          "description": "Path relative to the directory of the file being edited.",
+          "type": "string",
+          "const": "file_dir"
+        }
+      ]
+    },
+    "OutputForm": {
+      "oneOf": [
+        {
+          "description": "`#include \"...\"`",
+          "type": "string",
+          "const": "quote"
+        },
+        {
+          "description": "`#include <...>`",
+          "type": "string",
+          "const": "angle"
+        },
+        {
+          "description": "Keep whatever form the original `#include` used.",
+          "type": "string",
+          "const": "preserve"
+        }
+      ]
+    },
+    "RawTrailingComment": {
+      "description": "Trailing-comment injection. Two TOML shapes:\n\n- Shortcut: a bare string, equivalent to `{ to = \"<string>\" }` with\n  default `match` / `form` / `spacing`. The empty string is rejected\n  (use the table form with `to = \"\"` to strip the trailing comment).\n- Full: `{ match?, to, form?, spacing? }`.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/RawTrailingCommentFull"
+        }
+      ]
+    },
+    "RawTrailingCommentFull": {
+      "type": "object",
+      "properties": {
+        "match": {
+          "description": "Regex over the stripped existing comment body. Optional; defaults\nto `\".*\"` at resolve time. Empty existing comment is matched as `\"\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "to": {
+          "description": "Template for the new comment's stripped body. `Option` so we can\ndistinguish \"missing\" (config error) from \"empty\" (`to = \"\"` means\nstrip the trailing comment).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "form": {
+          "description": "`\"line\"`, `\"block\"`, or `\"preserve\"`. Defaults to `Preserve`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrailingForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spacing": {
+          "description": "Number of spaces before the comment delimiter. `None` preserves the\nexisting leading whitespace, falling back to two spaces.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "TrailingForm": {
+      "description": "Delimiter style for the new trailing comment.",
+      "oneOf": [
+        {
+          "description": "`// content`",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "`/* content */`",
+          "type": "string",
+          "const": "block"
+        },
+        {
+          "description": "Keep whatever style the existing comment used; default to `Line`\nwhen there was no existing comment.",
+          "type": "string",
+          "const": "preserve"
+        }
+      ]
+    }
+  }
+}

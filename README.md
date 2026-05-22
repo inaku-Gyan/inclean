@@ -116,11 +116,38 @@ A source line `#include "foo.h"` is rewritten to
 | `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
 | `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
 | `inclean explain FILE [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
+| `inclean schema [-o PATH] [--check]`     | Emit the JSON Schema for `inclean.toml` (stdout by default).                  |
 
 `inclean check` runs at one of three levels (`-l config | rules |
 full`, default `full`). Each level is a strict superset of the
 previous; see [docs/configuration.md](docs/configuration.md#inclean-check-levels)
 for the full breakdown.
+
+## Editor support
+
+`inclean.toml` ships with a JSON Schema for editor completion and
+validation. Editors that understand the `#:schema` directive (VS Code
+with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
+Helix, Zed) automatically pick it up:
+
+```toml
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.1.1/schemas/inclean.schema.json
+
+[project]
+root = "."
+```
+
+`inclean init` writes this line for you, pinned to the version that
+generated the file. To upgrade schema validation, edit the `v0.1.1`
+segment to a newer release tag; to always track the development
+schema, replace it with `main` (not recommended for shared repos —
+new fields will appear in the schema before your CLI knows about them).
+
+You can also dump a local copy:
+
+```sh
+inclean schema --output inclean.schema.json
+```
 
 ## Documentation
 
