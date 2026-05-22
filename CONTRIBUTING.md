@@ -36,15 +36,15 @@ module-by-module map. In short:
 - `src/config/*`, `src/lex/*`, `src/rule/*`, `src/index/*`,
   `src/validate/*` — the matching pipeline's building blocks.
 - `tests/integration.rs` + `tests/fixtures/` — end-to-end tests.
-- `schemas/inclean.schema.json` — generated JSON Schema for
+- `schemas/inclean.toml.schema.json` — generated JSON Schema for
   `inclean.toml`, derived from the structs in `src/config/schema.rs`.
   If you touch those structs (rename a field, add/remove a variant,
   change a serde attribute), regenerate the artifact in the same
   commit:
   ```sh
-  cargo run -- schema --output schemas/inclean.schema.json
+  cargo run -- schema --output schemas/inclean.toml.schema.json
   ```
-  CI runs `cargo run -- schema --check schemas/inclean.schema.json` and will fail the PR if the
+  CI runs `cargo run -- schema --check schemas/inclean.toml.schema.json` and will fail the PR if the
   committed schema is stale.
 
 ## Adding a feature or fixing a bug
@@ -88,7 +88,7 @@ Cut a release as follows:
 0. **Sanity-check the schema artifact.** Normally enforced by CI on
    every PR, but verify locally before tagging:
    ```sh
-   cargo run -- schema --check schemas/inclean.schema.json
+   cargo run -- schema --check schemas/inclean.toml.schema.json
    ```
    Should exit 0.
 

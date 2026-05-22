@@ -13,7 +13,7 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawConfig {
-    #[serde(default)]
+    #[schemars(required, with = "RawProject")]
     pub project: Option<RawProject>,
 
     #[serde(default, rename = "rule")]
@@ -32,9 +32,12 @@ pub struct RawProject {
 
     /// CLI version this config was written for. Required: missing or
     /// older than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.
-    /// Defaulted to `Option<String>` so a missing field surfaces via
+    /// Stored as `Option<String>` so a missing field surfaces via
     /// `discover::load_root_config` with a path-aware message, not via
-    /// a generic serde "missing field" error.
+    /// a generic serde "missing field" error. The `schemars` attributes
+    /// override that wrapping for schema-generation so editors still see
+    /// the field as required and non-nullable.
+    #[schemars(required, with = "String")]
     pub version: Option<String>,
 }
 

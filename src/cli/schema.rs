@@ -62,7 +62,7 @@ fn render() -> Result<String> {
     );
     obj.insert(
         "$id".into(),
-        "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.schema.json"
+        "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.toml.schema.json"
             .into(),
     );
     obj.insert("title".into(), "inclean.toml".into());

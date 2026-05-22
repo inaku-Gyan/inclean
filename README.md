@@ -142,7 +142,7 @@ with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tama
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.2.0/schemas/inclean.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.2.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
@@ -167,7 +167,7 @@ not ship migration shims for breaking schema changes — see
 You can also dump a local copy:
 
 ```sh
-inclean schema --output inclean.schema.json
+inclean schema --output inclean.toml.schema.json
 ```
 
 ## Documentation
