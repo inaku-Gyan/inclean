@@ -81,7 +81,11 @@ fn run_errors_when_extra_inclean_toml_present() {
     let err = pipe::run(&dst, CheckMode::Config).unwrap_err();
     let msg = format!("{err:#}");
     assert!(msg.contains("sub-configs are not supported"), "got: {msg}");
-    assert!(msg.contains("src/inclean.toml"), "got: {msg}");
+    let expected_extra = std::path::Path::new("src")
+        .join("inclean.toml")
+        .display()
+        .to_string();
+    assert!(msg.contains(&expected_extra), "got: {msg}");
 
     fs::remove_dir_all(&dst).ok();
 }

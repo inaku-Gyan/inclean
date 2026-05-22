@@ -421,7 +421,11 @@ root = "."
         let err = assert_no_extra_configs(proj.path(), &root_cfg).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("sub-configs are not supported"));
-        assert!(msg.contains("src/inclean.toml"));
+        let expected_extra = std::path::Path::new("src")
+            .join("inclean.toml")
+            .display()
+            .to_string();
+        assert!(msg.contains(&expected_extra), "got: {msg}");
     }
 
     #[test]
