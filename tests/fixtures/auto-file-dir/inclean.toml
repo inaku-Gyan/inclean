@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Source files inside `lib/` reference headers in `lib/inner/`. Using
 # `relative_to = "file_dir"`, the rewriter expresses the resolved path

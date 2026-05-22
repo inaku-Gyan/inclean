@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Two original_include_dirs both contain `foo.h` — the layer-5 resolver
 # cannot decide between them, so the rule surfaces Layer5Ambiguous.

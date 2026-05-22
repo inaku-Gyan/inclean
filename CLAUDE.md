@@ -93,6 +93,25 @@ if the tag doesn't equal `Cargo.toml`'s `version`.
   matched rule's `allowed_include_dirs`; failure is a hard error and aborts
   the file's apply.
 
+## Pre-1.0 backward-compat policy
+
+Before v1.0.0, **do not introduce any forward-compat or backward-compat
+shim code.** `MIN_SUPPORTED_INCLEAN_TOML_VERSION` (in
+`src/config/discover.rs`) is the single version gate: bump it whenever
+the on-disk schema gets a breaking change, and let
+`discover::validate_loaded` hard-reject older configs. Concretely, do
+not write:
+
+- schema migration logic ("if version < X, transform like ..."),
+- field-rename fallbacks or deprecated-alias support,
+- per-version branching in parse/resolve code,
+- "old format" probes or auto-upgrades on read,
+- any other code whose only job is making old configs work.
+
+The fix for a user with a stale config is to update their `inclean.toml`,
+not to maintain compatibility code. Code clarity beats migration ergonomics
+in pre-1.0. Revisit this rule when the project reaches v1.0.0.
+
 ## Things to avoid
 
 - Don't introduce a `[defaults]` block or any project-level fallback for

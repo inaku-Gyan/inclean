@@ -47,20 +47,34 @@ A project has one **root** `inclean.toml` at the project root, plus any
 number of optional sub-directory `inclean.toml` files that contribute
 extra rules.
 
-- **The root config must declare `[project]` with `root` set.** This
-  marks it as the root and pins the project root path (typically `"."`).
+- **The root config must declare `[project]` with `root` and `version`
+  set.** This marks it as the root, pins the project root path
+  (typically `"."`), and declares which CLI version the config was
+  written for.
 - **Sub-directory configs must not declare `[project]`.** They may only
-  add `[[rule]]` entries.
+  add `[[rule]]` entries. The version comes from the root.
 - All path-shaped fields in a rule (`paths`, `allowed_include_dirs`,
   `original_include_dirs`, `match_resolved.under`) are interpreted as
   **project-root-relative**, regardless of which config file the rule
   was written in.
+
+### `[project]` fields
+
+- `root` — required, project-root path relative to this config file.
+  Normally `"."`. All rule paths resolve relative to this.
+- `version` — required, semver string (e.g. `"0.2.0"`) matching the
+  inclean CLI release the config was authored for. inclean is pre-1.0
+  and has **no migration path between breaking schema changes**: a
+  newer CLI may hard-reject this config until `version` is bumped and
+  any schema changes are reconciled by hand. `inclean init` writes
+  this field automatically using `env!("CARGO_PKG_VERSION")`.
 
 Minimal config:
 
 ```toml
 [project]
 root = "."
+version = "0.2.0"
 
 [[rule]]
 name = "base"

@@ -34,6 +34,13 @@
             "string",
             "null"
           ]
+        },
+        "version": {
+          "description": "CLI version this config was written for. Required: missing or\nolder than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.\nDefaulted to `Option<String>` so a missing field surfaces via\n`discover::validate_loaded` with a path-aware message, not via\na generic serde \"missing field\" error.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

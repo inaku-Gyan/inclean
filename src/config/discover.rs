@@ -22,6 +22,15 @@ use super::schema::{self, LoadedConfig};
 
 pub const CONFIG_FILENAME: &str = "inclean.toml";
 
+/// Minimum `[project].version` accepted by this CLI.
+///
+/// inclean is pre-1.0 / beta. Whenever the on-disk schema gets a
+/// breaking change, bump this to the release that introduces the
+/// change; older configs are then hard-rejected with no migration
+/// shim. Backward compatibility is explicitly out of scope before
+/// v1.0.0 — see CLAUDE.md.
+pub const MIN_SUPPORTED_INCLEAN_TOML_VERSION: &str = "0.2.0";
+
 /// Validate structural invariants the loader cannot express in the serde
 /// schema:
 ///
@@ -56,6 +65,34 @@ pub fn validate_loaded(configs: &[LoadedConfig], root_dir: &Path) -> Result<()> 
         anyhow::bail!(
             "root config {}: [project].root must be set explicitly",
             root_cfg.path.display(),
+        );
+    }
+    let raw_version = project.version.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "root config {} must declare `version` in [project] (this CLI requires >= {})",
+            root_cfg.path.display(),
+            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
+        )
+    })?;
+    let cfg_version = semver::Version::parse(raw_version).with_context(|| {
+        format!(
+            "root config {} has invalid `version = \"{}\"` (must be semver, e.g. \"{}\")",
+            root_cfg.path.display(),
+            raw_version,
+            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
+        )
+    })?;
+    let min_version = semver::Version::parse(MIN_SUPPORTED_INCLEAN_TOML_VERSION)
+        .expect("MIN_SUPPORTED_INCLEAN_TOML_VERSION must be valid semver");
+    if cfg_version < min_version {
+        anyhow::bail!(
+            "root config {} declares version {}, but this CLI requires >= {}.\n\
+             inclean is pre-1.0; breaking schema changes do not carry a migration path. \
+             Update the config to match the current schema and set `version = \"{}\"`.",
+            root_cfg.path.display(),
+            cfg_version,
+            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
+            env!("CARGO_PKG_VERSION"),
         );
     }
     for sub in &configs[1..] {
@@ -257,6 +294,7 @@ name = "should-not-load""#,
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -304,6 +342,7 @@ name = "should-not-load""#,
                 r#"
                 [project]
                 root = "."
+                version = "0.2.0"
 
                 [[rule]]
                 name = "base"
@@ -314,6 +353,7 @@ name = "should-not-load""#,
                 r#"
                 [project]
                 root = "."
+                version = "0.2.0"
 
                 [[rule]]
                 name = "src-rule"
@@ -323,6 +363,105 @@ name = "should-not-load""#,
         let configs = load_all_configs(proj.path()).unwrap();
         let err = validate_loaded(&configs, proj.path()).unwrap_err();
         assert!(format!("{err:#}").contains("sub-config"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_missing_version() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("must declare `version`"),
+            "want missing-version message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_loaded_rejects_version_below_minimum() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+            version = "0.1.0"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(">=") && msg.contains(MIN_SUPPORTED_INCLEAN_TOML_VERSION),
+            "want too-old message mentioning >= and {MIN_SUPPORTED_INCLEAN_TOML_VERSION}, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_loaded_rejects_malformed_version() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+            version = "not-semver"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("invalid") && msg.contains("not-semver"),
+            "want invalid-semver message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_loaded_accepts_version_equal_to_minimum() {
+        let body = format!(
+            r#"
+            [project]
+            root = "."
+            version = "{MIN_SUPPORTED_INCLEAN_TOML_VERSION}"
+
+            [[rule]]
+            name = "base"
+            "#
+        );
+        let proj = build_tree(&[("inclean.toml", body.as_str())]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
+    }
+
+    #[test]
+    fn validate_loaded_accepts_version_above_minimum() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "."
+            version = "99.0.0"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
     }
 
     #[test]

@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Any include matching `^deprecated_` triggers the error action with a
 # message that substitutes the include's content. Exit code 2.

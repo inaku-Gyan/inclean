@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Abstract base — concrete `paths` and `original_include_dirs` are set by
 # each module's sub-config.

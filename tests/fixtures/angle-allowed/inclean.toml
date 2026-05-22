@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Two cooperating rules along a single chain: the parent allows the
 # whole `mylib/*` angle namespace and validates it against include/.

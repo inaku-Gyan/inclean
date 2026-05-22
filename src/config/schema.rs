@@ -28,6 +28,13 @@ pub struct RawProject {
     /// Project root, defaults to the directory of the top-level
     /// `inclean.toml`. Resolved by `discover`.
     pub root: Option<String>,
+
+    /// CLI version this config was written for. Required: missing or
+    /// older than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.
+    /// Defaulted to `Option<String>` so a missing field surfaces via
+    /// `discover::validate_loaded` with a path-aware message, not via
+    /// a generic serde "missing field" error.
+    pub version: Option<String>,
 }
 
 /// A single `[[rule]]` entry, before defaulting / inheritance / constant
