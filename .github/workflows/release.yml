@@ -139,7 +139,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "bins/$stage" | Out-Null
           Copy-Item "target/${{ matrix.triple }}/release/$env:BIN_NAME.exe" "bins/$stage/"
           Copy-Item README.md, LICENSE "bins/$stage/"
-          Compress-Archive -Path "bins/$stage/*" -DestinationPath "bins/$stage.zip"
+          Compress-Archive -Path "bins/$stage" -DestinationPath "bins/$stage.zip"
           Remove-Item -Recurse -Force "bins/$stage"
 
       - uses: actions/upload-artifact@v7
