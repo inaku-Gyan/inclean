@@ -671,6 +671,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -699,6 +700,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -731,6 +733,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -769,6 +772,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -809,6 +813,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "base"
@@ -838,6 +843,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "a"
@@ -867,6 +873,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "a"
@@ -901,6 +908,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "parent"
@@ -939,6 +947,7 @@ mod tests {
             r#"
             [project]
             root = "."
+            version = "0.2.0"
 
             [[rule]]
             name = "a"

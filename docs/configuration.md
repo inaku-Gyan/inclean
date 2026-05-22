@@ -6,6 +6,13 @@ behavior. For an end-to-end walkthrough, see the
 [README](../README.md); for code-level architecture, see
 [architecture.md](architecture.md).
 
+> **Editor support.** A JSON Schema for `inclean.toml` lives at
+> [`schemas/inclean.schema.json`](../schemas/inclean.schema.json) in
+> the repo and is hosted on `raw.githubusercontent.com` for editors
+> that consume the `#:schema` directive. See the
+> [Editor support section of the README](../README.md#editor-support)
+> for the URL and `inclean init`'s auto-pinning behavior.
+
 ## Table of contents
 
 - [Configuration reference](#configuration-reference)
@@ -40,20 +47,33 @@ A project has exactly **one** `inclean.toml`. Sub-configs are not a
 feature — find an `inclean.toml` anywhere under the project root other
 than the root config and `inclean` errors out.
 
-- **The config must declare a `[project]` block.** Its only field is
-  `root`, interpreted as a path relative to the directory containing
-  `inclean.toml`. Defaults to `"."` if omitted. The resolved path must
-  exist and be a directory.
+- **The config must declare a `[project]` block.** It pins the project
+  root path on disk (`root`) and the inclean CLI release the config was
+  authored for (`version`). See [the field list below](#project-fields).
 - All path-shaped fields in a rule (`paths`, `allowed_include_dirs`,
   `original_include_dirs`, `match_resolved.under`) are interpreted as
   **project-root-relative** — relative to the *resolved* project root,
   not to the directory containing `inclean.toml`.
 
-Minimal config (file lives at the project root):
+### `[project]` fields
+
+- `root` — optional, defaults to `"."`. Project root path interpreted
+  relative to the directory containing `inclean.toml`. The resolved
+  path must exist and be a directory. All rule paths
+  (`paths`, `allowed_include_dirs`, etc.) resolve relative to this.
+- `version` — required, semver string (e.g. `"0.2.0"`) matching the
+  inclean CLI release the config was authored for. inclean is pre-1.0
+  and has **no migration path between breaking schema changes**: a
+  newer CLI may hard-reject this config until `version` is bumped and
+  any schema changes are reconciled by hand. `inclean init` writes
+  this field automatically using `env!("CARGO_PKG_VERSION")`.
+
+Minimal config (file at project root):
 
 ```toml
 [project]
-# root = "."   # omitted, defaults to "."
+# root = "."   # optional, defaults to "."
+version = "0.2.0"
 
 [[rule]]
 name = "base"

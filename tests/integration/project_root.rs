@@ -47,6 +47,7 @@ fn run_errors_when_project_root_is_empty() {
         r#"
         [project]
         root = ""
+        version = "0.2.0"
 
         [[rule]]
         name = "base"
@@ -100,6 +101,7 @@ fn run_defaults_project_root_to_dot_when_field_omitted() {
         dst.join("inclean.toml"),
         r#"
         [project]
+        version = "0.2.0"
 
         [[rule]]
         name = "base"
@@ -137,6 +139,7 @@ fn run_resolves_project_root_from_field_value() {
         r#"
         [project]
         root = "lib"
+        version = "0.2.0"
 
         [[rule]]
         name = "base"

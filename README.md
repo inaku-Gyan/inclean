@@ -67,6 +67,16 @@ and put `inclean` (or `inclean.exe`) on your `PATH`. Released targets:
 - `aarch64-apple-darwin`
 - `x86_64-pc-windows-msvc`
 
+### From repo source
+
+Clone this repo and build from source:
+
+```sh
+git clone https://github.com/inaku-Gyan/inclean.git
+cd inclean
+cargo install --path .
+```
+
 ## Quick start
 
 `inclean` is driven by an `inclean.toml` placed at the root of the
@@ -94,6 +104,7 @@ this config:
 ```toml
 [project]
 root = "."
+version = "0.2.0"
 
 [[rule]]
 name = "base"
@@ -116,11 +127,48 @@ A source line `#include "foo.h"` is rewritten to
 | `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
 | `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
 | `inclean explain FILE [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
+| `inclean schema [-o PATH] [--check]`     | Emit the JSON Schema for `inclean.toml` (stdout by default).                  |
 
 `inclean check` runs at one of three levels (`-l config | rules |
 full`, default `full`). Each level is a strict superset of the
 previous; see [docs/configuration.md](docs/configuration.md#inclean-check-levels)
 for the full breakdown.
+
+## Editor support
+
+`inclean.toml` ships with a JSON Schema for editor completion and
+validation. Editors that understand the `#:schema` directive (VS Code
+with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
+Helix, Zed) automatically pick it up:
+
+```toml
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.2.0/schemas/inclean.schema.json
+
+[project]
+root = "."
+version = "0.2.0"
+```
+
+`inclean init` writes both the `#:schema` line (for the editor) and
+the `[project].version` field (the CLI's own version gate), each
+pinned to the CLI version that generated the file. To upgrade schema
+validation, edit the `v0.2.0` segment in the URL to a newer release
+tag; to always track the development schema, replace it with `main`
+(not recommended for shared repos — new fields will appear in the
+schema before your CLI knows about them).
+
+**`#:schema` and `[project].version` are independent.** The
+`#:schema` URL is purely for editor tooling; the CLI reads only
+`[project].version` and compares it to its built-in
+`MIN_SUPPORTED_INCLEAN_TOML_VERSION`. inclean is pre-1.0 and does
+not ship migration shims for breaking schema changes — see
+[CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy).
+
+You can also dump a local copy:
+
+```sh
+inclean schema --output inclean.schema.json
+```
 
 ## Documentation
 
@@ -135,10 +183,12 @@ for the full breakdown.
 
 ## Status
 
-`0.1.1` — current. Includes a breaking change to the
-`trailing_comment` action schema; see
-[CHANGELOG.md](CHANGELOG.md) for the migration note. Feature-complete
-for v1.
+`0.2.0` — current. Introduces JSON Schema generation, editor
+`#:schema` support, and a required `[project].version` field that
+the CLI uses as a hard version gate. inclean is pre-1.0 / beta and
+does not provide migration shims between breaking schema changes;
+see [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy) for the
+project policy.
 
 ## License
 

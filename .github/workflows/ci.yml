@@ -1,4 +1,4 @@
-name: test
+name: ci
 
 on:
   workflow_call:
@@ -9,7 +9,7 @@ on:
       - ".gitignore"
 
 concurrency:
-  group: test-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,6 +34,9 @@ jobs:
 
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features
+
+      - name: Schema drift check
+        run: cargo run --quiet -- schema --check schemas/inclean.schema.json
 
   test:
     needs: lint

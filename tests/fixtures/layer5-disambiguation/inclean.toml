@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Base resolves via two original dirs and keeps includes (no rewrite). Two
 # leaf rules use `match_resolved.under` to split routing: one rewrites

@@ -63,6 +63,16 @@ cargo install inclean        # 从 crates.io 拉源码本地编译
 - `aarch64-apple-darwin`
 - `x86_64-pc-windows-msvc`
 
+### 从仓库源码
+
+克隆本仓库并从源码构建：
+
+```sh
+git clone https://github.com/inaku-Gyan/inclean.git
+cd inclean
+cargo install --path .
+```
+
 ## 快速上手
 
 `inclean` 由放在待清理库根目录的 `inclean.toml` 驱动。典型流程：

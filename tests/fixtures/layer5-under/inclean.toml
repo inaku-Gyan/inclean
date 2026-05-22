@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # Base resolves via src/internal but keeps includes verbatim; child uses
 # layer 5 to narrow to actually-resolved-under-internal files and rewrites

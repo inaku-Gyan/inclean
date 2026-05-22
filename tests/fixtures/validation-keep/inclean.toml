@@ -1,5 +1,6 @@
 [project]
 root = "."
+version = "0.2.0"
 
 # `keep` rule with allowed_include_dirs set, but `include/` is empty —
 # any include from src/ will fail the post-action validation in Full mode

@@ -1,6 +1,6 @@
 [package]
 name = "inclean"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "BSD-3-Clause"
 description = "A C/C++ #include path normalizer that rewrites includes to resolve cleanly against a minimal -I set."
@@ -9,6 +9,7 @@ authors = ["inaku <inaku.gs@gmail.com>"]
 readme = "README.md"
 keywords = ["cpp", "include", "cli", "refactoring", "c"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = ["schemas/", ".github/"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
@@ -29,7 +30,10 @@ globset = "0.4.18"
 ignore = "0.4.25"
 rayon = "1.12.0"
 regex = "1.12.3"
+schemars = { version = "1.0", features = ["preserve_order"] }
+semver = "1"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
 similar = "3.1.0"
 thiserror = "2.0.18"
 toml = "1.1.2"

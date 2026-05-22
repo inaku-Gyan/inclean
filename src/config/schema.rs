@@ -6,10 +6,11 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 /// The top-level shape of a single `inclean.toml`.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawConfig {
     #[serde(default)]
@@ -21,19 +22,26 @@ pub struct RawConfig {
 
 /// The `[project]` block. Intentionally minimal: only `root`. All other
 /// project-wide values live on rules (with inheritance providing reuse).
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
     /// Project root, relative to the `inclean.toml` file's directory.
     /// Omitted or `"."` means "this directory". Resolved by
     /// `discover::resolve_project_root`.
     pub root: Option<String>,
+
+    /// CLI version this config was written for. Required: missing or
+    /// older than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.
+    /// Defaulted to `Option<String>` so a missing field surfaces via
+    /// `discover::load_root_config` with a path-aware message, not via
+    /// a generic serde "missing field" error.
+    pub version: Option<String>,
 }
 
 /// A single `[[rule]]` entry, before defaulting / inheritance / constant
 /// expansion. `Option<_>` distinguishes "user did not specify" from "user
 /// wrote empty".
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
     /// Globally unique across the entire project.
@@ -82,14 +90,14 @@ pub struct RawRule {
 ///   default `match` / `form` / `spacing`. The empty string is rejected
 ///   (use the table form with `to = ""` to strip the trailing comment).
 /// - Full: `{ match?, to, form?, spacing? }`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(untagged)]
 pub enum RawTrailingComment {
     Shortcut(String),
     Full(RawTrailingCommentFull),
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawTrailingCommentFull {
     /// Regex over the stripped existing comment body. Optional; defaults
@@ -114,7 +122,7 @@ pub struct RawTrailingCommentFull {
 }
 
 /// Delimiter style for the new trailing comment.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TrailingForm {
     /// `// content`
@@ -127,7 +135,7 @@ pub enum TrailingForm {
 }
 
 /// Layer-5 constraint shape. At least one field must be specified.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawMatchResolved {
     /// Resolved file's project-root-relative path must start with this dir.
@@ -138,7 +146,7 @@ pub struct RawMatchResolved {
 }
 
 /// The include "form": which quoting style of `#include` a rule applies to.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IncludeForm {
     /// `#include "foo.h"`
@@ -151,7 +159,7 @@ pub enum IncludeForm {
 }
 
 /// The action a rule executes on a matched `#include`. Tagged by `type`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RawAction {
     /// Resolve the include via the rule's `original_include_dirs`, then
@@ -174,7 +182,7 @@ pub enum RawAction {
     Error { message: String },
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoRelativeTo {
     /// Path relative to one of the rule's `allowed_include_dirs` (default).
@@ -183,7 +191,7 @@ pub enum AutoRelativeTo {
     FileDir,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputForm {
     /// `#include "..."`
