@@ -24,8 +24,9 @@ pub struct RawConfig {
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
-    /// Project root, defaults to the directory of the top-level
-    /// `inclean.toml`. Resolved by `discover`.
+    /// Project root, relative to the `inclean.toml` file's directory.
+    /// Omitted or `"."` means "this directory". Resolved by
+    /// `discover::resolve_project_root`.
     pub root: Option<String>,
 }
 
@@ -276,6 +277,23 @@ mod tests {
             "#,
         );
         assert_eq!(cfg.project.unwrap().root.unwrap(), "src");
+    }
+
+    #[test]
+    fn project_root_wrong_type_is_rejected() {
+        let err = parse(
+            r#"
+            [project]
+            root = 123
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("root") || msg.contains("string"),
+            "should mention `root`/`string`: {msg}"
+        );
     }
 
     #[test]

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `[project].root` is now the actual project root path,
+  interpreted relative to the directory containing `inclean.toml` and
+  defaulting to `"."` if omitted. The resolved path must exist and be
+  a directory. All paths in rules (`paths`, `allowed_include_dirs`,
+  `original_include_dirs`, `match_resolved.under`) are now relative to
+  the **resolved** project root, not to the config file's directory.
+  This makes "config above project root" layouts (e.g. `inclean.toml`
+  at a repo top with `root = "lib"`) a supported pattern.
+- **Breaking:** sub-configs are no longer supported. Exactly one
+  `inclean.toml` may exist anywhere under the project root; extras
+  surface as a hard error with a message naming each offending file.
+  Consolidate any existing per-directory configs into the root config.
+
 ## [0.1.1] — 2026-05-22
 
 ### Changed

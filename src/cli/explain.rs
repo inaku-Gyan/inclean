@@ -21,10 +21,16 @@ pub fn run(file: PathBuf, include_filter: Option<String>) -> Result<u8> {
     let file_abs =
         std::fs::canonicalize(&file).with_context(|| format!("canonicalize {}", file.display()))?;
 
-    let project_root = discover::discover_project_root(&file_abs)?;
-    let configs = discover::load_all_configs(&project_root)?;
-    discover::validate_loaded(&configs, &project_root)?;
-    let resolved = inherit::resolve(&configs)?;
+    let config_path = discover::find_root_config(&file_abs)?;
+    let cfg = discover::load_root_config(&config_path)?;
+    let project = cfg
+        .raw
+        .project
+        .as_ref()
+        .expect("load_root_config guarantees [project] is present");
+    let project_root = discover::resolve_project_root(&config_path, project)?;
+    discover::assert_no_extra_configs(&project_root, &config_path)?;
+    let resolved = inherit::resolve(std::slice::from_ref(&cfg))?;
 
     let compiled: Vec<CompiledRule<'_>> = resolved
         .values()
@@ -43,10 +49,7 @@ pub fn run(file: PathBuf, include_filter: Option<String>) -> Result<u8> {
 
     println!("File:           {}", file_relpath.display());
     println!("Project root:   {}", project_root.display());
-    println!("Configs loaded: {}", configs.len());
-    for cfg in &configs {
-        println!("  - {}", cfg.path.display());
-    }
+    println!("Config:         {}", cfg.path.display());
     println!();
 
     let mut printed_any = false;

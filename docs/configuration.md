@@ -36,24 +36,24 @@ behavior. For an end-to-end walkthrough, see the
 
 ## File layout
 
-A project has one **root** `inclean.toml` at the project root, plus any
-number of optional sub-directory `inclean.toml` files that contribute
-extra rules.
+A project has exactly **one** `inclean.toml`. Sub-configs are not a
+feature — find an `inclean.toml` anywhere under the project root other
+than the root config and `inclean` errors out.
 
-- **The root config must declare `[project]` with `root` set.** This
-  marks it as the root and pins the project root path (typically `"."`).
-- **Sub-directory configs must not declare `[project]`.** They may only
-  add `[[rule]]` entries.
+- **The config must declare a `[project]` block.** Its only field is
+  `root`, interpreted as a path relative to the directory containing
+  `inclean.toml`. Defaults to `"."` if omitted. The resolved path must
+  exist and be a directory.
 - All path-shaped fields in a rule (`paths`, `allowed_include_dirs`,
   `original_include_dirs`, `match_resolved.under`) are interpreted as
-  **project-root-relative**, regardless of which config file the rule
-  was written in.
+  **project-root-relative** — relative to the *resolved* project root,
+  not to the directory containing `inclean.toml`.
 
-Minimal config:
+Minimal config (file lives at the project root):
 
 ```toml
 [project]
-root = "."
+# root = "."   # omitted, defaults to "."
 
 [[rule]]
 name = "base"
@@ -63,13 +63,30 @@ allowed_include_dirs = ["include"]
 original_include_dirs = ["include/mylib/internal"]
 ```
 
+Out-of-tree config (file at the repo top, project rooted in a
+sub-directory):
+
+```
+repo/
+  inclean.toml      # [project] root = "lib"
+  lib/
+    src/main.c
+    include/mylib/internal/foo.h
+```
+
+The `inclean.toml` sits *above* the project root it describes; all
+rule paths (`paths = ["src/**", ...]`, `allowed_include_dirs`,
+`original_include_dirs`) are still relative to `lib/`, not to `repo/`.
+The CLI accepts any path inside (or at) the resolved project root —
+it walks upward to find the config.
+
 ## The rule tree
 
 Rules form a **single-inheritance tree** via the optional `extends`
 field, which names a parent rule. A few invariants:
 
-- Rule **names are globally unique** across every `inclean.toml` in the
-  project. Duplicate names are a load-time error.
+- Rule **names are globally unique** within the config. Duplicate names
+  are a load-time error.
 - A rule with no `extends` is the **root** of its tree (conventionally
   named `base`). There can be any number of trees.
 - Inheritance cycles are detected at load time.

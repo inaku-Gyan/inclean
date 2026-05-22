@@ -31,7 +31,7 @@ rule, index, validate)`. Nothing in `config`/`lex`/`rule`/`index`/
 | [src/cli/apply.rs](../src/cli/apply.rs)                   | Calls `pipeline::run` in Full mode, then writes rewritten files via `pipeline::apply` (refuses on conflicts; skips files with errors).                                                                                                                              |
 | [src/cli/explain.rs](../src/cli/explain.rs)               | For a single source file (and optional include), traces every rule's five-layer trial outcome — debugging aid.                                                                                                                                                      |
 | [src/config/schema.rs](../src/config/schema.rs)           | serde structs (`RawConfig`, `RawRule`, `RawAction`, `IncludeForm`, `OutputForm`); pure deserialization, no policy.                                                                                                                                                  |
-| [src/config/discover.rs](../src/config/discover.rs)       | Walks the project tree from the root, loads every `inclean.toml`, enforces "root config declares `[project].root`; sub-configs must not".                                                                                                                           |
+| [src/config/discover.rs](../src/config/discover.rs)       | Finds the single `inclean.toml` by walking upward from a starting path, parses it, resolves `[project].root` (default `"."`) to the actual project root, and errors if any other `inclean.toml` exists under that root (sub-configs are not a feature).             |
 | [src/config/inherit.rs](../src/config/inherit.rs)         | Resolves `extends` chains, merges inherited fields, applies defaults, expands `@std.*` constants, detects cycles. Produces `ResolvedRule`.                                                                                                                          |
 | [src/config/constants.rs](../src/config/constants.rs)     | `@std.*` definitions and the `expand_list` / `substitute_in_string` expansion logic, including the `_or` regex-alternation suffix.                                                                                                                                  |
 | [src/lex/include_line.rs](../src/lex/include_line.rs)     | Scans source for `#include` directives, skipping comments, string literals, and line continuations. Returns `Include { form, content, line, argument_range, trailing_range }` where `trailing_range` covers everything between the argument and the line-terminating `\n`. Does not evaluate preprocessor conditionals.                                                         |
@@ -45,13 +45,18 @@ rule, index, validate)`. Nothing in `config`/`lex`/`rule`/`index`/
 
 ## Pipeline phases
 
-`pipeline::run::run(project_root, mode: CheckMode) -> Result<Summary>`
+`pipeline::run::run(start_dir, mode: CheckMode) -> Result<Summary>`
 is the single entry point used by every subcommand that actually
-processes the project.
+processes the project. `start_dir` may be the project root or any path
+inside it — the root `inclean.toml` is located by walking upward.
 
-1. **Load configs.** `config::discover::load_all_configs` walks the
-   project tree, parses every `inclean.toml`. `validate_loaded`
-   enforces the `[project]` sigil rule.
+1. **Load config.** `discover::find_root_config` walks up from
+   `start_dir` until it finds an `inclean.toml`. `load_root_config`
+   parses it and requires a `[project]` block.
+   `discover::resolve_project_root` joins the config's directory with
+   `[project].root` (default `"."`) and canonicalizes it.
+   `discover::assert_no_extra_configs` then walks the resolved root and
+   errors if any other `inclean.toml` is present.
 2. **Resolve inheritance.** `config::inherit::resolve` walks the
    `extends` graph, merges fields, applies defaults, expands
    `@std.*`. Returns `ResolvedRule`s keyed by name.

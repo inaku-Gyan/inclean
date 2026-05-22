@@ -1,10 +1,22 @@
 [project]
 root = "."
 
-# Abstract base — concrete `paths` and `original_include_dirs` are set by
-# each module's sub-config.
+# An abstract base + per-module narrowing rules. moduleA and moduleB are
+# siblings under `base` so they don't trip the cross-chain check.
 
 [[rule]]
 name = "base"
 forms = ["quote"]
 allowed_include_dirs = ["include"]
+
+[[rule]]
+name = "moduleA"
+extends = "base"
+paths = ["src/moduleA/**"]
+original_include_dirs = ["include/modA"]
+
+[[rule]]
+name = "moduleB"
+extends = "base"
+paths = ["src/moduleB/**"]
+original_include_dirs = ["include/modB"]
