@@ -2,12 +2,9 @@
 //!
 //! Trial order for an include in a given file:
 //!
-//! 1. Eligible configs are the ones whose directory is an ancestor of (or
-//!    equal to) the file's directory. A sub-config in `src/foo/` is **not**
-//!    consulted for files outside `src/foo/`.
-//! 2. Eligible configs are tried deepest-first ("closest to the file").
-//! 3. Within each config, rules are tried in declaration order.
-//! 4. For each rule, all five layers must match for it to fire.
+//! 1. Rules are tried in declaration order within the single project
+//!    config.
+//! 2. For each rule, all five layers must match for it to fire.
 //!
 //! Layer 5 (`match_resolved`) resolves the include against the rule's
 //! `original_include_dirs`. Two or more dirs containing the same include
