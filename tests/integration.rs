@@ -45,6 +45,9 @@ mod multi_module;
 #[path = "integration/nested_library.rs"]
 mod nested_library;
 
+#[path = "integration/project_root.rs"]
+mod project_root;
+
 #[path = "integration/trailing_comment.rs"]
 mod trailing_comment;
 

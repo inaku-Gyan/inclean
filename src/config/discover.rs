@@ -52,9 +52,10 @@ pub fn validate_loaded(configs: &[LoadedConfig], root_dir: &Path) -> Result<()> 
             root_cfg.path.display(),
         )
     })?;
-    if project.root.is_none() {
+    let root_value = project.root.as_deref().map(str::trim).unwrap_or("");
+    if root_value.is_empty() {
         anyhow::bail!(
-            "root config {}: [project].root must be set explicitly",
+            "root config {}: [project].root must be set to a non-empty value",
             root_cfg.path.display(),
         );
     }
@@ -294,6 +295,119 @@ name = "should-not-load""#,
         let configs = load_all_configs(proj.path()).unwrap();
         let err = validate_loaded(&configs, proj.path()).unwrap_err();
         assert!(format!("{err:#}").contains("[project].root"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_empty_project_root() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = ""
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("[project].root"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_whitespace_project_root() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "   "
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("[project].root"));
+    }
+
+    #[test]
+    fn validate_loaded_rejects_subconfig_with_empty_project_block() {
+        let proj = build_tree(&[
+            (
+                "inclean.toml",
+                r#"
+                [project]
+                root = "."
+
+                [[rule]]
+                name = "base"
+                "#,
+            ),
+            (
+                "src/inclean.toml",
+                r#"
+                [project]
+
+                [[rule]]
+                name = "src-rule"
+                "#,
+            ),
+        ]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        let err = validate_loaded(&configs, proj.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("sub-config"));
+    }
+
+    #[test]
+    fn validate_loaded_accepts_arbitrary_relative_root_value() {
+        // [project].root is a sigil; its value is not resolved against the
+        // filesystem. A non-"." value (with no matching directory on disk) is
+        // still accepted.
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "src"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
+    }
+
+    #[test]
+    fn validate_loaded_accepts_absolute_root_value() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "/nonexistent/abs/path"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
+    }
+
+    #[test]
+    fn validate_loaded_accepts_dotdot_root_value() {
+        let proj = build_tree(&[(
+            "inclean.toml",
+            r#"
+            [project]
+            root = "../elsewhere"
+
+            [[rule]]
+            name = "base"
+            "#,
+        )]);
+        let configs = load_all_configs(proj.path()).unwrap();
+        validate_loaded(&configs, proj.path()).unwrap();
     }
 
     #[test]

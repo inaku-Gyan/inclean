@@ -279,6 +279,23 @@ mod tests {
     }
 
     #[test]
+    fn project_root_wrong_type_is_rejected() {
+        let err = parse(
+            r#"
+            [project]
+            root = 123
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("root") || msg.contains("string"),
+            "should mention `root`/`string`: {msg}"
+        );
+    }
+
+    #[test]
     fn unknown_project_field_is_rejected() {
         let err = parse(
             r#"
