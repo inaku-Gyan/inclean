@@ -2,9 +2,10 @@
 //! read-only check. Never writes a file.
 //!
 //! - `--level config`: just verify the configuration's structural
-//!   invariants (TOML syntax, [project].root sigil, extends graph, name
-//!   uniqueness, `@std.*` constants, layer-5 rejection). No source files
-//!   are opened.
+//!   invariants (TOML syntax, `[project]` block present and `root` resolves
+//!   to an existing directory, no stray sub-`inclean.toml` files, `extends`
+//!   graph, name uniqueness, `@std.*` constants, layer-5 rejection). No
+//!   source files are opened.
 //! - `--level rules`: also scan source files and enforce the rule-tree
 //!   invariants — child rules' match sets must be subsets of their
 //!   ancestors', and rules on different chains must not overlap.
@@ -27,23 +28,28 @@ pub fn run(args: CheckArgs) -> Result<u8> {
     Ok(run::summary_exit_code(&summary))
 }
 
-/// Config mode lists the config files and rules loaded. The pipeline has
-/// already validated their structure; we re-walk discovery so we can show
-/// file paths and rule origins.
+/// Config mode lists the loaded config file and resolved rules. The
+/// pipeline has already validated structure; we re-walk discovery so we
+/// can show the resolved project root and rule origins.
 fn print_config_report(args: &CheckArgs) -> Result<()> {
     use crate::config::discover;
     use crate::config::inherit;
-    let configs = discover::load_all_configs(&args.dir)?;
-    discover::validate_loaded(&configs, &args.dir)?;
-    let resolved = inherit::resolve(&configs)?;
+    let config_path = discover::find_root_config(&args.dir)?;
+    let cfg = discover::load_root_config(&config_path)?;
+    let project = cfg
+        .raw
+        .project
+        .as_ref()
+        .expect("load_root_config guarantees [project] is present");
+    let project_root = discover::resolve_project_root(&config_path, project)?;
+    discover::assert_no_extra_configs(&project_root, &config_path)?;
+    let resolved = inherit::resolve(std::slice::from_ref(&cfg))?;
     println!(
-        "ok: loaded {} config file(s), {} rule(s)",
-        configs.len(),
+        "ok: loaded {}, project root = {} ({} rule(s))",
+        cfg.path.display(),
+        project_root.display(),
         resolved.len()
     );
-    for cfg in &configs {
-        println!("  config: {}", cfg.path.display());
-    }
     for (name, rule) in &resolved {
         let extends = rule
             .extends

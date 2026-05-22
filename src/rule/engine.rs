@@ -82,11 +82,13 @@ impl<'a> CompiledRule<'a> {
 }
 
 /// Returns the path relative to `base` if `path` is under `base`; otherwise
-/// the original `path`. Best-effort, used only for ancestry comparison.
+/// the empty path (treated as "at the project root" for ancestry checks).
+/// The non-prefix branch covers the supported "config above project root"
+/// layout, where the rule's config file lives outside the resolved root.
 fn strip_prefix_lossy(path: &Path, base: &Path) -> PathBuf {
     path.strip_prefix(base)
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| path.to_path_buf())
+        .unwrap_or_default()
 }
 
 /// The outcome of a successful match.

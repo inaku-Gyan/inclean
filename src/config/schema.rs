@@ -24,8 +24,9 @@ pub struct RawConfig {
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
-    /// Project root, defaults to the directory of the top-level
-    /// `inclean.toml`. Resolved by `discover`.
+    /// Project root, relative to the `inclean.toml` file's directory.
+    /// Omitted or `"."` means "this directory". Resolved by
+    /// `discover::resolve_project_root`.
     pub root: Option<String>,
 }
 

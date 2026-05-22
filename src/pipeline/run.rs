@@ -166,14 +166,21 @@ impl ConflictKindOwned {
     }
 }
 
-/// Run the pipeline against `project_root` in the requested mode.
-pub fn run(project_root: &Path, mode: CheckMode) -> Result<Summary> {
-    let project_root_abs = std::fs::canonicalize(project_root)
-        .with_context(|| format!("canonicalize {}", project_root.display()))?;
-
-    let configs = discover::load_all_configs(&project_root_abs)?;
-    discover::validate_loaded(&configs, &project_root_abs)?;
-    let resolved = inherit::resolve(&configs)?;
+/// Run the pipeline against `start_dir` in the requested mode. `start_dir`
+/// may be the project root itself or any path inside it — the root
+/// `inclean.toml` is located by walking upward, and the actual project
+/// root is resolved via `[project].root`.
+pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
+    let config_path = discover::find_root_config(start_dir)?;
+    let cfg = discover::load_root_config(&config_path)?;
+    let project = cfg
+        .raw
+        .project
+        .as_ref()
+        .expect("load_root_config guarantees [project] is present");
+    let project_root_abs = discover::resolve_project_root(&config_path, project)?;
+    discover::assert_no_extra_configs(&project_root_abs, &config_path)?;
+    let resolved = inherit::resolve(std::slice::from_ref(&cfg))?;
 
     if mode == CheckMode::Config {
         return Ok(Summary {

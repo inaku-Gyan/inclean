@@ -45,6 +45,9 @@ mod multi_module;
 #[path = "integration/nested_library.rs"]
 mod nested_library;
 
+#[path = "integration/out_of_tree_config.rs"]
+mod out_of_tree_config;
+
 #[path = "integration/project_root.rs"]
 mod project_root;
 
