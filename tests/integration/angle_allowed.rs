@@ -6,13 +6,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn angle_includes_validate_against_allowed_dirs() {
-    let src = fixture_path("angle-allowed");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("angle-allowed");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     assert!(summary.conflicts.is_empty(), "got: {:?}", summary.conflicts);

@@ -8,13 +8,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn layer5_disambiguation_routes_by_resolved_under() {
-    let src = fixture_path("layer5-disambiguation");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("layer5-disambiguation");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     let written = pipe::apply(&summary).unwrap();

@@ -6,13 +6,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn action_error_returns_exit_code_2() {
-    let src = fixture_path("action-error");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("action-error");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     assert_eq!(pipe::summary_exit_code(&summary), 2);

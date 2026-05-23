@@ -5,13 +5,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn validation_flags_unresolvable_keep_includes() {
-    let src = fixture_path("validation-keep");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("validation-keep");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     let main_c = &summary.files[0];

@@ -8,13 +8,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn auto_file_dir_rewrites_relative_to_source() {
-    let src = fixture_path("auto-file-dir");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("auto-file-dir");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     let written = pipe::apply(&summary).unwrap();
@@ -34,9 +34,9 @@ fn auto_file_dir_rewrites_relative_to_source() {
 
 #[test]
 fn auto_file_dir_apply_is_idempotent() {
-    let src = fixture_path("auto-file-dir");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("auto-file-dir");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();
     assert_eq!(pipe::apply(&first).unwrap(), 1);

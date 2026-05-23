@@ -4,13 +4,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn cross_chain_conflict_reported_in_rules_mode() {
-    let src = fixture_path("cross-chain");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("cross-chain");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();
     assert_eq!(summary.conflicts.len(), 1);

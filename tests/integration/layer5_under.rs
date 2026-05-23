@@ -6,13 +6,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn layer5_under_constraint_drives_rewrite() {
-    let src = fixture_path("layer5-under");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("layer5-under");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     let main_c = summary

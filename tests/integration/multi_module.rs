@@ -9,13 +9,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn multi_module_no_cross_chain_conflict() {
-    let src = fixture_path("multi-module-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("multi-module-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();
     assert!(summary.conflicts.is_empty(), "got: {:?}", summary.conflicts);

@@ -5,13 +5,13 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn child_wider_than_parent_reported_in_rules_mode() {
-    let src = fixture_path("child-wider");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("child-wider");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();
     assert_eq!(summary.conflicts.len(), 1);

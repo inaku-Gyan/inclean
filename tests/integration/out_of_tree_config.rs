@@ -10,13 +10,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn out_of_tree_config_resolves_project_root_into_lib() {
-    let src = fixture_path("out-of-tree-config");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("out-of-tree-config");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
     assert_eq!(
@@ -36,9 +36,9 @@ fn out_of_tree_config_resolves_project_root_into_lib() {
 
 #[test]
 fn out_of_tree_config_walks_up_from_deep_starting_path() {
-    let src = fixture_path("out-of-tree-config");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("out-of-tree-config");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     // Starting from `<dst>/lib/src` (a deep directory below the resolved
     // project root but above no inclean.toml) the walker must climb all

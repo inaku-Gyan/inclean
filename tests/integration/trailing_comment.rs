@@ -9,7 +9,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn trailing_comment_apply_is_idempotent() {
@@ -20,9 +20,9 @@ fn trailing_comment_apply_is_idempotent() {
     //   comment is present;
     // - the append rule's non-greedy + optional-suffix pattern consumes
     //   the already-appended " note C" on the second pass.
-    let src = fixture_path("trailing-comment-policies");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("trailing-comment-policies");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();
     assert_eq!(pipe::apply(&first).unwrap(), 1);

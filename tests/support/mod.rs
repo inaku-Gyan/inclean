@@ -37,7 +37,7 @@ pub fn workdir(label: &str) -> PathBuf {
 /// Anonymous workdir with a unique auto-generated label. Backwards-
 /// compatible entry point for tests that don't care about the dir
 /// name (only that it's fresh and theirs).
-pub fn tmp() -> PathBuf {
+pub fn tmp_dir() -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
     workdir(&format!(
         "anon-{}-{}",

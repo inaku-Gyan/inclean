@@ -8,13 +8,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn nested_library_apply_is_idempotent() {
-    let src = fixture_path("nested-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("nested-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();
     assert_eq!(pipe::apply(&first).unwrap(), 3);

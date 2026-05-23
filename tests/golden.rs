@@ -18,8 +18,7 @@ use libtest_mimic::{Arguments, Failed, Trial};
 use pipe::CheckMode;
 use similar::{ChangeTag, TextDiff};
 
-#[path = "support/mod.rs"]
-mod common;
+mod support;
 
 fn main() -> ExitCode {
     let args = Arguments::from_args();
@@ -77,8 +76,8 @@ fn discover_cases(root: &Path) -> Vec<Case> {
 }
 
 fn run_case(case: &Case) -> Result<(), Failed> {
-    let workdir = common::workdir(&case.name);
-    common::copy_dir(&case.input, &workdir);
+    let workdir = support::workdir(&case.name);
+    support::copy_dir(&case.input, &workdir);
 
     let summary = pipe::run(&workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;
     pipe::apply(&summary).map_err(|e| format!("pipe::apply: {e:#}"))?;

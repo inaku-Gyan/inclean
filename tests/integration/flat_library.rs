@@ -7,11 +7,11 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn flat_library_check_reports_two_rewrites_and_no_errors() {
-    let root = fixture_path("flat-library");
+    let root = support::fixture_path("flat-library");
     let summary = pipe::run(&root, CheckMode::Full).unwrap();
 
     let main_c = summary
@@ -48,9 +48,9 @@ fn flat_library_check_reports_two_rewrites_and_no_errors() {
 
 #[test]
 fn flat_library_apply_is_idempotent() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();
     let n1 = pipe::apply(&first).unwrap();
@@ -65,7 +65,7 @@ fn flat_library_apply_is_idempotent() {
 
 #[test]
 fn flat_library_diff_emits_only_changed_files() {
-    let root = fixture_path("flat-library");
+    let root = support::fixture_path("flat-library");
     let summary = pipe::run(&root, CheckMode::Full).unwrap();
     let diff = pipe::render_diff(&summary);
     assert!(diff.contains("--- a/src/main.c"));

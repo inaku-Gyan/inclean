@@ -13,13 +13,13 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::common::*;
+use super::support;
 
 #[test]
 fn run_errors_when_root_config_missing_project_block() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     fs::write(
         dst.join("inclean.toml"),
@@ -38,9 +38,9 @@ fn run_errors_when_root_config_missing_project_block() {
 
 #[test]
 fn run_errors_when_project_root_is_empty() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     fs::write(
         dst.join("inclean.toml"),
@@ -66,9 +66,9 @@ fn run_errors_when_project_root_is_empty() {
 
 #[test]
 fn run_errors_when_extra_inclean_toml_present() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     fs::write(
         dst.join("src/inclean.toml"),
@@ -93,9 +93,9 @@ fn run_errors_when_extra_inclean_toml_present() {
 
 #[test]
 fn run_defaults_project_root_to_dot_when_field_omitted() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     fs::write(
         dst.join("inclean.toml"),
@@ -125,7 +125,7 @@ fn run_resolves_project_root_from_field_value() {
     // The config file lives at <dst>/inclean.toml but points at <dst>/lib
     // via `[project].root = "lib"`. `Summary.project_root` must reflect
     // the resolved root.
-    let dst = tmp();
+    let dst = support::tmp_dir();
     fs::create_dir_all(dst.join("lib/src")).unwrap();
     fs::create_dir_all(dst.join("lib/include/mylib/internal")).unwrap();
     fs::write(dst.join("lib/include/mylib/internal/foo.h"), "").unwrap();
@@ -170,9 +170,9 @@ fn run_resolves_project_root_from_field_value() {
 
 #[test]
 fn run_walks_up_from_deep_starting_path() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
+    let src = support::fixture_path("flat-library");
+    let dst = support::tmp_dir();
+    support::copy_dir(&src, &dst);
 
     // Pass a deep directory inside the project — the walker should still
     // find the root inclean.toml at <dst>.
