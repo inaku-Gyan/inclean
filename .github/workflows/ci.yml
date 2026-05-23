@@ -7,6 +7,8 @@ on:
       - "**/*.md"
       - "LICENSE"
       - ".gitignore"
+      - ".github/workflows/**"
+      - "!.github/workflows/ci.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
