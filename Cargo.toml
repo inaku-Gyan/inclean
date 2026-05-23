@@ -44,5 +44,5 @@ libtest-mimic = "0.8"
 
 [[test]]
 name = "golden"
-path = "tests/golden.rs"
+path = "tests/run_golden_tests.rs"
 harness = false

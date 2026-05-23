@@ -5,7 +5,7 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn validation_flags_unresolvable_keep_includes() {

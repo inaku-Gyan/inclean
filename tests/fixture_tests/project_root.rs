@@ -13,7 +13,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn run_errors_when_root_config_missing_project_block() {

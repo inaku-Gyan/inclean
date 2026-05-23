@@ -23,7 +23,7 @@ mod support;
 fn main() -> ExitCode {
     let args = Arguments::from_args();
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cases_root = manifest.join("tests/golden");
+    let cases_root = manifest.join("tests/golden_tests");
 
     let cases = discover_cases(&cases_root);
     let trials: Vec<Trial> = cases

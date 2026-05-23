@@ -8,7 +8,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn auto_file_dir_rewrites_relative_to_source() {

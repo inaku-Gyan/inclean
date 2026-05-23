@@ -7,7 +7,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn flat_library_check_reports_two_rewrites_and_no_errors() {

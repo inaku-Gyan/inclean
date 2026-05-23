@@ -9,7 +9,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn trailing_comment_apply_is_idempotent() {

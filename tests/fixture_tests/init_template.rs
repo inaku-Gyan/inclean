@@ -5,7 +5,7 @@
 use std::fs;
 use std::process::Command;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn init_template_passes_config_check() {

@@ -4,7 +4,7 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn cross_chain_conflict_reported_in_rules_mode() {

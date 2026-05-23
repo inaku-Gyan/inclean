@@ -8,7 +8,7 @@ use std::fs;
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn layer5_disambiguation_routes_by_resolved_under() {

@@ -5,7 +5,7 @@
 use inclean::pipeline::run as pipe;
 use pipe::CheckMode;
 
-use super::support;
+use crate::support;
 
 #[test]
 fn child_wider_than_parent_reported_in_rules_mode() {
