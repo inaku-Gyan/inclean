@@ -9,8 +9,8 @@ use crate::support;
 
 #[test]
 fn validation_flags_unresolvable_keep_includes() {
-    let src = support::fixture_path("validation-keep");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("validation-keep");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

@@ -9,7 +9,7 @@ use crate::support;
 
 #[test]
 fn init_template_passes_config_check() {
-    let root = support::tmp_dir();
+    let root = support::new_tmp_dir();
     let bin = env!("CARGO_BIN_EXE_inclean");
     let init = Command::new(bin)
         .args(["init", root.to_str().unwrap()])

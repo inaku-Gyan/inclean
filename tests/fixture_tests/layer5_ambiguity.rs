@@ -9,8 +9,8 @@ use crate::support;
 
 #[test]
 fn layer5_ambiguity_reports_candidates_and_fails() {
-    let src = support::fixture_path("layer5-ambiguity");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("layer5-ambiguity");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

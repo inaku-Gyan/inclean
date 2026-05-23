@@ -20,8 +20,8 @@ fn trailing_comment_apply_is_idempotent() {
     //   comment is present;
     // - the append rule's non-greedy + optional-suffix pattern consumes
     //   the already-appended " note C" on the second pass.
-    let src = support::fixture_path("trailing-comment-policies");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("trailing-comment-policies");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();

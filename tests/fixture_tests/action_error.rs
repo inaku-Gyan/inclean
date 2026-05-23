@@ -10,8 +10,8 @@ use crate::support;
 
 #[test]
 fn action_error_returns_exit_code_2() {
-    let src = support::fixture_path("action-error");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("action-error");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

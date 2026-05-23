@@ -9,8 +9,8 @@ use crate::support;
 
 #[test]
 fn child_wider_than_parent_reported_in_rules_mode() {
-    let src = support::fixture_path("child-wider");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("child-wider");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();

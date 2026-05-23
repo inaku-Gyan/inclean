@@ -12,8 +12,8 @@ use crate::support;
 
 #[test]
 fn nested_library_apply_is_idempotent() {
-    let src = support::fixture_path("nested-library");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("nested-library");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();

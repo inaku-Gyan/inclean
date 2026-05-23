@@ -76,7 +76,7 @@ fn discover_cases(root: &Path) -> Vec<Case> {
 }
 
 fn run_case(case: &Case) -> Result<(), Failed> {
-    let workdir = support::workdir(&case.name);
+    let workdir = support::new_workdir(&case.name);
     support::copy_dir(&case.input, &workdir);
 
     let summary = pipe::run(&workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;

@@ -10,8 +10,8 @@ use crate::support;
 
 #[test]
 fn angle_includes_validate_against_allowed_dirs() {
-    let src = support::fixture_path("angle-allowed");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("angle-allowed");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

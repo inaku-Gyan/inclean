@@ -14,8 +14,8 @@ use crate::support;
 
 #[test]
 fn out_of_tree_config_resolves_project_root_into_lib() {
-    let src = support::fixture_path("out-of-tree-config");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("out-of-tree-config");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
@@ -36,8 +36,8 @@ fn out_of_tree_config_resolves_project_root_into_lib() {
 
 #[test]
 fn out_of_tree_config_walks_up_from_deep_starting_path() {
-    let src = support::fixture_path("out-of-tree-config");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("out-of-tree-config");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     // Starting from `<dst>/lib/src` (a deep directory below the resolved

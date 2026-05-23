@@ -12,8 +12,8 @@ use crate::support;
 
 #[test]
 fn layer5_disambiguation_routes_by_resolved_under() {
-    let src = support::fixture_path("layer5-disambiguation");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("layer5-disambiguation");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

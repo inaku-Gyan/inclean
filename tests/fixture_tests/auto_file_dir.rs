@@ -12,8 +12,8 @@ use crate::support;
 
 #[test]
 fn auto_file_dir_rewrites_relative_to_source() {
-    let src = support::fixture_path("auto-file-dir");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("auto-file-dir");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();
@@ -34,8 +34,8 @@ fn auto_file_dir_rewrites_relative_to_source() {
 
 #[test]
 fn auto_file_dir_apply_is_idempotent() {
-    let src = support::fixture_path("auto-file-dir");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("auto-file-dir");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let first = pipe::run(&dst, CheckMode::Full).unwrap();

@@ -1,18 +1,15 @@
-//! Shared test helpers. Lives outside `tests/integration/` so both
-//! `tests/integration.rs` and `tests/golden.rs` can `#[path]`-include
-//! it.
-//!
-//! Each binary compiles this module separately; functions unused by a
-//! given binary look dead from its perspective — the module-level
-//! `allow(dead_code)` silences that without per-fn ceremony.
+//! Shared test helpers.
 
+// Each binary compiles this module separately; functions unused by a
+// given binary look dead from its perspective — the module-level
+// `allow(dead_code)` silences that without per-fn ceremony.
 #![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub fn fixture_path(name: &str) -> PathBuf {
+pub fn get_fixture(name: &str) -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest).join("tests/fixtures").join(name)
 }
@@ -24,7 +21,7 @@ pub fn fixture_path(name: &str) -> PathBuf {
 /// [`tmp`] for an auto-named anonymous workdir.
 ///
 /// `tests/.workdir/` is gitignored.
-pub fn workdir(label: &str) -> PathBuf {
+pub fn new_workdir(label: &str) -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let path = Path::new(manifest).join("tests/.workdir").join(label);
     if path.exists() {
@@ -37,9 +34,9 @@ pub fn workdir(label: &str) -> PathBuf {
 /// Anonymous workdir with a unique auto-generated label. Backwards-
 /// compatible entry point for tests that don't care about the dir
 /// name (only that it's fresh and theirs).
-pub fn tmp_dir() -> PathBuf {
+pub fn new_tmp_dir() -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
-    workdir(&format!(
+    new_workdir(&format!(
         "anon-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::SeqCst)

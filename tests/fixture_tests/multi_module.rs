@@ -13,8 +13,8 @@ use crate::support;
 
 #[test]
 fn multi_module_no_cross_chain_conflict() {
-    let src = support::fixture_path("multi-module-library");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("multi-module-library");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();

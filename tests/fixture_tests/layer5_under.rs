@@ -10,8 +10,8 @@ use crate::support;
 
 #[test]
 fn layer5_under_constraint_drives_rewrite() {
-    let src = support::fixture_path("layer5-under");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("layer5-under");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Full).unwrap();

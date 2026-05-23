@@ -8,8 +8,8 @@ use crate::support;
 
 #[test]
 fn cross_chain_conflict_reported_in_rules_mode() {
-    let src = support::fixture_path("cross-chain");
-    let dst = support::tmp_dir();
+    let src = support::get_fixture("cross-chain");
+    let dst = support::new_tmp_dir();
     support::copy_dir(&src, &dst);
 
     let summary = pipe::run(&dst, CheckMode::Rules).unwrap();
