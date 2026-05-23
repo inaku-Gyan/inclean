@@ -52,8 +52,7 @@ struct Case {
 
 fn discover_cases(root: &Path) -> Vec<Case> {
     let mut cases = Vec::new();
-    let entries = fs::read_dir(root)
-        .unwrap_or_else(|e| panic!("read {}: {e}", root.display()));
+    let entries = fs::read_dir(root).unwrap_or_else(|e| panic!("read {}: {e}", root.display()));
     for entry in entries {
         let entry = entry.expect("read_dir entry");
         if !entry.file_type().expect("file_type").is_dir() {
@@ -73,7 +72,11 @@ fn discover_cases(root: &Path) -> Vec<Case> {
             "golden case `{name}` missing `expected/` dir at {}",
             expected.display()
         );
-        cases.push(Case { name, input, expected });
+        cases.push(Case {
+            name,
+            input,
+            expected,
+        });
     }
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     cases
@@ -82,8 +85,7 @@ fn discover_cases(root: &Path) -> Vec<Case> {
 fn run_case(case: &Case, workdir: &Path) -> Result<(), Failed> {
     copy_tree(&case.input, workdir).map_err(|e| format!("copy input: {e}"))?;
 
-    let summary = pipe::run(workdir, CheckMode::Full)
-        .map_err(|e| format!("pipe::run: {e:#}"))?;
+    let summary = pipe::run(workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;
     pipe::apply(&summary).map_err(|e| format!("pipe::apply: {e:#}"))?;
 
     compare_trees(workdir, &case.expected).map_err(Failed::from)?;

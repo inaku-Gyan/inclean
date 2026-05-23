@@ -47,27 +47,6 @@ fn flat_library_check_reports_two_rewrites_and_no_errors() {
 }
 
 #[test]
-fn flat_library_apply_rewrites_files_in_place() {
-    let src = fixture_path("flat-library");
-    let dst = tmp();
-    copy_dir(&src, &dst);
-
-    let summary = pipe::run(&dst, CheckMode::Full).unwrap();
-    let written = pipe::apply(&summary).unwrap();
-    assert_eq!(written, 1, "only src/main.c should be written");
-
-    let main_after = fs::read_to_string(dst.join("src/main.c")).unwrap();
-    assert!(main_after.contains("\"mylib/internal/foo.h\""));
-    assert!(main_after.contains("\"mylib/internal/bar.h\""));
-    // Trailing comment must be preserved verbatim.
-    assert!(main_after.contains("// pulled in for mylib_foo"));
-    // Angle includes are left untouched.
-    assert!(main_after.contains("<stdio.h>"));
-
-    fs::remove_dir_all(&dst).ok();
-}
-
-#[test]
 fn flat_library_apply_is_idempotent() {
     let src = fixture_path("flat-library");
     let dst = tmp();

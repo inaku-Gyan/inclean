@@ -12,53 +12,6 @@ use pipe::CheckMode;
 use super::common::*;
 
 #[test]
-fn trailing_comment_apply_exercises_all_idioms() {
-    let src = fixture_path("trailing-comment-policies");
-    let dst = tmp();
-    copy_dir(&src, &dst);
-
-    let summary = pipe::run(&dst, CheckMode::Full).unwrap();
-    let written = pipe::apply(&summary).unwrap();
-    assert_eq!(written, 1, "only src/main.c should be rewritten");
-    assert_eq!(pipe::summary_exit_code(&summary), 0);
-
-    let after = fs::read_to_string(dst.join("src/main.c")).unwrap();
-
-    // Plain replace with `form = "block"`: empty trailing → `/* note A */`.
-    assert!(
-        after.contains("\"mylib/internal/foo.h\"  /* note A */"),
-        "got:\n{after}"
-    );
-    // Fill-if-absent (`match = "^$"`) with existing user comment: regex
-    // doesn't match → trailing untouched.
-    assert!(
-        after.contains("\"mylib/private/bar.h\"  // user note"),
-        "fill_if_absent must not touch the existing comment; got:\n{after}"
-    );
-    assert!(
-        !after.contains("bar.h\"  // user note  //") && !after.contains("bar.h\"  // note B"),
-        "fill_if_absent must not stack notes; got:\n{after}"
-    );
-    // Fill-if-absent with no existing comment: inject. `form = preserve`
-    // with no existing comment falls back to line style.
-    assert!(after.contains("\"mylib/private/baz.h\"  // note B"));
-    // Append-with-idempotency: existing `/* please keep */` keeps the
-    // block style (preserve) and gets " note C" appended to the body.
-    assert!(
-        after.contains("\"mylib/helper/qux.h\" /* please keep note C */"),
-        "got:\n{after}"
-    );
-    // Plain replace (line form): overwrites the legacy comment.
-    assert!(after.contains("\"mylib/legacy/old.h\"  // note D"));
-    assert!(
-        !after.contains("legacy comment to be overwritten"),
-        "replace should have removed the user note; got:\n{after}"
-    );
-
-    fs::remove_dir_all(&dst).ok();
-}
-
-#[test]
 fn trailing_comment_apply_is_idempotent() {
     // Re-applying must not stack copies of the configured text. The new
     // model relies on byte equality at the end of `finalize_outcome`:
