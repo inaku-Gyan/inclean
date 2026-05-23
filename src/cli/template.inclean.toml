@@ -96,22 +96,25 @@ name = "base"
 # + Other examples:
 # extensions = ["h", "c", "hpp", "cpp"]
 
-# After cleanup, every quote-include matched by this rule must resolve
-# under one of these directories (relative to the project root). Setting
-# this to [] explicitly opts the rule out of validation.
+# Optional. - After cleanup, every quote-include matched by this rule must resolve
+#             under one of these directories (relative to the project root).
+#           - Setting this to [] explicitly opts the rule out of validation.
+# + Examples:
 # allowed_include_dirs = ["include"]
 
-# Directories the `auto` action searches when resolving an existing
-# #include against the current on-disk layout (preprocessor-style: a
-# candidate is <dir>/<include text>).
+# Optional. - Directories the `auto` action searches when resolving an existing
+#             #include against the current on-disk layout (preprocessor-style: a
+#             candidate is <dir>/<include text>).
+# + Examples:
 # original_include_dirs = ["src", "src/internal"]
 
-# action defaults to { type = "auto", relative_to = "allowed", form = "quote" }
-#
-# Other action shapes:
-#   action = { type = "rewrite", to = "mylib/${include.text}", form = "quote" }
-#   action = { type = "keep" }
-#   action = { type = "error",   message = "deprecated, use ..." }
+# Optional. - The action to apply to the matched #include directives.
+# + Default:
+# action = { type = "auto", relative_to = "allowed", form = "quote" }
+# + Other examples:
+# action = { type = "rewrite", to = "mylib/${include.text}", form = "quote" }
+# action = { type = "keep" }
+# action = { type = "error", message = "deprecated, use ..." }
 
 
 # ----------------------------------------------------------------------------
