@@ -18,26 +18,20 @@ use libtest_mimic::{Arguments, Failed, Trial};
 use pipe::CheckMode;
 use similar::{ChangeTag, TextDiff};
 
+#[path = "support/mod.rs"]
+mod common;
+
 fn main() -> ExitCode {
     let args = Arguments::from_args();
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cases_root = manifest.join("tests/golden");
-    let workdir_root = manifest.join("tests/.workdir");
-
-    // Fresh workdir per run; leave per-case dirs in place after the run
-    // for post-mortem inspection.
-    if workdir_root.exists() {
-        fs::remove_dir_all(&workdir_root).expect("wipe tests/.workdir");
-    }
-    fs::create_dir_all(&workdir_root).expect("create tests/.workdir");
 
     let cases = discover_cases(&cases_root);
     let trials: Vec<Trial> = cases
         .into_iter()
         .map(|case| {
-            let workdir = workdir_root.join(&case.name);
             let name = case.name.clone();
-            Trial::test(name, move || run_case(&case, &workdir))
+            Trial::test(name, move || run_case(&case))
         })
         .collect();
 
@@ -82,28 +76,14 @@ fn discover_cases(root: &Path) -> Vec<Case> {
     cases
 }
 
-fn run_case(case: &Case, workdir: &Path) -> Result<(), Failed> {
-    copy_tree(&case.input, workdir).map_err(|e| format!("copy input: {e}"))?;
+fn run_case(case: &Case) -> Result<(), Failed> {
+    let workdir = common::workdir(&case.name);
+    common::copy_dir(&case.input, &workdir);
 
-    let summary = pipe::run(workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;
+    let summary = pipe::run(&workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;
     pipe::apply(&summary).map_err(|e| format!("pipe::apply: {e:#}"))?;
 
-    compare_trees(workdir, &case.expected).map_err(Failed::from)?;
-    Ok(())
-}
-
-fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_tree(&from, &to)?;
-        } else {
-            fs::copy(&from, &to)?;
-        }
-    }
+    compare_trees(&workdir, &case.expected).map_err(Failed::from)?;
     Ok(())
 }
 

@@ -6,7 +6,7 @@
 //! (faster compile and link) while the files themselves live in the
 //! `integration/` subdirectory.
 
-#[path = "integration/common.rs"]
+#[path = "support/mod.rs"]
 mod common;
 
 #[path = "integration/action_error.rs"]
