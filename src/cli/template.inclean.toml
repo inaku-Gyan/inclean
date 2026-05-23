@@ -49,16 +49,19 @@
 #   $$                      literal '$'
 
 [project]
-# Optional. The project root, interpreted relative to this file's
-# directory. Defaults to "." (i.e., the directory containing this
-# inclean.toml). All other paths in this config are resolved against
-# the resolved project root. Only one inclean.toml is allowed in a
-# project — extra files anywhere under the project root are an error.
+# Optional. - The project root.
+#           - All other paths in this configuration are resolved relative to it.
+# + Default:
 # root = "."
 
-# Required. CLI version this config was written for. inclean is pre-1.0;
-# breaking schema changes have no migration path — a newer CLI may reject
-# this file until you bump `version` and reconcile any schema changes.
+# Required. - CLI version this config was written for.
+#           - Used for compatibility checks: the inclean CLI compares this value with its own
+#             version before performing any operations.
+#             A version mismatch does not necessarily mean the configuration is incompatible.
+#             Incompatibility only occurs when there are breaking changes in the CLI's resolving
+#             strategy or configuration schema.
+#             In such cases, you can either upgrade/downgrade the CLI or adjust the configuration
+#             to match the expected version.
 version = "{{CARGO_PKG_VERSION}}"
 
 
@@ -69,11 +72,29 @@ version = "{{CARGO_PKG_VERSION}}"
 # Uncomment and tailor as needed.
 # ----------------------------------------------------------------------------
 [[rule]]
+# Required. - Unique name for this rule.
+#           - Used for rule inheritance and in error messages.
+#             Choose something descriptive.
 name = "base"
 
-# Files this rule operates on. gitignore-style globs, relative to the
-# project root. `*` does NOT cross `/`; only `**` does.
-# paths = ["src/**", "include/**"]
+# Optional. - Files this rule operates on.
+#           - gitignore-style globs, relative to the project root.
+#             `*` does NOT cross `/`; only `**` does.
+# + Default:
+# paths = ["**"]
+# + Other examples:
+# paths = ["src/**", "!src/legacy/**", "*.h"]
+
+# Optional. - File extensions this rule applies to.
+#           - Use built-in constants or write your own lists. This only
+#             applies to the files matched by paths whose last character
+#             is a wildcard (e.g. `**` or `*`). For those whose last
+#             character is a literal (e.g. `src/internal/utils.h`), this
+#             rule layer is ignored.
+# + Default:
+# extensions = ["@std.c_extensions", "@std.cpp_extensions"]
+# + Other examples:
+# extensions = ["h", "c", "hpp", "cpp"]
 
 # After cleanup, every quote-include matched by this rule must resolve
 # under one of these directories (relative to the project root). Setting
