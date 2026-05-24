@@ -118,7 +118,7 @@ original_include_dirs = ["include/mylib/internal"]
 | `inclean check [DIR] [-l/--level LEVEL]` | 三个深度之一的只读检查。永不写入。                   |
 | `inclean diff [DIR]`                     | 以 unified diff 形式打印每一处拟改写。               |
 | `inclean apply [DIR]`                    | 就地应用改写。若存在任何规则树冲突，整体拒绝执行。   |
-| `inclean explain FILE [INCLUDE]`         | 逐层追踪指定 `#include` 被哪条规则匹配 —— 调试辅助。 |
+| `inclean explain <FILE> [INCLUDE]`         | 逐层追踪指定 `#include` 被哪条规则匹配 —— 调试辅助。 |
 
 `inclean check` 可在三个层级之一运行（`-l config | rules | full`，
 默认 `full`）。每一层是上一层的严格超集；完整说明见

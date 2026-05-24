@@ -126,7 +126,7 @@ A source line `#include "foo.h"` is rewritten to
 | `inclean check [DIR] [-l/--level LEVEL]` | Read-only check at one of three depths. Never writes.                         |
 | `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
 | `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
-| `inclean explain FILE [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
+| `inclean explain <FILE> [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
 | `inclean schema [-o PATH] [--check]`     | Emit the JSON Schema for `inclean.toml` (stdout by default).                  |
 
 `inclean check` runs at one of three levels (`-l config | rules |
