@@ -250,7 +250,6 @@ dependencies = [
  "similar",
  "thiserror",
  "toml",
- "walkdir",
 ]
 
 [[package]]
