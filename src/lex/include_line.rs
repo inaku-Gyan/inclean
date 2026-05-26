@@ -15,7 +15,7 @@
 
 use std::ops::Range;
 
-use crate::config::schema::IncludeForm;
+use crate::config::schema::{CommentStyle, IncludeForm};
 
 /// One `#include` directive recovered from a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,17 +31,54 @@ pub struct Include {
     /// quote / angle (delimiters included), or the macro identifier(s) for
     /// macro form. This is what a rewrite replaces.
     pub argument_range: Range<usize>,
-    /// Byte range covering anything after the argument up to (but not
-    /// including) the line-terminating `\n` — leading whitespace plus any
-    /// trailing comment. Empty when the line ends immediately after the
-    /// argument. Carriage returns (`\r`) at the very end of the line, if
-    /// any, are excluded so this range only describes printable content.
+    /// Byte range covering the trailing comment (leading whitespace +
+    /// comment + delimiters) on the same physical line as the include.
+    /// Empty (start == end) when there is no trailing comment, or when
+    /// the comment opens with `/*` but doesn't close on the same line
+    /// (per refactor.md, cross-line block comments are NOT trailing
+    /// comments and are skipped by trailing-comment processing).
+    /// Carriage returns at end of line, if any, are excluded.
     pub trailing_range: Range<usize>,
+    /// Delimiter style of the trailing comment, when one is present and
+    /// closes on the same line. `None` for no trailing comment or for
+    /// any text after the argument that isn't a recognized comment.
+    pub trailing_comment_style: Option<CommentStyle>,
 }
 
 /// Scan `src` for `#include` directives.
 pub fn scan(src: &str) -> Vec<Include> {
     Lexer::new(src.as_bytes()).run()
+}
+
+/// Compute a byte-range-per-physical-line table for `src`. Each entry is
+/// `[line_start, line_end_excl_newline)` — the newline itself is not part
+/// of the range. Used by the engine to map `#include` lines to off-limits
+/// suppression regions.
+pub fn line_table(src: &str) -> Vec<Range<usize>> {
+    let bytes = src.as_bytes();
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            let mut end = i;
+            if end > start && bytes[end - 1] == b'\r' {
+                end -= 1;
+            }
+            out.push(start..end);
+            start = i + 1;
+        }
+        i += 1;
+    }
+    // Trailing line without terminator.
+    if start <= bytes.len() {
+        let mut end = bytes.len();
+        if end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        out.push(start..end);
+    }
+    out
 }
 
 struct Lexer<'a> {
@@ -279,21 +316,23 @@ impl<'a> Lexer<'a> {
         self.pos = arg_end;
         self.skip_to_end_of_line();
 
-        // `self.pos` now points at the newline (or EOF). Compute the
-        // trailing range as `[arg_end, eol_end)` — every byte after the
-        // argument up to but not including the `\n`. Trim a trailing `\r`
-        // so the range reflects printable content only.
+        // `self.pos` now points at the newline (or EOF). Trim a trailing
+        // `\r` for the EOL marker so we can reason about printable bytes.
         let mut eol_end = self.pos;
         if eol_end > arg_end && self.src.get(eol_end - 1) == Some(&b'\r') {
             eol_end -= 1;
         }
+
+        let (trailing_range, trailing_comment_style) =
+            classify_trailing(self.src, arg_end, eol_end);
 
         Some(Include {
             form,
             content,
             line: directive_start_line,
             argument_range: arg_start..arg_end,
-            trailing_range: arg_end..eol_end,
+            trailing_range,
+            trailing_comment_style,
         })
     }
 
@@ -333,6 +372,54 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
         }
     }
+}
+
+/// Classify the bytes between `arg_end` and `eol_end` (exclusive of EOL).
+/// Returns the trailing range and the detected comment style.
+///
+/// - All whitespace / empty → empty range, `None`.
+/// - Starts (after whitespace) with `//` → `Line`, range = `[arg_end, eol_end)`.
+/// - Starts with `/*` and closes with `*/` on the same line → `Block`,
+///   range = `[arg_end, eol_end)`.
+/// - Starts with `/*` but no `*/` on the same line → empty range, `None`.
+///   The block comment continues to be skipped by the main lexer loop on
+///   the next iteration; we deliberately drop it from `trailing_range` so
+///   M4's trailing-comment processing leaves it alone.
+/// - Anything else (e.g. `;` or stray tokens) → keep the range so it's
+///   visible to downstream code, but style is `None`.
+fn classify_trailing(
+    src: &[u8],
+    arg_end: usize,
+    eol_end: usize,
+) -> (Range<usize>, Option<CommentStyle>) {
+    if eol_end <= arg_end {
+        return (arg_end..arg_end, None);
+    }
+    let slice = &src[arg_end..eol_end];
+    // Find the first non-whitespace byte within the trailing slice.
+    let mut i = 0usize;
+    while i < slice.len() && (slice[i] == b' ' || slice[i] == b'\t') {
+        i += 1;
+    }
+    if i == slice.len() {
+        return (arg_end..arg_end, None);
+    }
+    if slice[i] == b'/' && slice.get(i + 1) == Some(&b'/') {
+        return (arg_end..eol_end, Some(CommentStyle::Line));
+    }
+    if slice[i] == b'/' && slice.get(i + 1) == Some(&b'*') {
+        // Look for `*/` strictly within the remaining bytes of this line.
+        let mut j = i + 2;
+        while j + 1 < slice.len() {
+            if slice[j] == b'*' && slice[j + 1] == b'/' {
+                return (arg_end..eol_end, Some(CommentStyle::Block));
+            }
+            j += 1;
+        }
+        // Cross-line block comment — drop the trailing range entirely.
+        return (arg_end..arg_end, None);
+    }
+    (arg_end..eol_end, None)
 }
 
 #[cfg(test)]
@@ -491,6 +578,67 @@ mod tests {
         let incs = scan(src);
         let t = &incs[0].trailing_range;
         assert_eq!(&src[t.clone()], " /* note */");
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+    }
+
+    #[test]
+    fn trailing_line_comment_classified_as_line_style() {
+        let src = "#include \"foo.h\" // note\n";
+        let incs = scan(src);
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Line));
+    }
+
+    #[test]
+    fn trailing_no_comment_has_none_style() {
+        let src = "#include \"foo.h\"\n";
+        let incs = scan(src);
+        assert_eq!(incs[0].trailing_comment_style, None);
+    }
+
+    #[test]
+    fn cross_line_block_comment_is_not_a_trailing_comment() {
+        let src = "#include \"foo.h\" /* this\ncontinues */\n";
+        let incs = scan(src);
+        assert_eq!(incs.len(), 1);
+        // Cross-line block: trailing_range collapses to empty, style is None.
+        let t = &incs[0].trailing_range;
+        assert_eq!(t.start, t.end);
+        assert_eq!(incs[0].trailing_comment_style, None);
+    }
+
+    #[test]
+    fn whitespace_only_trailing_has_empty_range_and_no_style() {
+        let src = "#include \"foo.h\"   \n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(t.start, t.end);
+        assert_eq!(incs[0].trailing_comment_style, None);
+    }
+
+    #[test]
+    fn line_table_basic_lf() {
+        let src = "a\nbb\nccc\n";
+        let lines = line_table(src);
+        assert_eq!(lines, vec![0..1, 2..4, 5..8, 9..9]);
+    }
+
+    #[test]
+    fn line_table_strips_crlf() {
+        let src = "a\r\nbb\r\nccc";
+        let lines = line_table(src);
+        assert_eq!(lines, vec![0..1, 3..5, 7..10]);
+    }
+
+    #[test]
+    fn line_table_includes_trailing_line_without_newline() {
+        let src = "hello";
+        let lines = line_table(src);
+        assert_eq!(lines, vec![0..5]);
+    }
+
+    #[test]
+    fn line_table_empty_source() {
+        assert_eq!(line_table(""), vec![0..0]);
     }
 
     #[test]
