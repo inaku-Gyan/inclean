@@ -73,7 +73,9 @@ fn print_full_report(summary: &Summary) {
                     r.include.content,
                     rules.join(", ")
                 ),
-                IncludeOutcome::Rewritten { rules, new_text, .. } => println!(
+                IncludeOutcome::Rewritten {
+                    rules, new_text, ..
+                } => println!(
                     "  L{:>4} rewrite \"{}\"  ->  {new_text}   (rules: {})",
                     r.include.line,
                     r.include.content,

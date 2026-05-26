@@ -45,8 +45,14 @@ pub fn run(path: PathBuf) -> Result<u8> {
     println!("wrote {}", target.display());
     println!("next:");
     println!("  edit {} to taste, then run:", target.display());
-    println!("    inclean config check {}", target.parent().unwrap_or(Path::new(".")).display());
-    println!("    inclean check {}", target.parent().unwrap_or(Path::new(".")).display());
+    println!(
+        "    inclean config check {}",
+        target.parent().unwrap_or(Path::new(".")).display()
+    );
+    println!(
+        "    inclean check {}",
+        target.parent().unwrap_or(Path::new(".")).display()
+    );
     Ok(0)
 }
 
@@ -82,7 +88,8 @@ fn construct_inclean_toml_template() -> String {
     let body_start = TEMPLATE
         .find('\n')
         .expect("template: must have at least one newline");
-    let body = TEMPLATE[body_start + 1..].replace("{{CARGO_PKG_VERSION}}", env!("CARGO_PKG_VERSION"));
+    let body =
+        TEMPLATE[body_start + 1..].replace("{{CARGO_PKG_VERSION}}", env!("CARGO_PKG_VERSION"));
     format!("{SCHEMA_HEADER}\n{body}")
 }
 

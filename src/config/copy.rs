@@ -240,7 +240,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         "file_suffixes",
         has_parent,
     )?;
-    let file_suffixes = with_ctx(constants::expand_list(&file_suffixes_raw), &ctx, "file_suffixes")?;
+    let file_suffixes = with_ctx(
+        constants::expand_list(&file_suffixes_raw),
+        &ctx,
+        "file_suffixes",
+    )?;
 
     let match_forms = match raw.match_forms.as_ref() {
         Some(v) => v.clone(),
@@ -269,9 +273,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
 
     let suppression = match raw.suppression_comments_regex.as_ref() {
         Some(s) => build_suppression(s, parent.map(|p| &p.suppression), has_parent, &ctx)?,
-        None => parent
-            .map(|p| p.suppression.clone())
-            .unwrap_or_default(),
+        None => parent.map(|p| p.suppression.clone()).unwrap_or_default(),
     };
 
     let action = match raw.action.as_ref() {
@@ -334,9 +336,7 @@ fn resolve_str_list(
     for elem in raw {
         if elem == COPIED_TOKEN {
             if !has_parent {
-                bail!(
-                    "{ctx}: `{field}` uses `{COPIED_TOKEN}` but this rule has no `copied_from`"
-                );
+                bail!("{ctx}: `{field}` uses `{COPIED_TOKEN}` but this rule has no `copied_from`");
             }
             if let Some(pl) = parent {
                 out.extend(pl.iter().cloned());

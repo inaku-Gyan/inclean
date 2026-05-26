@@ -115,10 +115,9 @@ pub fn evaluate(
             keep_trailing_comment,
             message: _,
         } => apply_remove(include, source, *keep_blank_line, *keep_trailing_comment),
-        ResolvedAction::CommentOut {
-            style,
-            message: _,
-        } => apply_comment_out(include, source, *style),
+        ResolvedAction::CommentOut { style, message: _ } => {
+            apply_comment_out(include, source, *style)
+        }
     }
 }
 
@@ -150,10 +149,7 @@ fn substitute_trailing(template: &str, ctx: &TemplateCtx, original_comment_body:
 /// content (excluding `\r` / `\n` at end of line).
 fn argument_and_trailing_range(include: &Include) -> Range<usize> {
     let start = include.argument_range.start;
-    let end = include
-        .trailing_range
-        .end
-        .max(include.argument_range.end);
+    let end = include.trailing_range.end.max(include.argument_range.end);
     start..end
 }
 
@@ -401,7 +397,8 @@ fn process_trailing(
     let style = include.trailing_comment_style;
 
     // Run the transform (if configured) and the style matches.
-    if let (Some(transform), Some(content_re)) = (&tc.transform, rule.trailing_content_regex.as_ref())
+    if let (Some(transform), Some(content_re)) =
+        (&tc.transform, rule.trailing_content_regex.as_ref())
     {
         if let Some(s) = style {
             if transform.match_styles.contains(&s) {
@@ -557,29 +554,37 @@ mod tests {
 
     #[test]
     fn keep_with_default_output_form_is_a_noop() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         assert_eq!(out, Outcome::Keep);
     }
 
     #[test]
     fn keep_with_output_form_angle_rewrites_to_angle() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep", output_form = "angle" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "<foo.h>"),
             other => panic!("unexpected: {other:?}"),
@@ -588,15 +593,19 @@ mod tests {
 
     #[test]
     fn replace_substitutes_original_placeholder() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "replace", with = "lib/${original}" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"lib/foo.h\""),
             other => panic!("unexpected: {other:?}"),
@@ -605,15 +614,19 @@ mod tests {
 
     #[test]
     fn error_action_produces_error_outcome() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "error", message = "no `${original}`" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Error { message } => assert_eq!(message, "no `foo.h`"),
             other => panic!("unexpected: {other:?}"),
@@ -622,14 +635,12 @@ mod tests {
 
     #[test]
     fn macro_form_always_errors() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             match_forms = ["macro"]
             action = { type = "keep" }
-            "#,
-        );
+            "#);
         let inc = Include {
             form: IncludeForm::Macro,
             content: "MY_HEADER".to_string(),
@@ -638,7 +649,13 @@ mod tests {
             trailing_range: 0..0,
             trailing_comment_style: None,
         };
-        let out = evaluate(&rules[0], &inc, "", Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            "",
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Error { message } => assert!(message.contains("macro")),
             other => panic!("unexpected: {other:?}"),
@@ -647,15 +664,19 @@ mod tests {
 
     #[test]
     fn comment_out_line_style_wraps_with_slashes() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "comment_out" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "// #include \"foo.h\"\n"),
             other => panic!("unexpected: {other:?}"),
@@ -664,15 +685,19 @@ mod tests {
 
     #[test]
     fn comment_out_block_style_wraps_with_slash_star() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "comment_out", style = "/**/" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "/* #include \"foo.h\" */\n"),
             other => panic!("unexpected: {other:?}"),
@@ -681,15 +706,19 @@ mod tests {
 
     #[test]
     fn remove_default_drops_line_entirely() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "remove" }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite {
                 edit_range,
@@ -706,15 +735,19 @@ mod tests {
 
     #[test]
     fn remove_keep_blank_line_emits_terminator_only() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "remove", keep_blank_line = true, keep_trailing_comment = false }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\n"),
             other => panic!("unexpected: {other:?}"),
@@ -723,8 +756,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_replace_overrides_existing() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -733,10 +765,15 @@ mod tests {
                     action = { type = "replace", with = "REPLACED" },
                 },
             }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\" // old\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => {
                 assert!(new_text.contains("REPLACED"));
@@ -747,8 +784,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_remove_drops_comment() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -757,10 +793,15 @@ mod tests {
                     action = { type = "remove" },
                 },
             }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\" // unwanted\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => {
                 assert_eq!(new_text, "\"foo.h\"");
@@ -771,18 +812,22 @@ mod tests {
 
     #[test]
     fn trailing_comment_append_if_absent_adds_for_uncommented() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
             trailing_comment = {
                 append_if_absent = "  // IWYU pragma: export",
             }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\"\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Rewrite { new_text, .. } => {
                 assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: export");
@@ -793,26 +838,29 @@ mod tests {
 
     #[test]
     fn trailing_comment_append_if_absent_skips_when_comment_present() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
             trailing_comment = {
                 append_if_absent = "  // extra",
             }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\" // existing\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         // existing trailing comment is preserved; no append.
         assert_eq!(out, Outcome::Keep);
     }
 
     #[test]
     fn trailing_comment_error_produces_error_outcome() {
-        let rules = cfg(
-            r#"
+        let rules = cfg(r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -822,10 +870,15 @@ mod tests {
                     action = { type = "error", message = "no TODO comments" },
                 },
             }
-            "#,
-        );
+            "#);
         let (src, inc) = first_include("#include \"foo.h\" // TODO: rename\n");
-        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         match out {
             Outcome::Error { message } => assert!(message.contains("no TODO comments")),
             other => panic!("unexpected: {other:?}"),

@@ -90,49 +90,40 @@ inclean diff                # see the rewrites as a unified diff
 inclean apply               # write the rewrites in place
 ```
 
-Every command except `explain` takes an optional `[DIR]` argument — the
-directory containing the root `inclean.toml`. It defaults to `.`.
+Each command takes an optional `[DIR]` / `[PATH]` argument. Default is `.`.
 
 ### Example
 
-Take a "flat" library where headers live at
-`include/mylib/internal/foo.h` but internal `#include`s use just the
-basename. The fixture under
-[tests/fixtures/flat-library/](tests/fixtures/flat-library/) ships
-this config:
+A simple `replace`-action config that rewrites `#include "foo.h"` to
+`#include "lib/foo.h"`:
 
 ```toml
 [project]
 root = "."
-version = "0.2.0"
+version = "0.3.0"
+min_inclean_version = "0.3.0"
 
 [[rule]]
-name = "base"
-paths = ["src/**", "include/**"]
-forms = ["quote"]
-allowed_include_dirs = ["include"]
-original_include_dirs = ["include/mylib/internal"]
+name = "lib-prefix"
+file_paths = ["src/**/*"]
+include_match = ["foo.h", "bar.h"]
+action = { type = "replace", with = "lib/${original}" }
 ```
 
-A source line `#include "foo.h"` is rewritten to
-`#include "mylib/internal/foo.h"` — so the consumer only needs
-`-Iinclude`.
+See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
 ## Commands
 
-| Command                                  | Purpose                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------------- |
-| `inclean init [DIR]`                     | Generate a documented starter `inclean.toml`. Refuses to overwrite.           |
-| `inclean check [DIR] [-l/--level LEVEL]` | Read-only check at one of three depths. Never writes.                         |
-| `inclean diff [DIR]`                     | Print a unified diff of every proposed rewrite.                               |
-| `inclean apply [DIR]`                    | Apply rewrites in place. Refuses if any rule-tree conflict is present.        |
-| `inclean explain <FILE> [INCLUDE]`         | Trace, layer-by-layer, which rule matches a given `#include` — debugging aid. |
-| `inclean schema [-o PATH] [--check]`     | Emit the JSON Schema for `inclean.toml` (stdout by default).                  |
-
-`inclean check` runs at one of three levels (`-l config | rules |
-full`, default `full`). Each level is a strict superset of the
-previous; see [docs/configuration.md](docs/configuration.md#inclean-check-levels)
-for the full breakdown.
+| Command                                       | Purpose                                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `inclean init [PATH]`                         | Generate a documented starter `inclean.toml`. Alias of `inclean config new`.                 |
+| `inclean check [DIR] [-l config\|full]`       | Read-only check. `config` validates `inclean.toml` alone; `full` (default) runs the pipeline.|
+| `inclean diff [DIR]`                          | Print a unified diff of every proposed rewrite.                                              |
+| `inclean apply [DIR]`                         | Apply rewrites in place. Refuses if any conflict is present.                                 |
+| `inclean config check [DIR]`                  | Alias of `inclean check --level config`.                                                     |
+| `inclean config new [PATH]`                   | Alias of `inclean init`.                                                                     |
+| `inclean config schema [-o PATH] [--check]`   | Emit / validate the JSON Schema for `inclean.toml`.                                          |
+| `inclean schema [-o PATH] [--check]`          | Top-level shortcut for `config schema`.                                                      |
 
 ## Editor support
 
@@ -142,25 +133,24 @@ with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tama
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.2.0/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.2.0"
+version = "0.3.0"
+min_inclean_version = "0.3.0"
 ```
 
-`inclean init` writes both the `#:schema` line (for the editor) and
-the `[project].version` field (the CLI's own version gate), each
+`inclean init` writes both the `#:schema` line (for the editor) and the
+`[project].version` + `[project].min_inclean_version` fields, each
 pinned to the CLI version that generated the file. To upgrade schema
-validation, edit the `v0.2.0` segment in the URL to a newer release
-tag; to always track the development schema, replace it with `main`
-(not recommended for shared repos — new fields will appear in the
-schema before your CLI knows about them).
+validation, edit the `v0.3.0` segment in the URL to a newer release
+tag.
 
-**`#:schema` and `[project].version` are independent.** The
-`#:schema` URL is purely for editor tooling; the CLI reads only
-`[project].version` and compares it to its built-in
-`MIN_SUPPORTED_INCLEAN_TOML_VERSION`. inclean is pre-1.0 and does
+**`#:schema` and the `[project]` version fields are independent.** The
+`#:schema` URL is purely for editor tooling; the CLI runs its own
+two-direction compatibility check (`CLI_COMPAT_MIN <= cfg.version` AND
+`cfg.min_inclean_version <= CLI_CURRENT`). inclean is pre-1.0 and does
 not ship migration shims for breaking schema changes — see
 [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy).
 
@@ -173,8 +163,9 @@ inclean schema --output inclean.toml.schema.json
 ## Documentation
 
 - **[docs/configuration.md](docs/configuration.md)** — full
-  `inclean.toml` schema: the five-layer matching model, inheritance,
-  `@std.*` constants, actions, placeholders, exit codes.
+  `inclean.toml` schema: the four-layer matching model, `copied_from`
+  copy semantics, `@std.*` constants, six action variants, `${copied}`
+  and other placeholders, exit codes.
 - **[docs/architecture.md](docs/architecture.md)** — code-level
   architecture: module map, pipeline phases, key invariants.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — toolchain, dev workflow,

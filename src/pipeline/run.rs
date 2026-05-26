@@ -474,10 +474,7 @@ fn collapse_outcomes(
 
 fn argument_and_trailing_range(include: &Include) -> Range<usize> {
     let start = include.argument_range.start;
-    let end = include
-        .trailing_range
-        .end
-        .max(include.argument_range.end);
+    let end = include.trailing_range.end.max(include.argument_range.end);
     start..end
 }
 
@@ -593,10 +590,7 @@ mod tests {
         touch(
             &root,
             "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\n",
-                min_inclean_toml()
-            ),
+            &format!("{}\n[[rule]]\nname = \"base\"\n", min_inclean_toml()),
         );
         let summary = run(&root, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
@@ -711,7 +705,9 @@ mod tests {
         let summary = run(&root, CheckMode::Run).unwrap();
         assert!(summary.conflicts.is_empty());
         match &summary.files[0].include_results[0].outcome {
-            IncludeOutcome::Rewritten { rules, new_text, .. } => {
+            IncludeOutcome::Rewritten {
+                rules, new_text, ..
+            } => {
                 assert_eq!(new_text, "\"new/foo.h\"");
                 assert_eq!(rules.len(), 2);
             }

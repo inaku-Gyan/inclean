@@ -27,7 +27,10 @@ pub fn run(dir: PathBuf) -> Result<u8> {
         })
         .count();
     if !summary.skipped.is_empty() {
-        eprintln!("warning: skipped {} file(s) that could not be parsed", summary.skipped.len());
+        eprintln!(
+            "warning: skipped {} file(s) that could not be parsed",
+            summary.skipped.len()
+        );
         for s in &summary.skipped {
             eprintln!("  - {}: {}", s.relpath.display(), s.reason);
         }

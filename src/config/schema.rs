@@ -540,10 +540,7 @@ mod tests {
         );
         let tc = cfg.rules[0].trailing_comment.as_ref().unwrap();
         let t = tc.transform.as_ref().unwrap();
-        assert_eq!(
-            t.match_styles.as_ref().unwrap(),
-            &vec![CommentStyle::Line]
-        );
+        assert_eq!(t.match_styles.as_ref().unwrap(), &vec![CommentStyle::Line]);
         assert_eq!(t.content_regex.as_deref(), Some("^TODO.*$"));
         assert!(matches!(
             t.action.as_ref().unwrap(),

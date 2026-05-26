@@ -245,14 +245,20 @@ mod tests {
 
     #[test]
     fn find_root_config_walks_up_from_nested_dir() {
-        let proj = build_tree(&[("inclean.toml", &min_project_block()), ("src/foo/bar.c", "")]);
+        let proj = build_tree(&[
+            ("inclean.toml", &min_project_block()),
+            ("src/foo/bar.c", ""),
+        ]);
         let cfg = find_root_config(&proj.path().join("src/foo")).unwrap();
         assert_eq!(cfg, proj.path().join("inclean.toml"));
     }
 
     #[test]
     fn find_root_config_accepts_file_path_as_start() {
-        let proj = build_tree(&[("inclean.toml", &min_project_block()), ("src/foo/bar.c", "")]);
+        let proj = build_tree(&[
+            ("inclean.toml", &min_project_block()),
+            ("src/foo/bar.c", ""),
+        ]);
         let cfg = find_root_config(&proj.path().join("src/foo/bar.c")).unwrap();
         assert_eq!(cfg, proj.path().join("inclean.toml"));
     }

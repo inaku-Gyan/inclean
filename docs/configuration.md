@@ -1,489 +1,318 @@
-# Configuration reference
+# Configuration reference (v0.3)
 
-`inclean` is driven by `inclean.toml` files. This document is the
-exhaustive reference for the schema, matching model, and execution
-behavior. For an end-to-end walkthrough, see the
-[README](../README.md); for code-level architecture, see
+`inclean` is driven by a single `inclean.toml` at the project root.
+This document is the reference for the schema, matching model, and
+execution behavior. For an end-to-end walkthrough see the
+[README](../README.md); for code-level architecture see
 [architecture.md](architecture.md).
 
-> **Editor support.** A JSON Schema for `inclean.toml` lives at
-> [`schemas/inclean.toml.schema.json`](../schemas/inclean.toml.schema.json) in
-> the repo and is hosted on `raw.githubusercontent.com` for editors
-> that consume the `#:schema` directive. See the
-> [Editor support section of the README](../README.md#editor-support)
-> for the URL and `inclean init`'s auto-pinning behavior.
+> **Editor support.** A JSON Schema lives at
+> [`schemas/inclean.toml.schema.json`](../schemas/inclean.toml.schema.json) and
+> is hosted on `raw.githubusercontent.com` for editors that consume
+> the `#:schema` directive.
 
 ## Table of contents
 
-- [Configuration reference](#configuration-reference)
-  - [Table of contents](#table-of-contents)
-  - [File layout](#file-layout)
-  - [The rule tree](#the-rule-tree)
-  - [The five matching layers](#the-five-matching-layers)
-    - [Layer 1 — `paths` (file path glob)](#layer-1--paths-file-path-glob)
-    - [Layer 2 — `extensions` (file extension)](#layer-2--extensions-file-extension)
-    - [Layer 3 — `forms` (include syntax)](#layer-3--forms-include-syntax)
-    - [Layer 4 — `match` (regex on include content)](#layer-4--match-regex-on-include-content)
-    - [Layer 5 — `match_resolved` (resolved physical file)](#layer-5--match_resolved-resolved-physical-file)
-  - [Actions](#actions)
-    - [`auto`](#auto)
-    - [`rewrite`](#rewrite)
-    - [`keep`](#keep)
-    - [`error`](#error)
-  - [Trailing comments (`trailing_comment`)](#trailing-comments-trailing_comment)
-    - [Fields](#fields)
-    - [Idempotency](#idempotency)
-    - [Whitespace and inner padding](#whitespace-and-inner-padding)
-    - [`//` line-comment caveat](#-line-comment-caveat)
-  - [`${...}` placeholders](#-placeholders)
-  - [`@std.*` built-in constants](#std-built-in-constants)
-  - [`allowed_include_dirs` semantics](#allowed_include_dirs-semantics)
-  - [`inclean check` levels](#inclean-check-levels)
-  - [Exit codes](#exit-codes)
+- [The `[project]` block](#the-project-block)
+- [Rules and `copied_from`](#rules-and-copied_from)
+- [The four matching layers](#the-four-matching-layers)
+  - [Layer 1 — `file_paths`](#layer-1--file_paths)
+  - [Layer 2 — `file_suffixes`](#layer-2--file_suffixes)
+  - [Layer 3 — `match_forms`](#layer-3--match_forms)
+  - [Layer 4 — `include_match`](#layer-4--include_match)
+- [`suppression_comments_regex`](#suppression_comments_regex)
+- [Actions](#actions)
+- [Trailing comments](#trailing-comments)
+- [`${copied}` and other placeholders](#copied-and-other-placeholders)
+- [`@std.*` built-in constants](#std-built-in-constants)
+- [Conflict detection](#conflict-detection)
+- [CLI](#cli)
+- [Exit codes](#exit-codes)
 
-## File layout
-
-A project has exactly **one** `inclean.toml`. Sub-configs are not a
-feature — find an `inclean.toml` anywhere under the project root other
-than the root config and `inclean` errors out.
-
-- **The config must declare a `[project]` block.** It pins the project
-  root path on disk (`root`) and the inclean CLI release the config was
-  authored for (`version`). See [the field list below](#project-fields).
-- All path-shaped fields in a rule (`paths`, `allowed_include_dirs`,
-  `original_include_dirs`, `match_resolved.under`) are interpreted as
-  **project-root-relative** — relative to the *resolved* project root,
-  not to the directory containing `inclean.toml`.
-
-### `[project]` fields
-
-- `root` — optional, defaults to `"."`. Project root path interpreted
-  relative to the directory containing `inclean.toml`. The resolved
-  path must exist and be a directory. All rule paths
-  (`paths`, `allowed_include_dirs`, etc.) resolve relative to this.
-- `version` — required, semver string (e.g. `"0.2.0"`) matching the
-  inclean CLI release the config was authored for. inclean is pre-1.0
-  and has **no migration path between breaking schema changes**: a
-  newer CLI may hard-reject this config until `version` is bumped and
-  any schema changes are reconciled by hand. `inclean init` writes
-  this field automatically using `env!("CARGO_PKG_VERSION")`.
-
-Minimal config (file at project root):
+## The `[project]` block
 
 ```toml
 [project]
-# root = "."   # optional, defaults to "."
-version = "0.2.0"
+root = "."                            # optional; defaults to "."
+version = "0.3.0"                     # required
+min_inclean_version = "0.3.0"         # required
+```
 
+- `root` — project root path, relative to the directory containing
+  `inclean.toml`. All path-shaped rule fields resolve relative to the
+  **resolved** root.
+- `version` — CLI version that wrote this config. Written once by
+  `inclean init` and never auto-updated.
+- `min_inclean_version` — lowest CLI version that can correctly parse
+  this config. Same lifecycle as `version`.
+
+Compatibility check (both must hold):
+
+- `CLI_COMPAT_MIN <= config.version` — the config wasn't written for a
+  CLI older than the last breaking schema change.
+- `config.min_inclean_version <= CLI_CURRENT` — this CLI is new enough.
+
+Either side failing aborts the run with a path-aware error.
+
+## Rules and `copied_from`
+
+A rule is `[[rule]]`:
+
+```toml
 [[rule]]
 name = "base"
-paths = ["src/**", "include/**"]
-forms = ["quote"]
-allowed_include_dirs = ["include"]
-original_include_dirs = ["include/mylib/internal"]
+# layer 1–4 and action go here
 ```
 
-Out-of-tree config (file at the repo top, project rooted in a
-sub-directory):
+`name` is required and globally unique across the config.
 
-```
-repo/
-  inclean.toml      # [project] root = "lib"
-  lib/
-    src/main.c
-    include/mylib/internal/foo.h
-```
+`copied_from = "other-rule"` performs a **single-level copy** (transitive
+— the parent's already-resolved value is taken):
 
-The `inclean.toml` sits *above* the project root it describes; all
-rule paths (`paths = ["src/**", ...]`, `allowed_include_dirs`,
-`original_include_dirs`) are still relative to `lib/`, not to `repo/`.
-The CLI accepts any path inside (or at) the resolved project root —
-it walks upward to find the config.
+- **Top-level field omitted** by the child → inherit the parent's
+  resolved value.
+- **Top-level field written** by the child → replace the field; inside a
+  nested object the inner fields default to schema defaults (null /
+  disabled). Use `${copied}` per inner field to pull the parent's value
+  explicitly.
 
-## The rule tree
+The referenced parent must be declared earlier in the config
+(forward-only references). Self-references are rejected.
 
-Rules form a **single-inheritance tree** via the optional `extends`
-field, which names a parent rule. A few invariants:
+## The four matching layers
 
-- Rule **names are globally unique** within the config. Duplicate names
-  are a load-time error.
-- A rule with no `extends` is the **root** of its tree (conventionally
-  named `base`). There can be any number of trees.
-- Inheritance cycles are detected at load time.
-- There is **no `[defaults]` block** and no project-level fallback for
-  rule fields. To share defaults across rules, write a `base` rule and
-  have others `extends = "base"`.
+For a rule to fire on an `#include`, every layer must pass.
 
-When a rule field is unspecified, the value is inherited from the
-parent (recursively up the chain). When both child and parent specify a
-field, the rule semantics are **AND-combined at match time**: an
-include must satisfy _both_ the child's and the parent's predicate.
-This is enforced by the rule-tree invariants:
-
-- **Child ⊆ Parent.** If a child rule matches an include, every
-  ancestor of that child must also match the same include.
-- **Cross-chain disjoint.** Two rules that share no ancestor relation
-  must not both match the same include.
-
-Violations of either invariant are surfaced as
-[conflicts](#inclean-check-levels) at `rules` level and above.
-
-## The five matching layers
-
-For a rule to match an `#include`, all five layers must pass. Layers
-1, 2, 3 have built-in defaults if unspecified; layer 4 defaults to
-"match anything"; layer 5 is opt-in.
-
-### Layer 1 — `paths` (file path glob)
-
-Gitignore-style globs, project-root-relative, matched against the
-source file containing the `#include`. `*` does **not** cross `/`; use
-`**` to match across directories.
+### Layer 1 — `file_paths`
 
 ```toml
-paths = ["src/**", "include/**/*.h"]
+file_paths = ["src/**/*", "include/**/*"]
+# Default: ["**/*"]
 ```
 
-If `paths` is omitted, the rule applies to every source file.
+Globset patterns interpreted relative to the project root. **Full-string
+anchored**: `foo.h` matches only the literal `foo.h`, **not** `a/foo.h`.
+Use `**/foo.h` to match at any depth. `*` does not cross `/`; only `**`
+does.
 
-### Layer 2 — `extensions` (file extension)
-
-Limits the rule to files with one of the listed extensions. Skipped
-when layer 1 specifies an exact path (no wildcards).
-
-Default: `["@std.c_extensions", "@std.cpp_extensions"]` — see the
-[`@std.*` constants](#std-built-in-constants) section.
+### Layer 2 — `file_suffixes`
 
 ```toml
-extensions = [".h", ".hpp", ".cpp"]
-# or, using a built-in:
-extensions = ["@std.cpp_extensions"]
+file_suffixes = [".c", ".h"]
+# Default: ["@std.c.extensions", "@std.cpp.extensions"]
 ```
 
-### Layer 3 — `forms` (include syntax)
+Literal file extensions. Skipped when the matching `file_paths` glob is
+an exact literal path (no wildcards).
 
-Restricts the rule to one or more `#include` forms:
-
-| Value     | Matches                                |
-| --------- | -------------------------------------- |
-| `"quote"` | `#include "foo.h"`                     |
-| `"angle"` | `#include <foo.h>`                     |
-| `"macro"` | `#include FOO_HEADER` (macro-expanded) |
-
-`"macro"` may appear in a rule and is matched, but action evaluation
-on a macro-form include is always an error in v1 (placeholder text is
-not expanded). This lets a rule explicitly catch and reject macro
-includes.
-
-Default: `["quote", "angle"]`.
-
-### Layer 4 — `match` (regex on include content)
-
-A regular expression applied to the **stripped** include content (no
-quotes or angle brackets). Capture groups become available to the
-action template as `${1}`, `${2}`, …
+### Layer 3 — `match_forms`
 
 ```toml
-match = '^old_(.+)$'
+match_forms = ["quote", "angle"]
+# Default: ["quote"]
 ```
 
-`@std.*` constants may be substituted into the regex via `@name`
-(`@@` for a literal `@`). See `@std.*` below.
+The set of `#include` syntaxes the rule applies to:
+- `"quote"` — `#include "foo.h"`
+- `"angle"` — `#include <foo.h>`
+- `"macro"` — `#include MY_HEADER`
 
-### Layer 5 — `match_resolved` (resolved physical file)
+Matching `"macro"` is valid in config; **action evaluation against a
+macro `#include` always produces an error in v1**.
 
-Opt-in. When set, the include text is resolved against the rule's
-`original_include_dirs` (preprocessor-style: `<dir>/<include_text>`)
-and the matching is then constrained against the resolved file's
-project-root-relative path.
+### Layer 4 — `include_match`
 
 ```toml
-original_include_dirs = ["src", "src/internal"]
-match_resolved = { under = "src/internal" }
+include_match = ["old_*.h", "legacy/**"]
+# Default: ["**"]
 ```
 
-Both sub-fields are optional but at least one must be present:
+Globset patterns matched against the include's argument text (no
+quotes/angles). Same anchoring rules as Layer 1.
 
-- **`under`** — the resolved path must start with this directory
-  (project-root-relative).
-- **`match`** — a regex applied to the resolved path.
+## `suppression_comments_regex`
 
-Layer 5 also enforces resolution **uniqueness**: if the include text
-resolves under more than one `original_include_dirs` entry, the
-include is reported as a `Layer5Ambiguous` outcome (exit code 3). The
-user is expected to narrow `original_include_dirs` to disambiguate.
-
-When layer 5 runs successfully, the action gains `${resolved.*}`
-placeholders (see below).
-
-## Actions
-
-A rule's `action` decides what happens when an include matches. There
-are four kinds, tagged by `type`. If `action` is omitted, the default
-is:
+Marks regions where `inclean` should leave includes alone.
 
 ```toml
-action = { type = "auto", relative_to = "allowed", form = "quote" }
-```
-
-### `auto`
-
-Resolves the include via `original_include_dirs`, then re-emits a path
-relative to the chosen base.
-
-```toml
-action = { type = "auto", relative_to = "allowed", form = "quote" }
-```
-
-- **`relative_to`** — `"allowed"` (default) makes the path relative to
-  the first `allowed_include_dirs` entry under which the resolved file
-  lives. `"file_dir"` makes it relative to the directory of the source
-  file being edited.
-- **`form`** — `"quote"` (default), `"angle"`, or `"preserve"` (keep
-  the original include's form).
-
-`auto` is a hard error when the resolved file is not under any of the
-rule's `allowed_include_dirs` (with `relative_to = "allowed"`); the
-file's apply is aborted.
-
-### `rewrite`
-
-Replace the include's text with `to`, supporting `${...}`
-placeholders.
-
-```toml
-action = { type = "rewrite", to = "mylib/${1}.h", form = "quote" }
-```
-
-### `keep`
-
-Leave the include unchanged. The match still counts as matched (and
-post-action validation still runs against `allowed_include_dirs`).
-
-```toml
-action = { type = "keep" }
-```
-
-### `error`
-
-Abort processing of the file with the given message. Used to forbid
-specific patterns.
-
-```toml
-action = { type = "error", message = "deprecated header: ${0}" }
-```
-
-Triggers exit code 2 (distinct from infrastructure failures, which use
-exit 3).
-
-## Trailing comments (`trailing_comment`)
-
-> **v0.1.1 breaking change.** The `trailing_comment` schema was
-> redesigned in 0.1.1. The old `policy` / `text` fields are gone;
-> configs that worked under 0.1.0 must be rewritten using the new
-> `{ match, to, form, spacing }` shape documented below. See
-> [CHANGELOG.md](../CHANGELOG.md) for the full migration note.
-
-Anything written after the `#include` argument — leading whitespace
-plus the trailing comment, if any — is **preserved verbatim by
-default**. The rewrite engine touches only the delimited argument
-(`"foo.h"` or `<foo.h>`), so `#include "foo.h"  // pulled in for FOO`
-keeps its trailing note across every action type.
-
-Opt in to rewriting the trailing comment by setting `trailing_comment`
-on a rule. The shape mirrors the include action: a `match` regex
-selects which existing comments the rule applies to, and a `to`
-template — supporting `${...}` placeholders — produces the new
-comment body. `form` switches between `//` and `/* */` (the way
-`form = "quote"` / `form = "angle"` switches between `"..."` /
-`<...>` for include paths), and `spacing` controls the number of
-spaces that go between the include argument and the new comment.
-
-The field is rule-level and inherited via `extends` like every other
-rule field.
-
-```toml
-# Shortcut: a bare string is sugar for `{ to = "<string>" }` with
-# every other field defaulted. The empty string is rejected — use the
-# table form with `to = ""` to delete the trailing comment.
-trailing_comment = "keep"
-
-# Full table form.
-trailing_comment = {
-  match   = "^$",        # optional; default ".*"
-  to      = "X ${comment.0}",  # required
-  form    = "line",      # optional; "line" | "block" | "preserve" (default)
-  spacing = 2,           # optional; default = preserve existing, fall back to 2
+suppression_comments_regex = {
+    block_start = "^USER CODE BEGIN.*$",
+    block_end   = "^USER CODE END.*$",
+    line        = "^inclean: skip$",
 }
 ```
 
-### Fields
+For each physical line, the engine extracts its comment body (stripping
+`//` or same-line `/* */` delimiters and surrounding whitespace) and
+matches it against these regexes:
 
-| Field     | Type                                | Default      | Notes                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --------- | ----------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `match`   | regex                               | `".*"`       | Runs against the **stripped** existing comment body — i.e. the text inside `//` or `/* */`, with one space of padding shaved off each side. When the line has no trailing comment the regex is run against the empty string `""`, so `match = "^$"` is the "only inject when absent" idiom. **If the regex does not match, the rule leaves the existing trailing bytes untouched** — the rule's include-argument action still runs. |
-| `to`      | template                            | required     | The **stripped** body of the new comment (no `//`, no `/* */`). Supports the regular `${...}` placeholder grammar, plus `${comment.N}` / `${comment.text}` for the `match` regex's capture groups (see the placeholder section below). Setting `to = ""` removes the trailing comment entirely (whitespace + delimiters + body) — `form` and `spacing` are ignored in that branch.                                                  |
-| `form`    | `"line"` / `"block"` / `"preserve"` | `"preserve"` | `"line"` emits `// <body>`, `"block"` emits `/* <body> */`. `"preserve"` reuses the existing comment's style, falling back to `"line"` when the line had no comment to begin with.                                                                                                                                                                                                                                                  |
-| `spacing` | non-negative integer                | (preserve)   | When set, emits exactly this many spaces between the argument and the `//` / `/*`. When unset, preserves whatever whitespace was already in front of the comment, falling back to two spaces when there was no existing whitespace/comment.                                                                                                                                                                                         |
+- `line` — matches a single line; if it matches, only that line is
+  off-limits.
+- `block_start` / `block_end` — once `block_start` matches, every line
+  through the next `block_end` (inclusive) is off-limits.
 
-Both `match` and `to` go through `@std.*` constant expansion, just
-like layer-4 `match` and `rewrite.to`.
+Per-rule. Different rules may suppress different regions of the same
+file.
 
-### Idempotency
+## Actions
 
-There is no built-in "don't double-apply" guard — re-running
-`inclean apply` is a no-op precisely when the regex + template
-re-produce the same bytes that are already on disk. Two patterns
-cover the common cases:
+Exactly one `action = { type = "...", ... }` per rule (default: `keep`).
 
-- **Plain replace is naturally idempotent.** `{ to = "X" }` (default
-  match `.*`) always overwrites the existing body with `X`, so the
-  second run produces identical bytes and falls into `Outcome::Keep`.
-- **Idempotent prepend / append** use an optional non-capturing
-  group to consume the prefix or suffix when it's already there,
-  then put it back via the template. The Rust `regex` crate doesn't
-  support lookaround, so this is the idiom that works:
+### `resolve`
 
-  ```toml
-  # Prepend "X " in front of the existing body, idempotent across runs.
-  trailing_comment = { match = '^(?:X )?(.*)$', to = "X ${comment.1}" }
+```toml
+action = { type = "resolve", relative_to = "include", output_form = "quote" }
+```
 
-  # Append " X" after the existing body, idempotent across runs.
-  trailing_comment = { match = '^(.*?)(?: X)?$', to = "${comment.1} X" }
+Probe each entry of `include_directories` (literal directory paths under
+the project root) for the include text; if exactly one entry contains the
+file, rewrite the path to be relative to `relative_to`. Multiple matches
+or no matches → `EvaluationFailure`.
 
-  # Only inject when there is no existing comment (the old "fill_if_absent").
-  trailing_comment = { match = "^$", to = "X" }
+`relative_to`:
+- A literal directory path (relative to the project root), or
+- `${current_file}` — meaning "the directory of the file being edited".
 
-  # Replace any existing comment with X (the old "replace").
-  trailing_comment = { to = "X" }
+### `replace`
 
-  # Strip the trailing comment entirely.
-  trailing_comment = { to = "" }
-  ```
+```toml
+action = { type = "replace", with = "lib/${original}" }
+```
 
-### Whitespace and inner padding
+Substitute the include's argument with `with` (literal text +
+placeholders). `output_form` may flip the delimiters.
 
-Reading an existing comment, inclean shaves a single space of
-padding off the inner edges of `//` and `/* */`, so `// foo` and
-`/* foo */` both expose `foo` to the regex and to `${comment.0}`.
-On output, line and block forms always emit one space of inner
-padding (`// X`, `/* X */`) regardless of the input — there is no
-configuration for that.
+### `keep`
 
-### `//` line-comment caveat
+```toml
+action = { type = "keep", output_form = "angle" }
+```
 
-A `//` comment extends to end-of-line, so a single `#include` line
-can hold at most one `//`-style comment. If your template appends
-to an existing `//` comment, the result is still a single `//`
-comment (because the template controls the body, not the
-delimiters). The case to watch is `form = "preserve"` with an
-existing `//` comment plus a template that introduces something
-the line cannot represent — in those cases set `form = "block"`
-explicitly.
+Leave the argument unchanged. `output_form` may still rewrite `"foo.h"`
+to `<foo.h>` or vice versa. Default: `preserve`.
 
-## `${...}` placeholders
+### `remove`
 
-Available in `rewrite.to`, `error.message`, and `trailing_comment.to`
-(the comment-only placeholders are scoped to the last).
+```toml
+action = { type = "remove", keep_blank_line = false, keep_trailing_comment = true }
+```
 
-| Placeholder                       | Meaning                                                                            |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| `${0}`                            | The full stripped include text                                                     |
-| `${1}`, `${2}`, …                 | Capture groups from layer-4 `match`                                                |
-| `${file.path}`                    | Source file path (project-root-relative)                                           |
-| `${file.relpath}`                 | Same as `${file.path}`                                                             |
-| `${file.dir}`                     | Directory of the source file                                                       |
-| `${resolved.path}`                | Resolved file's project-root-relative path _(layer 5 only)_                        |
-| `${resolved.relpath}`             | Same as `${resolved.path}`                                                         |
-| `${resolved.dir}`                 | Directory of the resolved file                                                     |
-| `${resolved.basename}`            | Basename of the resolved file                                                      |
-| `${comment.0}`                    | The full match of `trailing_comment.match` _(only inside `trailing_comment.to`)_   |
-| `${comment.text}`                 | Alias for `${comment.0}`                                                           |
-| `${comment.1}`, `${comment.2}`, … | Capture groups from `trailing_comment.match` _(only inside `trailing_comment.to`)_ |
-| `$$`                              | Literal `$`                                                                        |
+Delete the whole include line.
 
-`${resolved.*}` placeholders require layer 5 to have run; using them
-in a rule without `match_resolved` is an error. `${comment.*}`
-placeholders may only appear in `trailing_comment.to`; using them
-elsewhere (e.g. in `rewrite.to`) is an error.
+- `keep_blank_line` (default `false`) — leave an empty line in place.
+- `keep_trailing_comment` (default `true`) — when the line had a
+  trailing comment, keep that comment on its own line.
+
+### `comment_out`
+
+```toml
+action = { type = "comment_out", style = "//" }
+```
+
+Wrap the whole include line in a `//` (default) or `/* */` (`style = "/**/"`)
+comment, preserving the original indentation and line terminator.
+
+### `error`
+
+```toml
+action = { type = "error", message = "use lib/foo.h instead" }
+```
+
+Surface a user-facing error for any matched include. Exit code 2.
+
+## Trailing comments
+
+```toml
+trailing_comment = {
+    transform = {
+        match_styles  = ["//", "/**/"],
+        content_regex = "^TODO.*$",
+        action        = { type = "replace", with = "FIXED" },
+    },
+    append_if_absent = "  // IWYU pragma: export",
+}
+```
+
+`trailing_comment.transform` runs first:
+- `match_styles` — comment delimiter styles the transform applies to.
+- `content_regex` — regex over the comment body (delimiters stripped,
+  trimmed). Default `".*"` (matches all).
+- `action` — one of `replace { with, output_style? }`, `keep {
+  output_style? }`, `remove`, `error { message }`.
+
+After the transform runs (or if no transform was configured),
+`append_if_absent` is appended verbatim when the include has no trailing
+comment. **You write the full text — delimiters and leading whitespace
+included.**
+
+Trailing-comment processing applies to `resolve` / `replace` / `keep`.
+`remove`, `comment_out`, and `error` ignore it.
+
+## `${copied}` and other placeholders
+
+- `${copied}` — used in a child rule's field to pull the parent's value
+  at that position. In a string field, the whole string must be
+  `"${copied}"`. In a string-list field, an element equal to `"${copied}"`
+  is a splat (parent's entire list expanded at that position).
+- `${current_file}` — project-relative path of the file being edited
+  (forward-slash separated).
+- `${original}` — the original include argument (in an action template)
+  or the original trailing-comment body (in a trailing-comment template).
+- `$$` — literal `$` inside a substitution string.
 
 ## `@std.*` built-in constants
 
-`@std.*` constants are spread into string-list fields via `@name`, or
-substituted into strings (regex bodies) via the same syntax. Use `@@`
-for a literal `@`.
+Constants are available in string lists (as `"@name"` elements, splatted
+into the surrounding list) and in regex/template strings (substituted
+in place).
 
-There are two flavors:
+File extensions: `@std.c.extensions`, `@std.cpp.extensions`,
+`@std.c.header_extensions`, `@std.c.source_extensions`,
+`@std.cpp.header_extensions`, `@std.cpp.source_extensions`.
 
-- **List-shaped** — used in `paths`, `extensions`, etc. The `@name`
-  item is replaced by the constant's elements.
-- **String-shaped (via `_or` suffix)** — appending `_or` to any list
-  constant turns it into a regex alternation `(?:item1|item2|...)`
-  suitable for embedding in a `match` regex.
+C system headers (cumulative): `@std.c89.system_headers` through
+`@std.c23.system_headers`.
 
-Available constants (defined in
-[src/config/constants.rs](../src/config/constants.rs)):
+C++ system headers (cumulative): `@std.cpp.c_compat_headers`,
+`@std.cpp98.system_headers` through `@std.cpp23.system_headers`.
 
-**Extension lists**
+The `_or` suffix on any list constant materialises it as a regex
+alternation: `@std.c89.system_headers_or` becomes
+`(?:stdio\.h|stdlib\.h|...)`. Useful inside regex strings.
 
-- `std.c_header_extensions` — `.h`
-- `std.c_source_extensions` — `.c`
-- `std.c_extensions` — both of the above
-- `std.cpp_header_extensions` — `.hh`, `.hpp`, `.hxx`, `.h++`
-- `std.cpp_source_extensions` — `.cc`, `.cpp`, `.cxx`, `.c++`, `.inl`, `.ipp`
-- `std.cpp_extensions` — both of the above
+## Conflict detection
 
-**C standard headers**
+When multiple rules match the same `#include`:
 
-- `std.c89.system_headers` through `std.c23.system_headers`
+1. Every matched rule's action is evaluated.
+2. Each rule produces a "final-line text" (the bytes that rule would
+   have written for that include).
+3. If all rules' final-line texts are identical (including all-`Keep`),
+   there is no conflict and the rewrite (or no-op) goes through.
+4. If any rule produces an `error` action result, that wins.
+5. If any rule produces an evaluation failure (e.g. `resolve` ambiguous),
+   that wins next.
+6. Otherwise, the include is reported as a `Conflict` with each rule's
+   final-line text included in the diagnostic.
 
-**C++ standard headers**
+## CLI
 
-- `std.cpp98.system_headers` through `std.cpp23.system_headers`
-- `std.cpp.c_compat_headers` — C headers with a `<c…>` C++ alias
-
-Use the `_or` suffix to turn any of the lists above into a regex
-alternation, e.g. `@std.c11.system_headers_or` becomes
-`(?:assert\.h|ctype\.h|…)`.
-
-## `allowed_include_dirs` semantics
-
-After a rule's action has been evaluated, the resulting include text
-is validated by checking that it resolves under one of the rule's
-`allowed_include_dirs`. The semantics:
-
-- **Empty list (`allowed_include_dirs = []` or unspecified-and-no-inherit)
-  means "this rule does not participate in validation."** This is the
-  idiom for allow-listing rules that match system headers or other
-  externally-provided code where validation does not apply.
-- **Quote and angle includes are both validated**; macro-form includes
-  are skipped (action evaluation already errored on them).
-- A failed validation produces a `validation_error` on the include and
-  contributes to exit code 3.
-
-## `inclean check` levels
-
-`inclean check [-l|--level config|rules|full]` runs a read-only check
-at one of three levels. Each level is a strict superset of the
-previous.
-
-| Level              | What it does                                                                                                                                                                                          | Failures contribute exit                                              |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `config`           | Just config-level structural checks (TOML syntax, `[project]` sigil rule, `extends` graph, name uniqueness, `@std.*` constants, action template syntax, layer-5 rejection). No source file is opened. | 1 (config error)                                                      |
-| `rules`            | `config` + scans every source file. For each `#include`, computes the full set of matching rules and asserts the rule-tree invariants (`child ⊆ parent`, cross-chain disjoint). No action evaluation. | 3 (rule-tree conflict, layer-5 ambiguity)                             |
-| `full` _(default)_ | `rules` + evaluates the matched rule's action on each include and validates the post-action text against `allowed_include_dirs`.                                                                      | 2 (`action.error`), 3 (eval failure, validation, conflict, ambiguity) |
-
-`inclean diff` and `inclean apply` always run at `full` level.
+```sh
+inclean init [PATH]                 # alias of `inclean config new`
+inclean check [-l config|full] [DIR]
+inclean apply [DIR]
+inclean diff [DIR]
+inclean config check [DIR]          # alias of `check -l config`
+inclean config new [PATH]           # alias of `init`
+inclean config schema [-o OUT] [--check PATH]
+inclean schema [-o OUT] [--check PATH]
+```
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Clean run.                                                                                                                                                                                             |
-| 1    | Infrastructure/config error (parse failure, missing root, invalid regex).                                                                                                                              |
-| 2    | At least one include matched an `action = { type = "error", … }` rule.                                                                                                                                 |
-| 3    | At least one of: rule-tree conflict, layer-5 ambiguity, action evaluation failure (e.g. `auto` could not resolve under `allowed_include_dirs`), post-action `allowed_include_dirs` validation failure. |
-
-`inclean apply` additionally refuses to write any file when conflicts
-or ambiguities are present, and skips writing individual files whose
-includes produced errors or validation failures.
+- `0` — clean.
+- `1` — CLI / config error (missing required field, malformed semver,
+  IO error, etc.).
+- `2` — any rule's `action.type = "error"` matched.
+- `3` — any conflict (rules disagreed on final text) or any
+  `EvaluationFailure` (e.g. `resolve` ambiguity).
