@@ -32,8 +32,8 @@ pub fn run(args: CheckArgs) -> Result<u8> {
 /// pipeline has already validated structure; we re-walk discovery so we
 /// can show the resolved project root and rule origins.
 fn print_config_report(args: &CheckArgs) -> Result<()> {
+    use crate::config::copy as inherit;
     use crate::config::discover;
-    use crate::config::inherit;
     let config_path = discover::find_root_config(&args.dir)?;
     let cfg = discover::load_root_config(&config_path)?;
     let project = cfg

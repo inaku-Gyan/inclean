@@ -1,4 +1,4 @@
 pub mod constants;
+pub mod copy;
 pub mod discover;
-pub mod inherit;
 pub mod schema;

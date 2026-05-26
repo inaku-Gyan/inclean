@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::glob::PathMatcher;
-use crate::config::inherit::ResolvedRule;
+use crate::config::copy::ResolvedRule;
 use crate::lex::include_line::Include;
 
 #[derive(Debug)]

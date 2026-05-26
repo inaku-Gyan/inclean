@@ -34,7 +34,7 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 
 use crate::config::discover::{self, CONFIG_FILENAME};
-use crate::config::inherit;
+use crate::config::copy as inherit;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
