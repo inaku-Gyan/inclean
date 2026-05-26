@@ -1,40 +1,850 @@
-//! ⚠️ M1 transitional stub.
+//! Evaluate a matched rule's action against an `#include`.
 //!
-//! The action evaluator is being rewritten in M4 with the new 6-variant
-//! action surface (resolve / replace / keep / remove / comment_out /
-//! error) plus the new trailing_comment.{transform, append_if_absent}
-//! shape. For now this module exposes just enough surface for pipeline
-//! to compile.
+//! Each rule produces an [`Outcome`] for each include it matches. The
+//! pipeline collects every rule's outcome for a single include and
+//! decides conflict-by-final-text: identical `Rewrite::new_text` across
+//! all matches means "no conflict"; any divergence is a conflict.
+//!
+//! Action variants in v0.3 (one per `RawAction`):
+//!
+//! * `Resolve` — probe `include_directories` literal paths under the
+//!   project root for the include text; rewrite the path relative to
+//!   `relative_to`.
+//! * `Replace` — textual substitution of the include argument with `with`.
+//! * `Keep` — leave the argument unchanged; `output_form` may still
+//!   rewrite quote↔angle.
+//! * `Remove` — delete the whole include line (with knobs for blank line
+//!   and trailing comment preservation).
+//! * `CommentOut` — wrap the include line in `//` or `/* */`.
+//! * `Error` — produce a configured `Error` outcome (exit code 2).
+//!
+//! Placeholders:
+//! * `${current_file}` — project-relative path of the file being edited
+//!   (forward slashes).
+//! * `${original}` — the original include argument (no quotes/angles)
+//!   when used in an action template, or the original trailing-comment
+//!   body when used in a trailing-comment template.
+//! * `${copied}` is substituted at copy-resolution time (M2), not here.
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
-
-use super::engine::Match;
+use super::engine::CompiledRule;
+use crate::config::copy::{ResolvedAction, ResolvedTrailingAction, ResolvedTrailingComment};
+use crate::config::schema::{CommentStyle, IncludeForm, OutputCommentStyle, OutputForm};
 use crate::lex::include_line::Include;
+use crate::util::PathSlashExt;
 
+/// The result of evaluating one rule's action against one include.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
+    /// No edit. The bytes on disk are kept as-is for this rule.
+    Keep,
+    /// Replace bytes in `edit_range` with `new_text`. `edit_range`
+    /// always spans the full physical line of the include (including
+    /// the line-terminating `\n` when present) for `Remove`/`CommentOut`,
+    /// and spans `[argument_start, line_end_excl_newline)` for
+    /// `Resolve` / `Replace` / `Keep`. This makes pipeline-side conflict
+    /// detection a clean string compare.
     Rewrite {
         edit_range: Range<usize>,
         new_text: String,
     },
-    Keep,
-    Error {
-        message: String,
-    },
+    /// Rule's `action = error` (or trailing_comment.transform.action = error) matched.
+    Error { message: String },
+    /// Action evaluation failed at runtime (e.g. `resolve` couldn't
+    /// resolve, multiple include_directories contain the file, ...).
+    EvaluationFailure { message: String },
 }
 
+/// Evaluate `rule.rule.action` against `include` in `source`.
 pub fn evaluate(
-    matched: &Match<'_>,
-    _include: &Include,
-    _source: &str,
-    _file_relpath: &Path,
-    _project_root: &Path,
-) -> Result<Outcome> {
-    bail!(
-        "action evaluation is disabled during the v0.3 refactor transition (M1\u{2013}M3); rule `{}`",
-        matched.rule.rule.name,
-    );
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    file_relpath: &Path,
+    project_root: &Path,
+) -> Outcome {
+    // Macro-form hatch: never evaluate an action against a macro #include.
+    if include.form == IncludeForm::Macro {
+        return Outcome::Error {
+            message: format!(
+                "macro-form includes are not supported in v1; rule `{}` matched a macro `#include {}` at {}:{}",
+                rule.rule.name,
+                include.content,
+                file_relpath.display(),
+                include.line,
+            ),
+        };
+    }
+
+    let ctx = TemplateCtx {
+        current_file: file_relpath.to_slash(),
+        original_include: include.content.clone(),
+    };
+
+    match &rule.rule.action {
+        ResolvedAction::Error { message } => Outcome::Error {
+            message: substitute_action(message, &ctx),
+        },
+        ResolvedAction::Resolve {
+            relative_to,
+            output_form,
+            message: _,
+        } => apply_resolve(
+            rule,
+            include,
+            source,
+            file_relpath,
+            project_root,
+            relative_to,
+            *output_form,
+            &ctx,
+        ),
+        ResolvedAction::Replace {
+            with,
+            output_form,
+            message: _,
+        } => apply_replace(rule, include, source, with, *output_form, &ctx),
+        ResolvedAction::Keep {
+            output_form,
+            message: _,
+        } => apply_keep(rule, include, source, *output_form, &ctx),
+        ResolvedAction::Remove {
+            keep_blank_line,
+            keep_trailing_comment,
+            message: _,
+        } => apply_remove(include, source, *keep_blank_line, *keep_trailing_comment),
+        ResolvedAction::CommentOut {
+            style,
+            message: _,
+        } => apply_comment_out(include, source, *style),
+    }
+}
+
+// ---- Template context ----------------------------------------------------
+
+struct TemplateCtx {
+    current_file: String,
+    /// Original include argument with no quotes/angles. Used in action
+    /// templates; for trailing-comment templates we pass a different
+    /// `${original}` (the comment body) via [`substitute_trailing`].
+    original_include: String,
+}
+
+fn substitute_action(template: &str, ctx: &TemplateCtx) -> String {
+    template
+        .replace("${current_file}", &ctx.current_file)
+        .replace("${original}", &ctx.original_include)
+}
+
+fn substitute_trailing(template: &str, ctx: &TemplateCtx, original_comment_body: &str) -> String {
+    template
+        .replace("${current_file}", &ctx.current_file)
+        .replace("${original}", original_comment_body)
+}
+
+// ---- Edit-range helpers ---------------------------------------------------
+
+/// Byte range covering the include's argument + any same-line trailing
+/// content (excluding `\r` / `\n` at end of line).
+fn argument_and_trailing_range(include: &Include) -> Range<usize> {
+    let start = include.argument_range.start;
+    let end = include
+        .trailing_range
+        .end
+        .max(include.argument_range.end);
+    start..end
+}
+
+/// Byte range covering the entire physical line containing `include`,
+/// from line start through the line-terminating `\n` (inclusive). Used
+/// for `Remove` / `CommentOut` which act on the whole line.
+fn full_line_range(include: &Include, source: &str) -> Range<usize> {
+    let bytes = source.as_bytes();
+    // Find the start of this line by walking back from argument_range.start.
+    let mut start = include.argument_range.start;
+    while start > 0 && bytes[start - 1] != b'\n' {
+        start -= 1;
+    }
+    // Find the line end (one past the `\n`, or EOF).
+    let mut end = include.trailing_range.end.max(include.argument_range.end);
+    while end < bytes.len() && bytes[end] != b'\n' {
+        end += 1;
+    }
+    if end < bytes.len() {
+        end += 1; // include the `\n`
+    }
+    start..end
+}
+
+/// Detect this line's indent (whitespace before the include's `#`).
+fn line_indent<'a>(include: &Include, source: &'a str) -> &'a str {
+    let bytes = source.as_bytes();
+    let mut start = include.argument_range.start;
+    while start > 0 && bytes[start - 1] != b'\n' {
+        start -= 1;
+    }
+    // `start` now sits at the first byte of the line. Find the `#`.
+    let mut p = start;
+    while p < bytes.len() && (bytes[p] == b' ' || bytes[p] == b'\t') {
+        p += 1;
+    }
+    &source[start..p]
+}
+
+/// Line-terminator (LF or CRLF) used by this line.
+fn line_terminator<'a>(include: &Include, source: &'a str) -> &'a str {
+    let bytes = source.as_bytes();
+    let mut end = include.trailing_range.end.max(include.argument_range.end);
+    while end < bytes.len() && bytes[end] != b'\n' {
+        end += 1;
+    }
+    if end >= bytes.len() {
+        return "";
+    }
+    if end > 0 && bytes[end - 1] == b'\r' {
+        &source[end - 1..end + 1]
+    } else {
+        &source[end..end + 1]
+    }
+}
+
+// ---- format_argument -----------------------------------------------------
+
+fn format_argument(content: &str, form: OutputForm, fallback: IncludeForm) -> String {
+    let resolved_form = match form {
+        OutputForm::Quote => IncludeForm::Quote,
+        OutputForm::Angle => IncludeForm::Angle,
+        OutputForm::Preserve => fallback,
+    };
+    match resolved_form {
+        IncludeForm::Quote => format!("\"{content}\""),
+        IncludeForm::Angle => format!("<{content}>"),
+        IncludeForm::Macro => content.to_string(),
+    }
+}
+
+// ---- Action implementations ----------------------------------------------
+
+fn apply_resolve(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    file_relpath: &Path,
+    project_root: &Path,
+    relative_to: &str,
+    output_form: OutputForm,
+    ctx: &TemplateCtx,
+) -> Outcome {
+    let dirs = &rule.rule.include_directories;
+    if dirs.is_empty() {
+        return Outcome::EvaluationFailure {
+            message: format!(
+                "rule `{}`: action `resolve` requires `include_directories`",
+                rule.rule.name
+            ),
+        };
+    }
+    // Probe each include_directory literally; collect matches.
+    let mut hits: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        let candidate = project_root.join(dir).join(&include.content);
+        if candidate.is_file() {
+            hits.push(project_root.join(dir).join(&include.content));
+        }
+    }
+    if hits.is_empty() {
+        return Outcome::EvaluationFailure {
+            message: format!(
+                "rule `{}`: resolve found no include_directories entry containing `{}` (searched {:?})",
+                rule.rule.name, include.content, dirs,
+            ),
+        };
+    }
+    if hits.len() > 1 {
+        return Outcome::EvaluationFailure {
+            message: format!(
+                "rule `{}`: resolve found `{}` in multiple include_directories ({:?})",
+                rule.rule.name, include.content, dirs,
+            ),
+        };
+    }
+    let resolved_abs = hits.into_iter().next().unwrap();
+    let resolved_rel = resolved_abs
+        .strip_prefix(project_root)
+        .map(|p| p.to_path_buf())
+        .unwrap_or(resolved_abs);
+
+    // Compute the path relative to `relative_to` (after `${current_file}`
+    // substitution). When `relative_to` resolves to `${current_file}`, we
+    // mean the directory of the current file.
+    let relative_to_substituted = substitute_action(relative_to, ctx);
+    let base_dir: PathBuf = if relative_to_substituted == ctx.current_file {
+        file_relpath
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default()
+    } else {
+        PathBuf::from(&relative_to_substituted)
+    };
+    let new_path = relative_path(&resolved_rel, &base_dir);
+    let new_path_str = new_path.to_slash();
+    let new_arg = format_argument(&new_path_str, output_form, include.form);
+
+    rewrite_argument_and_trailing(rule, include, source, &new_arg, ctx)
+}
+
+fn apply_replace(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    with: &str,
+    output_form: OutputForm,
+    ctx: &TemplateCtx,
+) -> Outcome {
+    let new_content = substitute_action(with, ctx);
+    let new_arg = format_argument(&new_content, output_form, include.form);
+    rewrite_argument_and_trailing(rule, include, source, &new_arg, ctx)
+}
+
+fn apply_keep(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    output_form: OutputForm,
+    ctx: &TemplateCtx,
+) -> Outcome {
+    let new_arg = format_argument(&include.content, output_form, include.form);
+    rewrite_argument_and_trailing(rule, include, source, &new_arg, ctx)
+}
+
+fn apply_remove(
+    include: &Include,
+    source: &str,
+    keep_blank_line: bool,
+    keep_trailing_comment: bool,
+) -> Outcome {
+    let range = full_line_range(include, source);
+    let mut new_text = String::new();
+    if keep_trailing_comment && !include.trailing_range.is_empty() {
+        // Preserve the trailing comment on its own line.
+        let trailing = &source[include.trailing_range.clone()];
+        new_text.push_str(trailing.trim_start());
+        new_text.push_str(line_terminator(include, source));
+    } else if keep_blank_line {
+        new_text.push_str(line_terminator(include, source));
+    }
+    Outcome::Rewrite {
+        edit_range: range,
+        new_text,
+    }
+}
+
+fn apply_comment_out(include: &Include, source: &str, style: CommentStyle) -> Outcome {
+    let range = full_line_range(include, source);
+    let indent = line_indent(include, source);
+    let terminator = line_terminator(include, source);
+    // Content of the line excluding indent and terminator.
+    let line_inner_start = range.start + indent.len();
+    let line_inner_end = range.end - terminator.len();
+    let inner = &source[line_inner_start..line_inner_end];
+    let new_text = match style {
+        CommentStyle::Line => format!("{indent}// {inner}{terminator}"),
+        CommentStyle::Block => format!("{indent}/* {inner} */{terminator}"),
+    };
+    Outcome::Rewrite {
+        edit_range: range,
+        new_text,
+    }
+}
+
+// ---- Trailing-comment processing shared by Resolve / Replace / Keep -------
+
+fn rewrite_argument_and_trailing(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    new_arg: &str,
+    ctx: &TemplateCtx,
+) -> Outcome {
+    let trailing_text = match process_trailing(rule, include, source, ctx) {
+        Ok(t) => t,
+        Err(err) => return err,
+    };
+    let edit_range = argument_and_trailing_range(include);
+    let new_text = format!("{new_arg}{trailing_text}");
+    let original = &source[edit_range.clone()];
+    if new_text == original {
+        Outcome::Keep
+    } else {
+        Outcome::Rewrite {
+            edit_range,
+            new_text,
+        }
+    }
+}
+
+/// Compute the trailing-comment text that should sit between the new
+/// argument and the EOL. Returns an error outcome if the trailing
+/// transform's action is `error` and the existing comment matches it.
+fn process_trailing(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    ctx: &TemplateCtx,
+) -> std::result::Result<String, Outcome> {
+    let tc: &ResolvedTrailingComment = &rule.rule.trailing_comment;
+    let original_trailing = &source[include.trailing_range.clone()];
+
+    // Has a recognised trailing comment to start with?
+    let style = include.trailing_comment_style;
+
+    // Run the transform (if configured) and the style matches.
+    if let (Some(transform), Some(content_re)) = (&tc.transform, rule.trailing_content_regex.as_ref())
+    {
+        if let Some(s) = style {
+            if transform.match_styles.contains(&s) {
+                let body = extract_comment_body(original_trailing, s);
+                if content_re.is_match(&body) {
+                    match run_transform_action(rule, &transform.action, s, &body, ctx) {
+                        Ok(Some(text)) => return Ok(text),
+                        Ok(None) => {
+                            // Removed; fall through to append_if_absent.
+                            return apply_append_if_absent(tc, "");
+                        }
+                        Err(o) => return Err(o),
+                    }
+                }
+            }
+        }
+    }
+
+    // Either no transform configured, or transform did not match. Keep
+    // the existing trailing exactly as-is, and only consider
+    // append_if_absent when there was no trailing comment.
+    if !original_trailing.is_empty() {
+        return Ok(original_trailing.to_string());
+    }
+    apply_append_if_absent(tc, original_trailing)
+}
+
+fn extract_comment_body(trailing: &str, style: CommentStyle) -> String {
+    let s = trailing.trim_start_matches(|c: char| c == ' ' || c == '\t');
+    let body = match style {
+        CommentStyle::Line => s.trim_start_matches("//"),
+        CommentStyle::Block => {
+            let without_open = s.trim_start_matches("/*");
+            without_open.trim_end_matches("*/")
+        }
+    };
+    body.trim().to_string()
+}
+
+/// Returns `Ok(Some(text))` for a fresh trailing-comment string,
+/// `Ok(None)` for "removed", or `Err(Outcome)` for `error` / failure.
+fn run_transform_action(
+    _rule: &CompiledRule<'_>,
+    action: &ResolvedTrailingAction,
+    existing_style: CommentStyle,
+    existing_body: &str,
+    ctx: &TemplateCtx,
+) -> std::result::Result<Option<String>, Outcome> {
+    match action {
+        ResolvedTrailingAction::Error { message } => Err(Outcome::Error {
+            message: substitute_trailing(message, ctx, existing_body),
+        }),
+        ResolvedTrailingAction::Remove { message: _ } => Ok(None),
+        ResolvedTrailingAction::Keep {
+            output_style,
+            message: _,
+        } => {
+            let out_style = pick_comment_style(*output_style, existing_style);
+            Ok(Some(format_trailing(&existing_body.to_string(), out_style)))
+        }
+        ResolvedTrailingAction::Replace {
+            with,
+            output_style,
+            message: _,
+        } => {
+            let new_body = substitute_trailing(with, ctx, existing_body);
+            let out_style = pick_comment_style(*output_style, existing_style);
+            Ok(Some(format_trailing(&new_body, out_style)))
+        }
+    }
+}
+
+fn pick_comment_style(out: OutputCommentStyle, existing: CommentStyle) -> CommentStyle {
+    match out {
+        OutputCommentStyle::Line => CommentStyle::Line,
+        OutputCommentStyle::Block => CommentStyle::Block,
+        OutputCommentStyle::Preserve => existing,
+    }
+}
+
+fn format_trailing(body: &str, style: CommentStyle) -> String {
+    match style {
+        CommentStyle::Line => format!("  // {body}"),
+        CommentStyle::Block => format!("  /* {body} */"),
+    }
+}
+
+fn apply_append_if_absent(
+    tc: &ResolvedTrailingComment,
+    existing_trailing: &str,
+) -> std::result::Result<String, Outcome> {
+    if existing_trailing.is_empty() {
+        if let Some(text) = &tc.append_if_absent {
+            return Ok(text.clone());
+        }
+    }
+    Ok(existing_trailing.to_string())
+}
+
+// ---- relative-path helper -------------------------------------------------
+
+fn relative_path(target: &Path, base: &Path) -> PathBuf {
+    // pathdiff-like; we want target expressed relative to base. Both are
+    // project-relative. Walk up `base` until it's a prefix of `target`,
+    // emitting `..` for each step.
+    let target_comps: Vec<_> = target.components().collect();
+    let base_comps: Vec<_> = base.components().collect();
+    let mut common = 0;
+    while common < target_comps.len()
+        && common < base_comps.len()
+        && target_comps[common] == base_comps[common]
+    {
+        common += 1;
+    }
+    let ups = base_comps.len() - common;
+    let mut out = PathBuf::new();
+    for _ in 0..ups {
+        out.push("..");
+    }
+    for c in &target_comps[common..] {
+        out.push(c.as_os_str());
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::copy::resolve;
+    use crate::config::schema::{parse, IncludeForm, LoadedConfig};
+
+    fn cfg(body: &str) -> Vec<CompiledRule<'static>> {
+        let lc = LoadedConfig {
+            path: PathBuf::from("/proj/inclean.toml"),
+            raw: parse(body, &PathBuf::from("/proj/inclean.toml")).unwrap(),
+        };
+        let resolved = resolve(&[lc]).unwrap();
+        let leaked: &'static _ = Box::leak(Box::new(resolved));
+        leaked
+            .values()
+            .map(|r| CompiledRule::new(r, Path::new("/proj")).unwrap())
+            .collect()
+    }
+
+    /// Lex `src`, find the first include, and return it.
+    fn first_include(src: &str) -> (String, crate::lex::include_line::Include) {
+        let incs = crate::lex::include_line::scan(src);
+        (src.to_string(), incs.into_iter().next().unwrap())
+    }
+
+    #[test]
+    fn keep_with_default_output_form_is_a_noop() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn keep_with_output_form_angle_rewrites_to_angle() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep", output_form = "angle" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "<foo.h>"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_substitutes_original_placeholder() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "replace", with = "lib/${original}" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\"lib/foo.h\""),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_action_produces_error_outcome() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "error", message = "no `${original}`" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Error { message } => assert_eq!(message, "no `foo.h`"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn macro_form_always_errors() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            match_forms = ["macro"]
+            action = { type = "keep" }
+            "#,
+        );
+        let inc = Include {
+            form: IncludeForm::Macro,
+            content: "MY_HEADER".to_string(),
+            line: 1,
+            argument_range: 0..0,
+            trailing_range: 0..0,
+            trailing_comment_style: None,
+        };
+        let out = evaluate(&rules[0], &inc, "", Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Error { message } => assert!(message.contains("macro")),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comment_out_line_style_wraps_with_slashes() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "comment_out" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "// #include \"foo.h\"\n"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comment_out_block_style_wraps_with_slash_star() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "comment_out", style = "/**/" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "/* #include \"foo.h\" */\n"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_default_drops_line_entirely() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "remove" }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite {
+                edit_range,
+                new_text,
+            } => {
+                // Default: keep_trailing_comment = true but there's no comment.
+                assert_eq!(new_text, "");
+                // The edit_range should cover the entire line including the newline.
+                assert_eq!(&src[edit_range.clone()], "#include \"foo.h\"\n");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_keep_blank_line_emits_terminator_only() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "remove", keep_blank_line = true, keep_trailing_comment = false }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => assert_eq!(new_text, "\n"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_replace_overrides_existing() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                transform = {
+                    action = { type = "replace", with = "REPLACED" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" // old\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert!(new_text.contains("REPLACED"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_remove_drops_comment() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                transform = {
+                    action = { type = "remove" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" // unwanted\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_append_if_absent_adds_for_uncommented() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                append_if_absent = "  // IWYU pragma: export",
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // IWYU pragma: export");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_append_if_absent_skips_when_comment_present() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                append_if_absent = "  // extra",
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" // existing\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        // existing trailing comment is preserved; no append.
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn trailing_comment_error_produces_error_outcome() {
+        let rules = cfg(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                transform = {
+                    content_regex = "^TODO.*$",
+                    action = { type = "error", message = "no TODO comments" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" // TODO: rename\n");
+        let out = evaluate(&rules[0], &inc, &src, Path::new("src/main.c"), Path::new("/proj"));
+        match out {
+            Outcome::Error { message } => assert!(message.contains("no TODO comments")),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn relative_path_walks_up_for_diverging_paths() {
+        assert_eq!(
+            relative_path(Path::new("include/foo.h"), Path::new("src/sub")),
+            PathBuf::from("../../include/foo.h"),
+        );
+    }
+
+    #[test]
+    fn relative_path_same_dir_is_just_filename() {
+        assert_eq!(
+            relative_path(Path::new("src/foo.h"), Path::new("src")),
+            PathBuf::from("foo.h"),
+        );
+    }
 }

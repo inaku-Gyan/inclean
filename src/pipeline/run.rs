@@ -1,29 +1,33 @@
-//! Top-level orchestration: load configs, walk the file tree, evaluate
-//! rules per include, and report per-file outcomes. The CLI subcommands
-//! consume the [`Summary`] this returns to render check / diff / apply
-//! output.
+//! Top-level orchestration for v0.3.
 //!
-//! The pipeline runs in one of three modes (see [`CheckMode`]):
+//! Two modes:
 //!
-//! * [`CheckMode::Config`] — load and resolve configs only. No source
-//!   files are opened.
-//! * [`CheckMode::Rules`] — adds source scanning + rule-tree invariant
-//!   checking (`engine::match_all` + `tree::check_chain`). No action
-//!   evaluation, no `allowed_include_dirs` validation.
-//! * [`CheckMode::Full`] — adds action evaluation + `allowed_include_dirs`
-//!   validation. The action target is the **deepest** rule in the matched
-//!   set's chain (the leaf), not the first by declaration order — the
-//!   rule-tree invariants guarantee this is well-defined.
+//! * [`CheckMode::Config`] — parse + validate + run copy resolution only.
+//!   No source files are opened.
+//! * [`CheckMode::Run`] — walk source files, lex includes, match every
+//!   rule's four layers, evaluate every matched rule's action, then
+//!   decide per-include conflict-by-final-text.
 //!
-//! v1 keeps things simple:
-//! - The file walk uses `ignore::WalkBuilder` honoring `.gitignore` /
-//!   `.ignore` plus our hard-coded skip dirs (`.git`, `target`,
-//!   `node_modules`).
-//! - Filtering is opportunistic: a file is opened only if at least one
-//!   compiled rule's PathMatcher matches it and its config_dir is an
-//!   ancestor of (or equal to) the file's directory.
-//! - Per-file edits are applied in reverse byte order so earlier ranges
-//!   stay valid.
+//! Conflict detection (the v0.3 model): for an include matched by N
+//! rules, evaluate the action against each. If all rules produce
+//! identical `Outcome::Rewrite { new_text }` (or all produce `Keep`,
+//! which is itself identical), there is no conflict. Otherwise the
+//! include is a [`Conflict`].
+//!
+//! Output ordering: candidate source files are pre-sorted by relative
+//! path before the parallel work starts; rayon's `par_iter().collect()`
+//! preserves input order, so `Summary.files` ends up lexicographically
+//! ordered without any extra channel + heap machinery. (The
+//! channel-based incremental-output design from refactor.md §"并行与输出
+//! 保序" is reserved for a future streaming-progress hook.)
+//!
+//! Encoding: files are read as bytes; a UTF-8 BOM is detected and
+//! preserved across the write-back. Line endings are not normalized —
+//! [`crate::rule::action`] picks the line terminator from the line it
+//! is editing, so the file's existing CRLF/LF mix survives.
+//!
+//! Per-file parse failures (malformed UTF-8) are reported in
+//! [`Summary::skipped`] and do not contribute to the exit code.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -33,142 +37,90 @@ use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
+use crate::config::copy::{self, ResolvedRule};
 use crate::config::discover::{self, CONFIG_FILENAME};
-use crate::config::copy as inherit;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
-use crate::rule::engine::{self, CandidateMatch, CompiledRule, Match};
-use crate::rule::tree::{self, ConflictKind};
+use crate::rule::engine::{self, CompiledRule};
 
 /// Which slice of the pipeline to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckMode {
-    /// Config layer only: parse, structural sigil checks, `extends` graph,
-    /// `@std.*` constants, template syntax, layer-5 rejection. No source
-    /// files opened.
+    /// Config-only: parse, validate, copy resolution. No source scan.
     Config,
-    /// `Config` + scan source, run all-candidate matching per include,
-    /// check the rule-tree invariants. No action evaluation, no
-    /// `allowed_include_dirs` validation.
-    Rules,
-    /// `Rules` + evaluate the matched rule's action and validate the
-    /// post-action include against the rule's `allowed_include_dirs`.
-    Full,
+    /// Full: scan source, evaluate every matched rule, detect conflicts.
+    Run,
 }
 
-/// Outcome for a whole `inclean` invocation against a project root.
+/// Aggregate result of a pipeline invocation.
 #[derive(Debug)]
 pub struct Summary {
     pub mode: CheckMode,
     pub project_root: PathBuf,
     pub files: Vec<FileResult>,
     pub conflicts: Vec<Conflict>,
+    pub skipped: Vec<SkippedFile>,
 }
 
-/// Per-file result.
 #[derive(Debug)]
 pub struct FileResult {
     pub relpath: PathBuf,
     pub original: String,
-    /// `Some(_)` if any include was rewritten (only ever populated in
-    /// [`CheckMode::Full`]); `None` otherwise.
+    /// `Some(_)` only when the file accumulated at least one applied edit.
     pub rewritten: Option<String>,
     pub include_results: Vec<IncludeResult>,
+    /// `true` when the original file started with a UTF-8 BOM. The BOM
+    /// is stripped from `original` and `rewritten`; the apply step writes
+    /// it back.
+    pub had_bom: bool,
+}
+
+#[derive(Debug)]
+pub struct SkippedFile {
+    pub relpath: PathBuf,
+    pub reason: String,
 }
 
 #[derive(Debug)]
 pub struct IncludeResult {
     pub include: Include,
     pub outcome: IncludeOutcome,
-    /// Post-action validation message; `Some(_)` when the resulting
-    /// include cannot be resolved under the matched rule's
-    /// `allowed_include_dirs`. Only ever populated in [`CheckMode::Full`].
-    pub validation_error: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum IncludeOutcome {
+    /// No rule matched this include.
     NoMatch,
-    /// [`CheckMode::Rules`] only — the rule-tree chain check accepted this
-    /// include and selected `rule` (the deepest in the chain). No action
-    /// was evaluated.
-    Matched {
-        rule: String,
-    },
-    Keep {
-        rule: String,
-    },
+    /// All matched rules agreed on `Keep` — no edit.
+    Keep { rules: Vec<String> },
+    /// All matched rules agreed on the same rewrite text.
     Rewritten {
-        rule: String,
+        rules: Vec<String>,
         edit_range: Range<usize>,
         new_text: String,
     },
-    /// Action evaluation chose to abort the file or report an error.
-    Error {
-        rule: String,
-        message: String,
-    },
-    /// Evaluation itself failed (resolution missed, etc.) — distinct from
-    /// the `action.error` variant.
-    EvaluationFailure {
-        rule: String,
-        message: String,
-    },
-    /// The chain check rejected this include (a conflict was recorded in
-    /// [`Summary::conflicts`]); no action was evaluated.
-    Conflict,
-    /// Layer 5 detected an ambiguous resolution — the include resolves
-    /// against multiple `original_include_dirs` and the user must narrow
-    /// the rule's `-I` list.
-    Layer5Ambiguous {
-        rule: String,
-        candidates: Vec<PathBuf>,
-    },
+    /// One of the matched rules produced an `action.error` (or trailing
+    /// transform error). Exit code 2.
+    Error { rule: String, message: String },
+    /// Action evaluation failed (resolve missed, multiple matches, etc.).
+    EvaluationFailure { rule: String, message: String },
+    /// Matched rules disagreed on the final text. Exit code 3.
+    Conflict { rule_outputs: Vec<(String, String)> },
 }
 
-/// A rule-tree invariant violation observed on a specific `#include`.
+/// A conflict surfaced for a specific include (final-text disagreement).
 #[derive(Debug)]
 pub struct Conflict {
     pub file_relpath: PathBuf,
     pub include_line: usize,
     pub include_text: String,
-    pub kind: ConflictKindOwned,
+    /// Per-rule final-line text (the bytes that rule would have written).
+    pub rule_outputs: Vec<(String, String)>,
 }
 
-#[derive(Debug)]
-pub enum ConflictKindOwned {
-    /// A rule matched but one of its ancestors did not.
-    ChildWiderThanParent {
-        child: String,
-        missing_ancestor: String,
-    },
-    /// Two rules matched but neither is an ancestor of the other.
-    CrossChain { a: String, b: String },
-}
+// ---- Entry point ---------------------------------------------------------
 
-impl ConflictKindOwned {
-    fn from_kind(k: ConflictKind<'_>) -> Self {
-        match k {
-            ConflictKind::ChildWiderThanParent {
-                child,
-                missing_ancestor,
-            } => ConflictKindOwned::ChildWiderThanParent {
-                child: child.rule.name.clone(),
-                missing_ancestor: missing_ancestor.rule.name.clone(),
-            },
-            ConflictKind::CrossChain { a, b } => ConflictKindOwned::CrossChain {
-                a: a.rule.name.clone(),
-                b: b.rule.name.clone(),
-            },
-        }
-    }
-}
-
-/// Run the pipeline against `start_dir` in the requested mode. `start_dir`
-/// may be the project root itself or any path inside it — the root
-/// `inclean.toml` is located by walking upward, and the actual project
-/// root is resolved via `[project].root`.
 pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
     let config_path = discover::find_root_config(start_dir)?;
     let cfg = discover::load_root_config(&config_path)?;
@@ -179,7 +131,7 @@ pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
         .expect("load_root_config guarantees [project] is present");
     let project_root_abs = discover::resolve_project_root(&config_path, project)?;
     discover::assert_no_extra_configs(&project_root_abs, &config_path)?;
-    let resolved = inherit::resolve(std::slice::from_ref(&cfg))?;
+    let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 
     if mode == CheckMode::Config {
         return Ok(Summary {
@@ -187,16 +139,13 @@ pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
             project_root: project_root_abs,
             files: Vec::new(),
             conflicts: Vec::new(),
+            skipped: Vec::new(),
         });
     }
 
     let compiled = compile_rules(&resolved, &project_root_abs)?;
-    let by_name = tree::index_by_name(&compiled);
 
-    // Collect candidate files first so we can hand them to rayon as a
-    // single batch. The walker is single-threaded by design (it shells out
-    // to `ignore::WalkBuilder`), but every file's processing is pure CPU
-    // and can run in parallel.
+    // Walk + filter + sort candidate files.
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in source_files(&project_root_abs) {
         let entry = entry?;
@@ -208,82 +157,71 @@ pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
             candidates.push(relpath);
         }
     }
+    candidates.sort();
 
-    type PerFile = (FileResult, Vec<Conflict>);
-    let per_file: Vec<Result<PerFile>> = candidates
+    type PerFile = Result<FileResult, SkippedFile>;
+    let per_file: Vec<PerFile> = candidates
         .par_iter()
-        .map(|relpath| -> Result<PerFile> {
-            let abs = project_root_abs.join(relpath);
-            let original = std::fs::read_to_string(&abs)
-                .with_context(|| format!("reading {}", abs.display()))?;
-            let mut conflicts: Vec<Conflict> = Vec::new();
-            let result = process_file(
-                &compiled,
-                &by_name,
-                relpath,
-                &original,
-                &project_root_abs,
-                mode,
-                &mut conflicts,
-            );
-            Ok((
-                FileResult {
-                    relpath: relpath.clone(),
-                    original: result.original,
-                    rewritten: result.rewritten,
-                    include_results: result.include_results,
-                },
-                conflicts,
-            ))
-        })
+        .map(|relpath| process_file_outer(&compiled, &project_root_abs, relpath))
         .collect();
 
     let mut files: Vec<FileResult> = Vec::with_capacity(per_file.len());
+    let mut skipped: Vec<SkippedFile> = Vec::new();
     let mut conflicts: Vec<Conflict> = Vec::new();
-    for r in per_file {
-        let (f, mut c) = r?;
-        files.push(f);
-        conflicts.append(&mut c);
+    for res in per_file {
+        match res {
+            Ok(file_result) => {
+                // Pull conflicts out of include_results into the top-level vec.
+                for r in &file_result.include_results {
+                    if let IncludeOutcome::Conflict { rule_outputs } = &r.outcome {
+                        conflicts.push(Conflict {
+                            file_relpath: file_result.relpath.clone(),
+                            include_line: r.include.line,
+                            include_text: format_include_text(&r.include),
+                            rule_outputs: rule_outputs.clone(),
+                        });
+                    }
+                }
+                files.push(file_result);
+            }
+            Err(s) => skipped.push(s),
+        }
     }
-    // Sort for stable output across runs — rayon's collect preserves input
-    // order, but the candidate vector itself comes from a walker whose
-    // order is filesystem-defined, so we normalize here.
-    files.sort_by(|a, b| a.relpath.cmp(&b.relpath));
-    conflicts.sort_by(|a, b| {
-        a.file_relpath
-            .cmp(&b.file_relpath)
-            .then(a.include_line.cmp(&b.include_line))
-    });
 
     Ok(Summary {
         mode,
         project_root: project_root_abs,
         files,
         conflicts,
+        skipped,
     })
 }
 
-/// Apply the rewrites in `summary` to disk. Refuses to write anything if
-/// the summary has unresolved conflicts. Files whose include results
-/// include any `Error` or `EvaluationFailure` outcome are skipped to
-/// avoid partial writes. Returns the number of files actually written.
+/// Apply rewrites to disk. Refuses if any conflict is present. Files
+/// whose include results include any `Error` / `EvaluationFailure` /
+/// `Conflict` outcome are skipped (no partial writes). Returns the
+/// number of files actually written.
 pub fn apply(summary: &Summary) -> Result<usize> {
     if !summary.conflicts.is_empty() {
         anyhow::bail!(
-            "refusing to apply: {} rule-tree conflict(s) must be resolved first",
+            "refusing to apply: {} conflict(s) must be resolved first",
             summary.conflicts.len()
         );
     }
-    let mut written = 0;
+    let mut written = 0usize;
     for f in &summary.files {
         if file_has_errors(f) {
             continue;
         }
-        if let Some(new) = &f.rewritten {
-            let path = summary.project_root.join(&f.relpath);
-            std::fs::write(&path, new).with_context(|| format!("writing {}", path.display()))?;
-            written += 1;
+        let Some(new) = &f.rewritten else { continue };
+        let path = summary.project_root.join(&f.relpath);
+        let mut bytes: Vec<u8> = Vec::with_capacity(new.len() + 3);
+        if f.had_bom {
+            bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
         }
+        bytes.extend_from_slice(new.as_bytes());
+        std::fs::write(&path, &bytes).with_context(|| format!("writing {}", path.display()))?;
+        written += 1;
     }
     Ok(written)
 }
@@ -294,9 +232,8 @@ fn file_has_errors(f: &FileResult) -> bool {
             r.outcome,
             IncludeOutcome::Error { .. }
                 | IncludeOutcome::EvaluationFailure { .. }
-                | IncludeOutcome::Conflict
-                | IncludeOutcome::Layer5Ambiguous { .. }
-        ) || r.validation_error.is_some()
+                | IncludeOutcome::Conflict { .. }
+        )
     })
 }
 
@@ -310,7 +247,6 @@ pub fn render_diff(summary: &Summary) -> String {
 
         use crate::util::PathSlashExt;
         let path_str = f.relpath.to_slash();
-
         let a_label = format!("a/{}", path_str);
         let b_label = format!("b/{}", path_str);
         let body = diff
@@ -326,8 +262,229 @@ pub fn render_diff(summary: &Summary) -> String {
     out
 }
 
+/// Highest-severity outcome across the whole summary:
+///   0 = clean / only NoMatch+Keep+Rewritten
+///   2 = any `action.type = "error"` matched
+///   3 = any Conflict / EvaluationFailure
+pub fn summary_exit_code(summary: &Summary) -> u8 {
+    let mut code: u8 = 0;
+    if !summary.conflicts.is_empty() {
+        code = code.max(3);
+    }
+    for f in &summary.files {
+        for r in &f.include_results {
+            match &r.outcome {
+                IncludeOutcome::Error { .. } => code = code.max(2),
+                IncludeOutcome::EvaluationFailure { .. } => code = code.max(3),
+                IncludeOutcome::Conflict { .. } => code = code.max(3),
+                _ => {}
+            }
+        }
+    }
+    code
+}
+
+// ---- per-file processing -------------------------------------------------
+
+fn process_file_outer(
+    rules: &[CompiledRule<'_>],
+    project_root: &Path,
+    relpath: &Path,
+) -> std::result::Result<FileResult, SkippedFile> {
+    let abs = project_root.join(relpath);
+    let bytes = match std::fs::read(&abs) {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(SkippedFile {
+                relpath: relpath.to_path_buf(),
+                reason: format!("read failed: {e}"),
+            });
+        }
+    };
+    let (had_bom, body) = strip_bom(&bytes);
+    let original = match std::str::from_utf8(body) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            return Err(SkippedFile {
+                relpath: relpath.to_path_buf(),
+                reason: "not valid UTF-8".to_string(),
+            });
+        }
+    };
+    let processed = process_file(rules, relpath, &original, project_root);
+    Ok(FileResult {
+        relpath: relpath.to_path_buf(),
+        original,
+        rewritten: processed.rewritten,
+        include_results: processed.include_results,
+        had_bom,
+    })
+}
+
+fn strip_bom(bytes: &[u8]) -> (bool, &[u8]) {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        (true, &bytes[3..])
+    } else {
+        (false, bytes)
+    }
+}
+
+struct FileProcessing {
+    rewritten: Option<String>,
+    include_results: Vec<IncludeResult>,
+}
+
+fn process_file(
+    rules: &[CompiledRule<'_>],
+    relpath: &Path,
+    original: &str,
+    project_root: &Path,
+) -> FileProcessing {
+    let includes = include_line::scan(original);
+    let line_table = include_line::line_table(original);
+    let suppressed = engine::compute_all_suppressed(rules, original, &line_table);
+
+    let mut include_results: Vec<IncludeResult> = Vec::with_capacity(includes.len());
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+
+    for include in includes {
+        let matched = engine::match_all(rules, relpath, &include, &suppressed);
+
+        if matched.matched.is_empty() {
+            include_results.push(IncludeResult {
+                include,
+                outcome: IncludeOutcome::NoMatch,
+            });
+            continue;
+        }
+
+        // Evaluate every matched rule's action; collect outcomes.
+        let outcomes: Vec<(String, Outcome)> = matched
+            .matched
+            .iter()
+            .map(|cm| {
+                let outcome = action::evaluate(cm.rule, &include, original, relpath, project_root);
+                (cm.rule.rule.name.clone(), outcome)
+            })
+            .collect();
+
+        let outcome = collapse_outcomes(&include, original, outcomes);
+
+        // Push edit when an unambiguous Rewrite came out.
+        if let IncludeOutcome::Rewritten {
+            edit_range,
+            new_text,
+            ..
+        } = &outcome
+        {
+            edits.push((edit_range.clone(), new_text.clone()));
+        }
+
+        include_results.push(IncludeResult { include, outcome });
+    }
+
+    let rewritten = if edits.is_empty() {
+        None
+    } else {
+        Some(apply_edits(original, &edits))
+    };
+
+    FileProcessing {
+        rewritten,
+        include_results,
+    }
+}
+
+/// Conflict-by-final-text rules:
+///
+/// 1. If any matched rule errored (`Outcome::Error`) → `IncludeOutcome::Error`.
+/// 2. If any matched rule had an `EvaluationFailure` → propagate.
+/// 3. If matched rules all produced `Keep` → `IncludeOutcome::Keep`.
+/// 4. If matched rules all produced `Rewrite` with identical
+///    `(edit_range, new_text)` → `IncludeOutcome::Rewritten`.
+/// 5. Otherwise → `IncludeOutcome::Conflict { rule_outputs }` where
+///    `rule_outputs[i] = (rule_name, final_line_text)`.
+fn collapse_outcomes(
+    include: &Include,
+    source: &str,
+    outcomes: Vec<(String, Outcome)>,
+) -> IncludeOutcome {
+    // (1) any Error wins
+    for (rule_name, o) in &outcomes {
+        if let Outcome::Error { message } = o {
+            return IncludeOutcome::Error {
+                rule: rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
+    // (2) any EvaluationFailure wins
+    for (rule_name, o) in &outcomes {
+        if let Outcome::EvaluationFailure { message } = o {
+            return IncludeOutcome::EvaluationFailure {
+                rule: rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
+
+    // Compute "final line" text for each rule. For Keep: take the
+    // existing argument + trailing bytes. For Rewrite: take new_text.
+    let mut finals: Vec<(String, Range<usize>, String)> = Vec::new();
+    for (rule_name, o) in outcomes {
+        match o {
+            Outcome::Keep => {
+                let r = argument_and_trailing_range(include);
+                finals.push((rule_name, r.clone(), source[r].to_string()));
+            }
+            Outcome::Rewrite {
+                edit_range,
+                new_text,
+            } => {
+                finals.push((rule_name, edit_range, new_text));
+            }
+            Outcome::Error { .. } | Outcome::EvaluationFailure { .. } => unreachable!(),
+        }
+    }
+
+    // All identical (edit_range, new_text)?
+    let (first_range, first_text) = (finals[0].1.clone(), finals[0].2.clone());
+    let all_same = finals
+        .iter()
+        .all(|(_, r, t)| *r == first_range && *t == first_text);
+    if all_same {
+        let original_text = &source[first_range.clone()];
+        if first_text == original_text {
+            IncludeOutcome::Keep {
+                rules: finals.into_iter().map(|(n, _, _)| n).collect(),
+            }
+        } else {
+            IncludeOutcome::Rewritten {
+                rules: finals.into_iter().map(|(n, _, _)| n).collect(),
+                edit_range: first_range,
+                new_text: first_text,
+            }
+        }
+    } else {
+        IncludeOutcome::Conflict {
+            rule_outputs: finals.into_iter().map(|(n, _, t)| (n, t)).collect(),
+        }
+    }
+}
+
+fn argument_and_trailing_range(include: &Include) -> Range<usize> {
+    let start = include.argument_range.start;
+    let end = include
+        .trailing_range
+        .end
+        .max(include.argument_range.end);
+    start..end
+}
+
+// ---- file discovery & filtering ------------------------------------------
+
 fn compile_rules<'a>(
-    rules: &'a BTreeMap<String, inherit::ResolvedRule>,
+    rules: &'a BTreeMap<String, ResolvedRule>,
     project_root: &Path,
 ) -> Result<Vec<CompiledRule<'a>>> {
     rules
@@ -380,210 +537,11 @@ fn is_ancestor_or_self(dir: &Path, descendant: &Path) -> bool {
         .all(|(a, b)| a == b)
 }
 
-struct FileProcessing {
-    original: String,
-    rewritten: Option<String>,
-    include_results: Vec<IncludeResult>,
-}
-
-fn process_file<'a>(
-    rules: &'a [CompiledRule<'a>],
-    by_name: &BTreeMap<String, &'a CompiledRule<'a>>,
-    relpath: &Path,
-    original: &str,
-    project_root: &Path,
-    mode: CheckMode,
-    conflicts: &mut Vec<Conflict>,
-) -> FileProcessing {
-    let includes = include_line::scan(original);
-    let mut include_results = Vec::with_capacity(includes.len());
-    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-
-    for include in includes {
-        let outcome_all = engine::match_all(rules, relpath, &include, project_root);
-
-        // Layer-5 ambiguity is a hard error for the include; surface the
-        // first ambiguous rule, no chain check, no action.
-        if let Some(amb) = outcome_all.ambiguities.into_iter().next() {
-            let candidates_rel: Vec<PathBuf> = amb
-                .candidates
-                .into_iter()
-                .map(|p| {
-                    p.strip_prefix(project_root)
-                        .map(|s| s.to_path_buf())
-                        .unwrap_or(p)
-                })
-                .collect();
-            include_results.push(IncludeResult {
-                include,
-                outcome: IncludeOutcome::Layer5Ambiguous {
-                    rule: amb.rule.rule.name.clone(),
-                    candidates: candidates_rel,
-                },
-                validation_error: None,
-            });
-            continue;
-        }
-
-        let matched_rules: Vec<&CompiledRule<'_>> =
-            outcome_all.matched.iter().map(|c| c.rule).collect();
-        let deepest: Option<&CompiledRule<'_>> = match tree::check_chain(&matched_rules, by_name) {
-            Ok(d) => d,
-            Err(kind) => {
-                conflicts.push(Conflict {
-                    file_relpath: relpath.to_path_buf(),
-                    include_line: include.line,
-                    include_text: format_include_text(&include),
-                    kind: ConflictKindOwned::from_kind(kind),
-                });
-                include_results.push(IncludeResult {
-                    include,
-                    outcome: IncludeOutcome::Conflict,
-                    validation_error: None,
-                });
-                continue;
-            }
-        };
-
-        let deepest_match: Option<&CandidateMatch<'_>> =
-            deepest.and_then(|d| outcome_all.matched.iter().find(|c| std::ptr::eq(c.rule, d)));
-
-        let (outcome, matched_rule_for_validation): (
-            IncludeOutcome,
-            Option<&inherit::ResolvedRule>,
-        ) = match (mode, deepest_match) {
-            (_, None) => (IncludeOutcome::NoMatch, None),
-            (CheckMode::Rules, Some(cm)) => (
-                IncludeOutcome::Matched {
-                    rule: cm.rule.rule.name.clone(),
-                },
-                None,
-            ),
-            (CheckMode::Full, Some(cm)) => {
-                evaluate_with_action(cm, &include, relpath, project_root, original, &mut edits)
-            }
-            (CheckMode::Config, _) => unreachable!("config mode returns before file processing"),
-        };
-
-        let validation_error = if mode == CheckMode::Full {
-            run_validation(
-                &include,
-                &outcome,
-                matched_rule_for_validation,
-                project_root,
-            )
-        } else {
-            None
-        };
-
-        include_results.push(IncludeResult {
-            include,
-            outcome,
-            validation_error,
-        });
-    }
-
-    let rewritten = if edits.is_empty() {
-        None
-    } else {
-        Some(apply_edits(original, &edits))
-    };
-    FileProcessing {
-        original: original.to_string(),
-        rewritten,
-        include_results,
-    }
-}
-
-fn evaluate_with_action<'a>(
-    candidate: &CandidateMatch<'a>,
-    include: &Include,
-    relpath: &Path,
-    project_root: &Path,
-    original: &str,
-    edits: &mut Vec<(Range<usize>, String)>,
-) -> (IncludeOutcome, Option<&'a inherit::ResolvedRule>) {
-    let rule = candidate.rule;
-    let m = Match {
-        rule,
-        captures: candidate.captures.clone(),
-        resolved: candidate.resolved.clone(),
-    };
-    let rule_name = rule.rule.name.clone();
-    let rule_ref = rule.rule;
-    match action::evaluate(&m, include, original, relpath, project_root) {
-        Ok(Outcome::Keep) => (IncludeOutcome::Keep { rule: rule_name }, Some(rule_ref)),
-        Ok(Outcome::Rewrite {
-            edit_range,
-            new_text,
-        }) => {
-            // `action::evaluate` already collapses no-op rewrites to
-            // `Outcome::Keep`, so reaching this branch means the bytes
-            // truly differ — no need to double-check here.
-            edits.push((edit_range.clone(), new_text.clone()));
-            (
-                IncludeOutcome::Rewritten {
-                    rule: rule_name,
-                    edit_range,
-                    new_text,
-                },
-                Some(rule_ref),
-            )
-        }
-        Ok(Outcome::Error { message }) => (
-            IncludeOutcome::Error {
-                rule: rule_name,
-                message,
-            },
-            None,
-        ),
-        Err(err) => (
-            IncludeOutcome::EvaluationFailure {
-                rule: rule_name,
-                message: format!("{err:#}"),
-            },
-            None,
-        ),
-    }
-}
-
 fn format_include_text(include: &Include) -> String {
     match include.form {
         IncludeForm::Quote => format!("\"{}\"", include.content),
         IncludeForm::Angle => format!("<{}>", include.content),
         IncludeForm::Macro => include.content.clone(),
-    }
-}
-
-/// `allowed_include_dirs` post-action validation is being removed in v0.3
-/// (the field itself disappears from the schema in M1). During the
-/// transition we keep the call sites but the function is now a no-op so
-/// nothing in the existing pipeline emits a `validation_error`.
-fn run_validation(
-    _include: &Include,
-    _outcome: &IncludeOutcome,
-    _rule: Option<&inherit::ResolvedRule>,
-    _project_root: &Path,
-) -> Option<String> {
-    None
-}
-
-/// Parse a freshly-formatted include argument like `"foo.h"` or `<bar.h>`
-/// into a `(form, content)` pair. The string may carry trailing whitespace
-/// and a comment (when the rule injected one) — those are stripped before
-/// pattern-matching the delimiters. Returns `None` for malformed inputs.
-fn parse_argument_text(s: &str) -> Option<(IncludeForm, String)> {
-    let bytes = s.as_bytes();
-    match bytes.first() {
-        Some(&b'"') => {
-            let close = s[1..].find('"').map(|i| i + 1)?;
-            Some((IncludeForm::Quote, s[1..close].to_string()))
-        }
-        Some(&b'<') => {
-            let close = s[1..].find('>').map(|i| i + 1)?;
-            Some((IncludeForm::Angle, s[1..close].to_string()))
-        }
-        _ => Some((IncludeForm::Macro, s.to_string())),
     }
 }
 
@@ -595,33 +553,6 @@ fn apply_edits(original: &str, edits: &[(Range<usize>, String)]) -> String {
         out.replace_range(range, &new);
     }
     out
-}
-
-// ---- Exit-code helpers used by check / apply -------------------------------
-
-/// Highest-severity outcome across the whole summary, in the order the
-/// CLI exit codes describe (1 = user config error, 2 = action.error,
-/// 3 = evaluation failure / validation failure / rule-tree conflict,
-/// 0 = clean).
-pub fn summary_exit_code(summary: &Summary) -> u8 {
-    let mut code: u8 = 0;
-    if !summary.conflicts.is_empty() {
-        code = code.max(3);
-    }
-    for f in &summary.files {
-        for r in &f.include_results {
-            match &r.outcome {
-                IncludeOutcome::Error { .. } => code = code.max(2),
-                IncludeOutcome::EvaluationFailure { .. }
-                | IncludeOutcome::Layer5Ambiguous { .. } => code = code.max(3),
-                _ => {}
-            }
-            if r.validation_error.is_some() {
-                code = code.max(3);
-            }
-        }
-    }
-    code
 }
 
 #[cfg(test)]
@@ -648,206 +579,24 @@ mod tests {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, body).unwrap();
     }
-
-    #[test]
-    fn end_to_end_auto_rewrite_under_allowed_include() {
-        let root = tmp();
-        touch(&root, "include/internal/foo.h", "");
-        touch(
-            &root,
-            "src/main.c",
-            "#include \"foo.h\"\nint main(){return 0;}\n",
-        );
-        touch(
-            &root,
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            paths = ["src/**"]
-            forms = ["quote"]
-            allowed_include_dirs = ["include"]
-            original_include_dirs = ["include/internal"]
-            "#,
-        );
-
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let file = &summary.files[0];
-        assert_eq!(file.relpath, PathBuf::from("src/main.c"));
-        let rewritten = file.rewritten.as_ref().expect("should be rewritten");
-        assert!(rewritten.contains("\"internal/foo.h\""));
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn end_to_end_error_action_is_reported() {
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"old_x.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            paths = ["src/**"]
-            forms = ["quote"]
-            match = '^old_(.+)$'
-            action = { type = "error", message = "deprecated: ${1}" }
-            "#,
-        );
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let outcomes: Vec<_> = summary
-            .files
-            .iter()
-            .flat_map(|f| f.include_results.iter().map(|r| &r.outcome))
-            .collect();
-        assert!(matches!(outcomes[0], IncludeOutcome::Error { .. }));
-        assert_eq!(summary_exit_code(&summary), 2);
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn apply_writes_rewritten_files_only() {
-        let root = tmp();
-        touch(&root, "include/foo.h", "");
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(&root, "src/other.c", "int x;\n");
-        touch(
-            &root,
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            paths = ["src/**"]
-            forms = ["quote"]
-            allowed_include_dirs = ["include"]
-            original_include_dirs = ["include"]
-            "#,
-        );
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let written = apply(&summary).unwrap();
-        // only main.c is rewritten (no-op for other.c which had no includes)
-        assert_eq!(written, 0); // include "foo.h" is already canonical → no edits
-        let new = std::fs::read_to_string(root.join("src/main.c")).unwrap();
-        assert!(new.contains("\"foo.h\""));
-        // other.c untouched.
-        let other = std::fs::read_to_string(root.join("src/other.c")).unwrap();
-        assert_eq!(other, "int x;\n");
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn apply_skips_files_that_have_errors() {
-        let root = tmp();
-        touch(
-            &root,
-            "src/main.c",
-            "#include \"old_x.h\"\n#include \"new_y.h\"\n",
-        );
-        // Declare `rewrite` first so that it remains the deepest-in-chain
-        // candidate for new_y.h while `deprecate` handles old_x.h.
-        // Both extend an explicit `base` so the rule-tree invariants hold.
-        touch(
-            &root,
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            paths = ["src/**"]
-            forms = ["quote"]
-
-            [[rule]]
-            name = "deprecate"
-            extends = "base"
-            match = '^old_(.+)$'
-            action = { type = "error", message = "deprecated" }
-
-            [[rule]]
-            name = "rewrite"
-            extends = "base"
-            match = '^new_(.+)$'
-            action = { type = "rewrite", to = "renamed/${1}" }
-            "#,
-        );
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let written = apply(&summary).unwrap();
-        // The file mixes an error and a rewrite → apply skips it entirely.
-        assert_eq!(written, 0);
-        let after = std::fs::read_to_string(root.join("src/main.c")).unwrap();
-        assert!(after.contains("\"new_y.h\"")); // unmodified
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn render_diff_emits_changed_files_only() {
-        let root = tmp();
-        touch(&root, "include/foo.h", "");
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(&root, "src/other.c", "int x;\n");
-        touch(
-            &root,
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            paths = ["src/**"]
-            forms = ["quote"]
-            allowed_include_dirs = ["include"]
-            original_include_dirs = ["include"]
-            action = { type = "rewrite", to = "renamed/${include.text}" }
-            "#,
-        );
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let d = render_diff(&summary);
-        assert!(d.contains("--- a/src/main.c"));
-        assert!(!d.contains("other.c"));
-        fs::remove_dir_all(&root).ok();
+    fn min_inclean_toml() -> String {
+        format!(
+            "[project]\nroot = \".\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
+        )
     }
 
     #[test]
     fn config_mode_skips_source_scan() {
         let root = tmp();
-        // A source file with includes that *would* trigger conflicts, but
-        // config mode never opens it.
         touch(&root, "src/main.c", "#include \"x.h\"\n");
         touch(
             &root,
             "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "a"
-            paths = ["src/**"]
-            forms = ["quote"]
-
-            [[rule]]
-            name = "b"
-            paths = ["src/**"]
-            forms = ["quote"]
-            "#,
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\n",
+                min_inclean_toml()
+            ),
         );
         let summary = run(&root, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
@@ -857,105 +606,171 @@ mod tests {
     }
 
     #[test]
-    fn rules_mode_reports_cross_chain_conflict() {
+    fn keep_action_produces_no_edits() {
         let root = tmp();
-        touch(&root, "src/main.c", "#include \"x.h\"\n");
+        touch(&root, "src/main.c", "#include \"foo.h\"\n");
         touch(
             &root,
             "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "a"
-            paths = ["src/**"]
-            forms = ["quote"]
-
-            [[rule]]
-            name = "b"
-            paths = ["src/**"]
-            forms = ["quote"]
-            "#,
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
+                min_inclean_toml()
+            ),
         );
-        let summary = run(&root, CheckMode::Rules).unwrap();
-        assert_eq!(summary.conflicts.len(), 1);
+        let summary = run(&root, CheckMode::Run).unwrap();
+        let f = &summary.files[0];
         assert!(matches!(
-            &summary.conflicts[0].kind,
-            ConflictKindOwned::CrossChain { .. }
+            f.include_results[0].outcome,
+            IncludeOutcome::Keep { .. }
         ));
-        assert_eq!(summary_exit_code(&summary), 3);
+        assert!(f.rewritten.is_none());
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn rules_mode_reports_child_wider_than_parent() {
-        // Child overrides `paths` to widen the parent's `src/**` to `**`,
-        // then a file at the project root triggers child but not parent.
+    fn replace_action_writes_back() {
         let root = tmp();
-        touch(&root, "main.c", "#include \"x.h\"\n");
+        touch(&root, "src/main.c", "#include \"foo.h\"\n");
         touch(
             &root,
             "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "parent"
-            paths = ["src/**"]
-            forms = ["quote"]
-
-            [[rule]]
-            name = "child"
-            extends = "parent"
-            paths = ["**"]
-            "#,
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
+                min_inclean_toml()
+            ),
         );
-        let summary = run(&root, CheckMode::Rules).unwrap();
+        let summary = run(&root, CheckMode::Run).unwrap();
+        let f = &summary.files[0];
+        assert!(matches!(
+            f.include_results[0].outcome,
+            IncludeOutcome::Rewritten { .. }
+        ));
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 1);
+        let new = fs::read_to_string(root.join("src/main.c")).unwrap();
+        assert!(new.contains("\"lib/foo.h\""));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn error_action_produces_error_outcome_and_exit_2() {
+        let root = tmp();
+        touch(&root, "src/main.c", "#include \"old.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\ninclude_match = [\"old.h\"]\naction = {{ type = \"error\", message = \"deprecated\" }}\n",
+                min_inclean_toml()
+            ),
+        );
+        let summary = run(&root, CheckMode::Run).unwrap();
+        assert!(matches!(
+            summary.files[0].include_results[0].outcome,
+            IncludeOutcome::Error { .. }
+        ));
+        assert_eq!(summary_exit_code(&summary), 2);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn conflicting_rules_produce_conflict_and_exit_3() {
+        // Two rules that both match but rewrite to different texts.
+        let root = tmp();
+        touch(&root, "src/main.c", "#include \"foo.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            &format!(
+                "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"A/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"B/foo.h\" }}\n",
+                min_inclean_toml()
+            ),
+        );
+        let summary = run(&root, CheckMode::Run).unwrap();
         assert_eq!(summary.conflicts.len(), 1);
-        match &summary.conflicts[0].kind {
-            ConflictKindOwned::ChildWiderThanParent {
-                child,
-                missing_ancestor,
-            } => {
-                assert_eq!(child, "child");
-                assert_eq!(missing_ancestor, "parent");
+        assert_eq!(summary_exit_code(&summary), 3);
+        // apply refuses
+        let err = apply(&summary).unwrap_err();
+        assert!(format!("{err:#}").contains("conflict"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn agreeing_rules_collapse_to_a_single_rewrite() {
+        // Two rules that both rewrite to the same text: no conflict.
+        let root = tmp();
+        touch(&root, "src/main.c", "#include \"foo.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            &format!(
+                "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n",
+                min_inclean_toml()
+            ),
+        );
+        let summary = run(&root, CheckMode::Run).unwrap();
+        assert!(summary.conflicts.is_empty());
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { rules, new_text, .. } => {
+                assert_eq!(new_text, "\"new/foo.h\"");
+                assert_eq!(rules.len(), 2);
             }
             other => panic!("unexpected: {other:?}"),
         }
-        assert_eq!(summary_exit_code(&summary), 3);
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn apply_refuses_when_conflicts_present() {
+    fn bom_is_preserved_across_apply() {
         let root = tmp();
-        touch(&root, "src/main.c", "#include \"x.h\"\n");
+        // \u{FEFF} is the BOM in source. We write raw bytes to ensure the
+        // BOM is at the very start.
+        let bom = [0xEF, 0xBB, 0xBFu8];
+        let body = b"#include \"foo.h\"\n";
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&bom);
+        payload.extend_from_slice(body);
+        let main_path = root.join("src/main.c");
+        fs::create_dir_all(main_path.parent().unwrap()).unwrap();
+        fs::write(&main_path, &payload).unwrap();
+
         touch(
             &root,
             "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "a"
-            paths = ["src/**"]
-            forms = ["quote"]
-
-            [[rule]]
-            name = "b"
-            paths = ["src/**"]
-            forms = ["quote"]
-            "#,
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
+                min_inclean_toml()
+            ),
         );
-        let summary = run(&root, CheckMode::Full).unwrap();
-        let err = apply(&summary).unwrap_err();
-        assert!(format!("{err:#}").contains("conflict"));
+        let summary = run(&root, CheckMode::Run).unwrap();
+        assert!(summary.files[0].had_bom);
+        apply(&summary).unwrap();
+        let read_back = fs::read(&main_path).unwrap();
+        assert!(read_back.starts_with(&bom));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn parse_failure_is_skipped_not_a_hard_error() {
+        let root = tmp();
+        // Invalid UTF-8 byte sequence.
+        let payload: &[u8] = &[0xFF, 0xFF, 0xFE, b'\n'];
+        let p = root.join("src/bad.c");
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, payload).unwrap();
+        touch(&root, "src/main.c", "#include \"foo.h\"\n");
+        touch(
+            &root,
+            "inclean.toml",
+            &format!(
+                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
+                min_inclean_toml()
+            ),
+        );
+        let summary = run(&root, CheckMode::Run).unwrap();
+        assert_eq!(summary.skipped.len(), 1);
+        assert_eq!(summary.skipped[0].relpath, PathBuf::from("src/bad.c"));
+        assert_eq!(summary_exit_code(&summary), 0);
         fs::remove_dir_all(&root).ok();
     }
 }
