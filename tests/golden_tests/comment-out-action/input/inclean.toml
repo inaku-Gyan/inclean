@@ -1,0 +1,10 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+[[rule]]
+name = "comment-out-legacy"
+file_paths = ["src/**/*"]
+include_match = ["legacy/**", "deprecated.h"]
+action = { type = "comment_out" }

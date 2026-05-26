@@ -79,7 +79,7 @@ fn run_case(case: &Case) -> Result<(), Failed> {
     let workdir = support::new_workdir(&case.name);
     support::copy_dir(&case.input, &workdir);
 
-    let summary = pipe::run(&workdir, CheckMode::Full).map_err(|e| format!("pipe::run: {e:#}"))?;
+    let summary = pipe::run(&workdir, CheckMode::Run).map_err(|e| format!("pipe::run: {e:#}"))?;
     pipe::apply(&summary).map_err(|e| format!("pipe::apply: {e:#}"))?;
 
     compare_trees(&workdir, &case.expected).map_err(Failed::from)?;
