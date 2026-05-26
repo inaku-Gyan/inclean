@@ -51,13 +51,13 @@ fn print_config_report(args: &CheckArgs) -> Result<()> {
         resolved.len()
     );
     for (name, rule) in &resolved {
-        let extends = rule
-            .extends
+        let copied = rule
+            .copied_from
             .as_deref()
-            .map(|p| format!(" extends `{p}`"))
+            .map(|p| format!(" copied_from `{p}`"))
             .unwrap_or_default();
         println!(
-            "  rule:   `{name}`{extends}  ({} :: #{})",
+            "  rule:   `{name}`{copied}  ({} :: #{})",
             rule.origin.config_path.display(),
             rule.origin.index
         );

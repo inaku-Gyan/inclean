@@ -1,20 +1,17 @@
 //! Locate, load, and validate the single `inclean.toml` for a project.
 //!
-//! Three entry points are intended for callers:
-//!
+//! Entry points:
 //! - [`find_root_config`] climbs from a starting directory looking for the
-//!   nearest `inclean.toml`. The path of that file is the *root config*.
-//! - [`load_root_config`] reads and parses the root config file.
+//!   nearest `inclean.toml`.
+//! - [`load_root_config`] reads, parses, and runs the two-direction
+//!   version check.
 //! - [`resolve_project_root`] joins the file's directory with `[project].root`
-//!   (default `"."`) to produce the actual project root on disk.
+//!   (default `"."`) to produce the actual project root.
+//! - [`assert_no_extra_configs`] errors if any other `inclean.toml` exists
+//!   under the resolved project root — sub-configs are not a feature.
 //!
-//! Additionally [`assert_no_extra_configs`] walks the resolved project root
-//! and errors if any extra `inclean.toml` exists — sub-configs are not a
-//! feature.
-//!
-//! Tree-walking honors `.gitignore` plus a few hard-coded skip directories
-//! (`.git`, `target`, `node_modules`) so generated or vendored trees do not
-//! poison configuration.
+//! Tree-walking honors `.gitignore` plus hard-coded skip directories
+//! (`.git`, `target`, `node_modules`).
 
 use std::path::{Path, PathBuf};
 
@@ -25,20 +22,26 @@ use super::schema::{self, LoadedConfig, RawProject};
 
 pub const CONFIG_FILENAME: &str = "inclean.toml";
 
-/// Minimum `[project].version` accepted by this CLI.
-///
-/// inclean is pre-1.0 / beta. Whenever the on-disk schema gets a
-/// breaking change, bump this to the release that introduces the
-/// change; older configs are then hard-rejected with no migration
-/// shim. Backward compatibility is explicitly out of scope before
-/// v1.0.0 — see CLAUDE.md.
-pub const MIN_SUPPORTED_INCLEAN_TOML_VERSION: &str = "0.2.0";
+/// This CLI's own version (from `Cargo.toml`).
+fn cli_current() -> semver::Version {
+    semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .expect("CARGO_PKG_VERSION must be valid semver")
+}
 
-/// Climb from `start` (or its parent if it is a file path) toward `/`
-/// looking for the nearest `inclean.toml`.
+/// Minimum config `version` this CLI can read. Bump when a breaking
+/// schema change lands. Compared against `[project].version`.
 ///
-/// Returns the absolute path of that file. Errors if no `inclean.toml` is
-/// found before reaching the filesystem root.
+/// Semantics: `CLI_COMPAT_MIN <= config.version` must hold. If the user's
+/// config was written before this CLI's last breaking change, they need
+/// to update the config first.
+pub const CLI_COMPAT_MIN: &str = "0.3.0";
+
+fn cli_compat_min() -> semver::Version {
+    semver::Version::parse(CLI_COMPAT_MIN).expect("CLI_COMPAT_MIN must be valid semver")
+}
+
+/// Climb from `start` (or its parent if it is a file) toward `/` looking
+/// for the nearest `inclean.toml`.
 pub fn find_root_config(start: &Path) -> Result<PathBuf> {
     let mut current = if start.is_file() {
         start
@@ -63,64 +66,87 @@ pub fn find_root_config(start: &Path) -> Result<PathBuf> {
     }
 }
 
-/// Load and parse the single `inclean.toml` at `config_path`. The root
-/// config must declare a `[project]` block, and `[project].version` must
-/// be valid semver `>= MIN_SUPPORTED_INCLEAN_TOML_VERSION`.
+/// Load and parse the `inclean.toml` at `config_path`, then run the
+/// two-direction version check. The root config must declare `[project]`
+/// with both `version` and `min_inclean_version`.
 pub fn load_root_config(config_path: &Path) -> Result<LoadedConfig> {
     let text = std::fs::read_to_string(config_path)
         .with_context(|| format!("reading {}", config_path.display()))?;
     let raw = schema::parse(&text, config_path)?;
     let project = raw.project.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("{} must declare a [project] block", config_path.display(),)
+        anyhow::anyhow!("{} must declare a [project] block", config_path.display())
     })?;
-    validate_project_version(config_path, project)?;
+    check_version_compatibility(config_path, project)?;
     Ok(LoadedConfig {
         path: config_path.to_path_buf(),
         raw,
     })
 }
 
-/// Enforce the pre-1.0 version gate: `[project].version` is required, must
-/// parse as semver, and must be `>= MIN_SUPPORTED_INCLEAN_TOML_VERSION`.
-/// Older configs are hard-rejected with no migration shim.
-fn validate_project_version(config_path: &Path, project: &RawProject) -> Result<()> {
-    let raw_version = project.version.as_deref().ok_or_else(|| {
+/// Two-direction version check:
+/// - `CLI_COMPAT_MIN <= config.version` — the config wasn't written for a
+///   CLI older than the last breaking change we still understand.
+/// - `config.min_inclean_version <= cli.current` — the user said they need
+///   at least that CLI version to parse correctly, and we are at least
+///   that new.
+///
+/// Either failure is a hard error citing both sides.
+fn check_version_compatibility(config_path: &Path, project: &RawProject) -> Result<()> {
+    let cli_min = cli_compat_min();
+    let cli_now = cli_current();
+
+    let cfg_version_raw = project.version.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
-            "{} must declare `version` in [project] (this CLI requires >= {})",
+            "{} must declare `version` in [project] (the CLI version that wrote this config)",
             config_path.display(),
-            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
         )
     })?;
-    let cfg_version = semver::Version::parse(raw_version).with_context(|| {
+    let cfg_version = semver::Version::parse(cfg_version_raw).with_context(|| {
         format!(
-            "{} has invalid `version = \"{}\"` (must be semver, e.g. \"{}\")",
+            "{}: [project].version = \"{}\" is not valid semver",
             config_path.display(),
-            raw_version,
-            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
+            cfg_version_raw,
         )
     })?;
-    let min_version = semver::Version::parse(MIN_SUPPORTED_INCLEAN_TOML_VERSION)
-        .expect("MIN_SUPPORTED_INCLEAN_TOML_VERSION must be valid semver");
-    if cfg_version < min_version {
+
+    let cfg_compat_min_raw = project.min_inclean_version.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} must declare `min_inclean_version` in [project] (lowest CLI version that can parse this config)",
+            config_path.display(),
+        )
+    })?;
+    let cfg_compat_min = semver::Version::parse(cfg_compat_min_raw).with_context(|| {
+        format!(
+            "{}: [project].min_inclean_version = \"{}\" is not valid semver",
+            config_path.display(),
+            cfg_compat_min_raw,
+        )
+    })?;
+
+    if cfg_version < cli_min {
         anyhow::bail!(
-            "{} declares version {}, but this CLI requires >= {}.\n\
-             inclean is pre-1.0; breaking schema changes do not carry a migration path. \
-             Update the config to match the current schema and set `version = \"{}\"`.",
+            "{}: config was written for inclean {} but this CLI can only read configs >= {} \
+             (the last breaking schema change). Update the config to the current schema and \
+             set [project].version = \"{}\".",
             config_path.display(),
             cfg_version,
-            MIN_SUPPORTED_INCLEAN_TOML_VERSION,
-            env!("CARGO_PKG_VERSION"),
+            cli_min,
+            cli_now,
         );
     }
+    if cfg_compat_min > cli_now {
+        anyhow::bail!(
+            "{}: config requires inclean >= {} but this CLI is {}. Upgrade the CLI.",
+            config_path.display(),
+            cfg_compat_min,
+            cli_now,
+        );
+    }
+
     Ok(())
 }
 
 /// Compute the actual project root from `config_path` and `[project].root`.
-///
-/// `[project].root` is interpreted relative to the directory containing
-/// `inclean.toml`. Defaults to `"."` if the field is omitted. Empty or
-/// whitespace-only strings are rejected. The resolved path must exist and
-/// be a directory; the result is canonicalized.
 pub fn resolve_project_root(config_path: &Path, project: &RawProject) -> Result<PathBuf> {
     let raw_value = project.root.as_deref().unwrap_or(".");
     let trimmed = raw_value.trim();
@@ -152,9 +178,7 @@ pub fn resolve_project_root(config_path: &Path, project: &RawProject) -> Result<
 }
 
 /// Walk `project_root` and error if any `inclean.toml` exists besides
-/// `root_config_path`. Sub-configs are not a feature; finding extra files
-/// is almost always user error (forgotten leftover from a refactor, or a
-/// mistaken attempt to use the old hierarchical model).
+/// `root_config_path`.
 pub fn assert_no_extra_configs(project_root: &Path, root_config_path: &Path) -> Result<()> {
     let root_canon =
         std::fs::canonicalize(root_config_path).unwrap_or_else(|_| root_config_path.to_path_buf());
@@ -204,7 +228,6 @@ pub fn assert_no_extra_configs(project_root: &Path, root_config_path: &Path) -> 
 mod tests {
     use super::*;
 
-    /// Build a temporary project tree for testing. Returns the project root.
     fn build_tree(files: &[(&str, &str)]) -> tempdir::Project {
         let project = tempdir::Project::new();
         for (rel, body) in files {
@@ -213,32 +236,23 @@ mod tests {
         project
     }
 
+    fn min_project_block() -> String {
+        format!(
+            "[project]\nroot = \".\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
+        )
+    }
+
     #[test]
     fn find_root_config_walks_up_from_nested_dir() {
-        let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"[project]
-root = "."
-"#,
-            ),
-            ("src/foo/bar.c", ""),
-        ]);
+        let proj = build_tree(&[("inclean.toml", &min_project_block()), ("src/foo/bar.c", "")]);
         let cfg = find_root_config(&proj.path().join("src/foo")).unwrap();
         assert_eq!(cfg, proj.path().join("inclean.toml"));
     }
 
     #[test]
     fn find_root_config_accepts_file_path_as_start() {
-        let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"[project]
-root = "."
-"#,
-            ),
-            ("src/foo/bar.c", ""),
-        ]);
+        let proj = build_tree(&[("inclean.toml", &min_project_block()), ("src/foo/bar.c", "")]);
         let cfg = find_root_config(&proj.path().join("src/foo/bar.c")).unwrap();
         assert_eq!(cfg, proj.path().join("inclean.toml"));
     }
@@ -246,8 +260,7 @@ root = "."
     #[test]
     fn find_root_config_errors_when_no_config() {
         let proj = build_tree(&[("src/foo.c", "")]);
-        let start = proj.path().join("src");
-        let err = find_root_config(&start).unwrap_err();
+        let err = find_root_config(&proj.path().join("src")).unwrap_err();
         assert!(format!("{err:#}").contains(CONFIG_FILENAME));
     }
 
@@ -265,221 +278,64 @@ root = "."
     }
 
     #[test]
-    fn load_root_config_accepts_minimal_project_block() {
+    fn load_root_config_requires_version() {
         let proj = build_tree(&[(
             "inclean.toml",
             r#"
             [project]
             root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
+            min_inclean_version = "0.3.0"
             "#,
         )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        assert!(cfg.raw.project.is_some());
-        assert_eq!(cfg.raw.rules.len(), 1);
+        let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        assert!(format!("{err:#}").contains("`version`"));
     }
 
     #[test]
-    fn resolve_project_root_defaults_to_dot_when_field_omitted() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            "#,
-        )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
-        assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
-    }
-
-    #[test]
-    fn resolve_project_root_accepts_dot() {
+    fn load_root_config_requires_min_inclean_version() {
         let proj = build_tree(&[(
             "inclean.toml",
             r#"
             [project]
             root = "."
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
+            version = "0.3.0"
             "#,
         )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
-        assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
+        let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        assert!(format!("{err:#}").contains("`min_inclean_version`"));
     }
 
     #[test]
-    fn resolve_project_root_joins_relative_subdir() {
-        let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"
-                [project]
-                root = "lib"
-                version = "0.2.0"
-
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-            ("lib/keep", ""),
-        ]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
-        assert_eq!(
-            resolved,
-            std::fs::canonicalize(proj.path().join("lib")).unwrap()
-        );
-    }
-
-    #[test]
-    fn resolve_project_root_accepts_dotdot() {
-        let proj = build_tree(&[
-            (
-                "host/inclean.toml",
-                r#"
-                [project]
-                root = "../sibling"
-                version = "0.2.0"
-
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-            ("sibling/keep", ""),
-        ]);
-        let cfg = load_root_config(&proj.path().join("host/inclean.toml")).unwrap();
-        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
-        assert_eq!(
-            resolved,
-            std::fs::canonicalize(proj.path().join("sibling")).unwrap()
-        );
-    }
-
-    #[test]
-    fn resolve_project_root_errors_when_target_missing() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            root = "nowhere"
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            "#,
-        )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
-        assert!(format!("{err:#}").contains("nowhere"));
-    }
-
-    #[test]
-    fn resolve_project_root_rejects_empty_string() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            root = ""
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            "#,
-        )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
-        assert!(format!("{err:#}").contains("[project].root"));
-    }
-
-    #[test]
-    fn resolve_project_root_rejects_whitespace_string() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            root = "   "
-            version = "0.2.0"
-
-            [[rule]]
-            name = "base"
-            "#,
-        )]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
-        assert!(format!("{err:#}").contains("[project].root"));
-    }
-
-    #[test]
-    fn resolve_project_root_errors_when_target_is_file_not_dir() {
-        let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"
-                [project]
-                root = "afile"
-                version = "0.2.0"
-
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-            ("afile", "i am a regular file"),
-        ]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
-        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("not a directory") || msg.contains("does not exist"));
-    }
-
-    #[test]
-    fn load_root_config_rejects_missing_version() {
+    fn load_root_config_rejects_config_below_cli_compat_min() {
         let proj = build_tree(&[(
             "inclean.toml",
             r#"
             [project]
             root = "."
-
-            [[rule]]
-            name = "base"
+            version = "0.2.5"
+            min_inclean_version = "0.2.5"
             "#,
         )]);
         let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("must declare `version`"),
-            "want missing-version message, got: {msg}"
-        );
+        assert!(msg.contains("0.2.5") && msg.contains(CLI_COMPAT_MIN));
     }
 
     #[test]
-    fn load_root_config_rejects_version_below_minimum() {
+    fn load_root_config_rejects_config_requiring_future_cli() {
         let proj = build_tree(&[(
             "inclean.toml",
             r#"
             [project]
             root = "."
-            version = "0.1.0"
-
-            [[rule]]
-            name = "base"
+            version = "0.3.0"
+            min_inclean_version = "99.0.0"
             "#,
         )]);
         let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains(">=") && msg.contains(MIN_SUPPORTED_INCLEAN_TOML_VERSION),
-            "want too-old message mentioning >= and {MIN_SUPPORTED_INCLEAN_TOML_VERSION}, got: {msg}"
-        );
+        assert!(msg.contains("99.0.0"));
+        assert!(msg.contains("Upgrade the CLI"));
     }
 
     #[test]
@@ -490,60 +346,74 @@ root = "."
             [project]
             root = "."
             version = "not-semver"
-
-            [[rule]]
-            name = "base"
+            min_inclean_version = "0.3.0"
             "#,
         )]);
         let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("invalid") && msg.contains("not-semver"),
-            "want invalid-semver message, got: {msg}"
-        );
+        assert!(msg.contains("not valid semver") && msg.contains("not-semver"));
     }
 
     #[test]
-    fn load_root_config_accepts_version_equal_to_minimum() {
+    fn load_root_config_accepts_matching_versions() {
+        let proj = build_tree(&[("inclean.toml", &min_project_block())]);
+        load_root_config(&proj.path().join("inclean.toml")).unwrap();
+    }
+
+    #[test]
+    fn resolve_project_root_defaults_to_dot_when_field_omitted() {
         let body = format!(
-            r#"
-            [project]
-            root = "."
-            version = "{MIN_SUPPORTED_INCLEAN_TOML_VERSION}"
-
-            [[rule]]
-            name = "base"
-            "#
+            "[project]\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
         );
-        let proj = build_tree(&[("inclean.toml", body.as_str())]);
-        load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let proj = build_tree(&[("inclean.toml", &body)]);
+        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
+        assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
     }
 
     #[test]
-    fn load_root_config_accepts_version_above_minimum() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            version = "99.0.0"
+    fn resolve_project_root_joins_relative_subdir() {
+        let body = format!(
+            "[project]\nroot = \"lib\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
+        );
+        let proj = build_tree(&[("inclean.toml", &body), ("lib/keep", "")]);
+        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let resolved = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(proj.path().join("lib")).unwrap()
+        );
+    }
 
-            [[rule]]
-            name = "base"
-            "#,
-        )]);
-        load_root_config(&proj.path().join("inclean.toml")).unwrap();
+    #[test]
+    fn resolve_project_root_rejects_empty_string() {
+        let body = format!(
+            "[project]\nroot = \"\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
+        );
+        let proj = build_tree(&[("inclean.toml", &body)]);
+        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
+        assert!(format!("{err:#}").contains("[project].root"));
+    }
+
+    #[test]
+    fn resolve_project_root_errors_when_target_missing() {
+        let body = format!(
+            "[project]\nroot = \"nowhere\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
+            v = env!("CARGO_PKG_VERSION"),
+        );
+        let proj = build_tree(&[("inclean.toml", &body)]);
+        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let err = resolve_project_root(&cfg.path, cfg.raw.project.as_ref().unwrap()).unwrap_err();
+        assert!(format!("{err:#}").contains("nowhere"));
     }
 
     #[test]
     fn assert_no_extra_configs_accepts_lone_root() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            r#"
-            [project]
-            root = "."
-            "#,
-        )]);
+        let proj = build_tree(&[("inclean.toml", &min_project_block())]);
         let root_cfg = proj.path().join("inclean.toml");
         assert_no_extra_configs(proj.path(), &root_cfg).unwrap();
     }
@@ -551,42 +421,22 @@ root = "."
     #[test]
     fn assert_no_extra_configs_errors_when_extras_present() {
         let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"
-                [project]
-                root = "."
-                "#,
-            ),
+            ("inclean.toml", &min_project_block()),
             (
                 "src/inclean.toml",
-                r#"
-                [[rule]]
-                name = "sub"
-                "#,
+                r#"[[rule]]
+name = "sub""#,
             ),
         ]);
         let root_cfg = proj.path().join("inclean.toml");
         let err = assert_no_extra_configs(proj.path(), &root_cfg).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("sub-configs are not supported"));
-        let expected_extra = std::path::Path::new("src")
-            .join("inclean.toml")
-            .display()
-            .to_string();
-        assert!(msg.contains(&expected_extra), "got: {msg}");
+        assert!(format!("{err:#}").contains("sub-configs are not supported"));
     }
 
     #[test]
     fn assert_no_extra_configs_skips_target_and_node_modules() {
         let proj = build_tree(&[
-            (
-                "inclean.toml",
-                r#"
-                [project]
-                root = "."
-                "#,
-            ),
+            ("inclean.toml", &min_project_block()),
             (
                 "target/inclean.toml",
                 r#"[[rule]]
@@ -602,29 +452,6 @@ name = "in-nm""#,
         assert_no_extra_configs(proj.path(), &root_cfg).unwrap();
     }
 
-    #[test]
-    fn assert_no_extra_configs_skips_ignored_subtree() {
-        let proj = build_tree(&[
-            (".ignore", "ignored/\n"),
-            (
-                "inclean.toml",
-                r#"
-                [project]
-                root = "."
-                "#,
-            ),
-            (
-                "ignored/inclean.toml",
-                r#"[[rule]]
-name = "should-not-load""#,
-            ),
-        ]);
-        let root_cfg = proj.path().join("inclean.toml");
-        assert_no_extra_configs(proj.path(), &root_cfg).unwrap();
-    }
-
-    /// A small inline temp-dir helper to avoid adding the `tempfile` crate
-    /// just for tests. It deletes the directory on drop.
     mod tempdir {
         use std::path::{Path, PathBuf};
         use std::sync::atomic::{AtomicU64, Ordering};

@@ -1,15 +1,16 @@
-//! Raw serde structures for `inclean.toml`.
+//! Raw serde structures for `inclean.toml` (v0.3.0 schema).
 //!
 //! These types deserialize directly from TOML. Defaults, `@std.*` constant
-//! expansion, `extends` resolution, and field merging happen in later passes
-//! (`constants::expand`, `inherit::resolve`). Keep this module free of policy.
+//! expansion, `copied_from` resolution, and `${copied}` placeholder
+//! substitution happen in later passes (`constants::expand`, `copy::resolve`).
+//! Keep this module free of policy.
 
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-/// The top-level shape of a single `inclean.toml`.
+/// Top-level shape of a single `inclean.toml`.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawConfig {
@@ -20,135 +21,78 @@ pub struct RawConfig {
     pub rules: Vec<RawRule>,
 }
 
-/// The `[project]` block. Intentionally minimal: only `root`. All other
-/// project-wide values live on rules (with inheritance providing reuse).
+/// The `[project]` block.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
     /// Project root, relative to the `inclean.toml` file's directory.
-    /// Omitted or `"."` means "this directory". Resolved by
+    /// Omitted or `"."` means the file's directory. Resolved by
     /// `discover::resolve_project_root`.
     pub root: Option<String>,
 
-    /// CLI version this config was written for. Required: missing or
-    /// older than `MIN_SUPPORTED_INCLEAN_TOML_VERSION` is a hard error.
-    /// Stored as `Option<String>` so a missing field surfaces via
-    /// `discover::load_root_config` with a path-aware message, not via
-    /// a generic serde "missing field" error. The `schemars` attributes
-    /// override that wrapping for schema-generation so editors still see
-    /// the field as required and non-nullable.
+    /// CLI version that wrote this config. Written by `inclean config new`
+    /// and never auto-updated thereafter. Required (the discover step
+    /// surfaces a path-aware missing-field error).
     #[schemars(required, with = "String")]
     pub version: Option<String>,
+
+    /// Minimum CLI version that can parse this config. Written by
+    /// `inclean config new` and never auto-updated thereafter. Required.
+    #[schemars(required, with = "String")]
+    pub min_inclean_version: Option<String>,
 }
 
-/// A single `[[rule]]` entry, before defaulting / inheritance / constant
-/// expansion. `Option<_>` distinguishes "user did not specify" from "user
-/// wrote empty".
+/// A single `[[rule]]` entry, before defaulting / copy / constant expansion.
+/// `Option<_>` distinguishes "user did not specify" from "user wrote empty".
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
-    /// Globally unique across the entire project.
+    /// Globally unique across the config.
     pub name: String,
 
-    /// Name of the parent rule. `None` means this rule is a root of its
-    /// inheritance tree (typically the conventional `base`).
-    pub extends: Option<String>,
+    /// Name of a previously declared rule whose resolved fields are copied
+    /// (transitively) into this one. Top-level fields the child sets are
+    /// kept; top-level fields the child omits inherit from the parent's
+    /// resolved value. Inner fields of an object the child rewrites default
+    /// to null/disabled — use `${copied}` to pull each inner field from the
+    /// parent explicitly.
+    pub copied_from: Option<String>,
 
-    // ---- Layer 1: paths (gitignore-style globs) ---------------------------
-    pub paths: Option<Vec<String>>,
+    // ---- Layer 1: file paths (gitignore-style globs) ---------------------
+    pub file_paths: Option<Vec<String>>,
 
-    // ---- Layer 2: extensions ---------------------------------------------
-    pub extensions: Option<Vec<String>>,
+    // ---- Layer 2: file suffixes (literal extensions like ".c") -----------
+    pub file_suffixes: Option<Vec<String>>,
+
+    // ---- Off-limits regions inside source files --------------------------
+    pub suppression_comments_regex: Option<RawSuppression>,
 
     // ---- Layer 3: include forms ------------------------------------------
-    pub forms: Option<Vec<IncludeForm>>,
+    pub match_forms: Option<Vec<IncludeForm>>,
 
-    // ---- Layer 4: regex on stripped include content ----------------------
-    #[serde(rename = "match")]
-    pub match_regex: Option<String>,
-
-    // ---- Layer 5: match on the resolved physical file --------------------
-    /// Constraints on the file the include resolves to via the rule's
-    /// `original_include_dirs`. A rule with this set additionally requires:
-    ///   1. the include text resolves to exactly one file under
-    ///      `original_include_dirs` (otherwise an ambiguity error is
-    ///      surfaced for the user to narrow their `-I` list); and
-    ///   2. the resolved file's project-root-relative path satisfies the
-    ///      `under` / `match` constraints written here.
-    pub match_resolved: Option<RawMatchResolved>,
+    // ---- Layer 4: glob on the stripped include argument ------------------
+    pub include_match: Option<Vec<String>>,
 
     // ---- Non-matching configuration --------------------------------------
-    pub allowed_include_dirs: Option<Vec<String>>,
-    pub original_include_dirs: Option<Vec<String>>,
+    /// Literal directory paths under the project root that the `resolve`
+    /// action probes when resolving an include's text to a physical file.
+    pub include_directories: Option<Vec<String>>,
 
     pub action: Option<RawAction>,
 
-    /// Optional trailing-comment injection. See [`RawTrailingComment`].
     pub trailing_comment: Option<RawTrailingComment>,
 }
 
-/// Trailing-comment injection. Two TOML shapes:
-///
-/// - Shortcut: a bare string, equivalent to `{ to = "<string>" }` with
-///   default `match` / `form` / `spacing`. The empty string is rejected
-///   (use the table form with `to = ""` to strip the trailing comment).
-/// - Full: `{ match?, to, form?, spacing? }`.
-#[derive(Debug, Deserialize, Clone, JsonSchema)]
-#[serde(untagged)]
-pub enum RawTrailingComment {
-    Shortcut(String),
-    Full(RawTrailingCommentFull),
-}
-
+/// Suppression markers: regex patterns matched line-by-line.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RawTrailingCommentFull {
-    /// Regex over the stripped existing comment body. Optional; defaults
-    /// to `".*"` at resolve time. Empty existing comment is matched as `""`.
-    #[serde(rename = "match", default)]
-    pub match_regex: Option<String>,
-
-    /// Template for the new comment's stripped body. `Option` so we can
-    /// distinguish "missing" (config error) from "empty" (`to = ""` means
-    /// strip the trailing comment).
-    #[serde(default)]
-    pub to: Option<String>,
-
-    /// `"line"`, `"block"`, or `"preserve"`. Defaults to `Preserve`.
-    #[serde(default)]
-    pub form: Option<TrailingForm>,
-
-    /// Number of spaces before the comment delimiter. `None` preserves the
-    /// existing leading whitespace, falling back to two spaces.
-    #[serde(default)]
-    pub spacing: Option<u32>,
+pub struct RawSuppression {
+    pub block_start: Option<String>,
+    pub block_end: Option<String>,
+    pub line: Option<String>,
 }
 
-/// Delimiter style for the new trailing comment.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum TrailingForm {
-    /// `// content`
-    Line,
-    /// `/* content */`
-    Block,
-    /// Keep whatever style the existing comment used; default to `Line`
-    /// when there was no existing comment.
-    Preserve,
-}
-
-/// Layer-5 constraint shape. At least one field must be specified.
-#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RawMatchResolved {
-    /// Resolved file's project-root-relative path must start with this dir.
-    pub under: Option<String>,
-    /// Resolved file's project-root-relative path must match this regex.
-    #[serde(rename = "match")]
-    pub path_regex: Option<String>,
-}
-
-/// The include "form": which quoting style of `#include` a rule applies to.
+/// Which "form" of `#include` a rule applies to.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IncludeForm {
@@ -156,44 +100,13 @@ pub enum IncludeForm {
     Quote,
     /// `#include <foo.h>`
     Angle,
-    /// `#include MY_HEADER` (macro-defined). v1: matching this form is an
-    /// explicit, configurable possibility but execution must error out.
+    /// `#include MY_HEADER` (macro-defined). Matching this form is allowed
+    /// in config; in v1 evaluation of an action against a macro #include
+    /// always produces an error.
     Macro,
 }
 
-/// The action a rule executes on a matched `#include`. Tagged by `type`.
-#[derive(Debug, Deserialize, Clone, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
-pub enum RawAction {
-    /// Resolve the include via the rule's `original_include_dirs`, then
-    /// emit a path relative to the chosen base. Default action if omitted.
-    Auto {
-        #[serde(default)]
-        relative_to: Option<AutoRelativeTo>,
-        #[serde(default)]
-        form: Option<OutputForm>,
-    },
-    /// Replace the include text with `to`, supporting `${...}` placeholders.
-    Rewrite {
-        to: String,
-        #[serde(default)]
-        form: Option<OutputForm>,
-    },
-    /// Leave the include unchanged; stop trying further rules.
-    Keep,
-    /// Abort processing of the file with the user-provided message.
-    Error { message: String },
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AutoRelativeTo {
-    /// Path relative to one of the rule's `allowed_include_dirs` (default).
-    Allowed,
-    /// Path relative to the directory of the file being edited.
-    FileDir,
-}
-
+/// Output form for the include's delimiters after a rule fires.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputForm {
@@ -205,16 +118,145 @@ pub enum OutputForm {
     Preserve,
 }
 
+/// Trailing-comment delimiter style.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+pub enum CommentStyle {
+    /// `// ...`
+    #[serde(rename = "//")]
+    Line,
+    /// `/* ... */`
+    #[serde(rename = "/**/")]
+    Block,
+}
+
+/// Trailing-comment output style with an extra `preserve` variant for
+/// `trailing_comment.transform.action.output_style`.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+pub enum OutputCommentStyle {
+    /// `// ...`
+    #[serde(rename = "//")]
+    Line,
+    /// `/* ... */`
+    #[serde(rename = "/**/")]
+    Block,
+    /// Keep whatever delimiter the original trailing comment used.
+    #[serde(rename = "preserve")]
+    Preserve,
+}
+
+/// The action a rule executes on a matched `#include`. Tagged by `type`.
+#[derive(Debug, Deserialize, Clone, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RawAction {
+    /// Resolve the include against the rule's `include_directories`, then
+    /// rewrite the path to be relative to `relative_to`.
+    Resolve {
+        relative_to: String,
+        #[serde(default)]
+        output_form: Option<OutputForm>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Replace the include text with `with`, supporting `${...}` placeholders.
+    Replace {
+        with: String,
+        #[serde(default)]
+        output_form: Option<OutputForm>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Leave the include's argument alone (the form may still change via
+    /// `output_form`).
+    Keep {
+        #[serde(default)]
+        output_form: Option<OutputForm>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Delete the entire `#include` line.
+    Remove {
+        #[serde(default)]
+        keep_blank_line: Option<bool>,
+        #[serde(default)]
+        keep_trailing_comment: Option<bool>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Wrap the include line in `//` (default) or `/* */` delimiters.
+    CommentOut {
+        #[serde(default)]
+        style: Option<CommentStyle>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Report a user-facing error for the matched include. Exit code 2.
+    Error {
+        #[serde(default)]
+        message: Option<String>,
+    },
+}
+
+/// Trailing-comment configuration.
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawTrailingComment {
+    pub transform: Option<RawTrailingTransform>,
+    /// Literal text to append to the include line when there is no
+    /// trailing comment after action evaluation. The user writes the full
+    /// comment text (including delimiters and leading whitespace).
+    pub append_if_absent: Option<String>,
+}
+
+/// Trailing-comment transform: matches an existing comment, then runs an
+/// action over it.
+#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawTrailingTransform {
+    pub match_styles: Option<Vec<CommentStyle>>,
+    pub content_regex: Option<String>,
+    pub action: Option<RawTrailingAction>,
+}
+
+/// The action a trailing-comment transform runs on its match.
+#[derive(Debug, Deserialize, Clone, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RawTrailingAction {
+    /// Replace the comment body with `with`.
+    Replace {
+        with: String,
+        #[serde(default)]
+        output_style: Option<OutputCommentStyle>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Keep the comment body; only `output_style` may change.
+    Keep {
+        #[serde(default)]
+        output_style: Option<OutputCommentStyle>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Remove the trailing comment entirely.
+    Remove {
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Report a user-facing error when the transform matches.
+    Error {
+        #[serde(default)]
+        message: Option<String>,
+    },
+}
+
 /// A file that has been loaded into memory, paired with its on-disk path.
-/// `discover` produces a sequence of these.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub path: std::path::PathBuf,
     pub raw: RawConfig,
 }
 
-/// Parse the contents of a single `inclean.toml` text. Path-aware errors
-/// (line + column) are bubbled up via `anyhow`.
+/// Parse the contents of a single `inclean.toml`. Path-aware errors
+/// (line + column) bubble up via `anyhow`.
 pub fn parse(text: &str, source_path: &std::path::Path) -> anyhow::Result<RawConfig> {
     toml::from_str::<RawConfig>(text).map_err(|err| {
         anyhow::anyhow!(
@@ -224,9 +266,8 @@ pub fn parse(text: &str, source_path: &std::path::Path) -> anyhow::Result<RawCon
     })
 }
 
-/// Helper used by tests and by other passes to look up rules by name across
-/// a set of loaded configs. Returns an error on duplicate names because
-/// rule names must be globally unique.
+/// Index rules by name across `configs`. Returns an error on duplicate
+/// names — rule names are globally unique.
 pub fn index_rules_by_name<'a, I>(configs: I) -> anyhow::Result<BTreeMap<String, RuleLocator<'a>>>
 where
     I: IntoIterator<Item = &'a LoadedConfig>,
@@ -254,8 +295,8 @@ where
     Ok(by_name)
 }
 
-/// Where a rule was defined, used for error messages and for the resolved
-/// rule-name -> rule lookup table.
+/// Where a rule was defined; used for error messages and the by-name
+/// lookup table.
 #[derive(Debug, Clone, Copy)]
 pub struct RuleLocator<'a> {
     pub config_path: &'a std::path::Path,
@@ -280,14 +321,19 @@ mod tests {
     }
 
     #[test]
-    fn project_root_round_trips() {
+    fn project_block_round_trips() {
         let cfg = parse_str(
             r#"
             [project]
             root = "src"
+            version = "0.3.0"
+            min_inclean_version = "0.3.0"
             "#,
         );
-        assert_eq!(cfg.project.unwrap().root.unwrap(), "src");
+        let p = cfg.project.unwrap();
+        assert_eq!(p.root.unwrap(), "src");
+        assert_eq!(p.version.unwrap(), "0.3.0");
+        assert_eq!(p.min_inclean_version.unwrap(), "0.3.0");
     }
 
     #[test]
@@ -319,10 +365,7 @@ mod tests {
         )
         .unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("sources"),
-            "should mention rejected field: {msg}"
-        );
+        assert!(msg.contains("sources"));
     }
 
     #[test]
@@ -335,102 +378,199 @@ mod tests {
         );
         assert_eq!(cfg.rules.len(), 1);
         assert_eq!(cfg.rules[0].name, "base");
-        assert!(cfg.rules[0].extends.is_none());
+        assert!(cfg.rules[0].copied_from.is_none());
         assert!(cfg.rules[0].action.is_none());
     }
 
     #[test]
-    fn full_rule_with_inline_action() {
+    fn full_rule_with_resolve_action() {
         let cfg = parse_str(
             r#"
             [[rule]]
             name = "base"
-            paths = ["src/**", "include/**"]
-            extensions = ["@std.all_extensions"]
-            forms = ["quote"]
-            match = '^([^/]+\.h)$'
-            allowed_include_dirs = ["include"]
-            original_include_dirs = ["src", "src/internal"]
-            action = { type = "rewrite", to = "mylib/internal/${1}", form = "quote" }
+            file_paths = ["src/**", "include/**"]
+            file_suffixes = ["@std.c.extensions"]
+            match_forms = ["quote"]
+            include_match = ["**/foo.h"]
+            include_directories = ["src/internal"]
+            action = { type = "resolve", relative_to = "include" }
             "#,
         );
         let r = &cfg.rules[0];
-        assert_eq!(r.paths.as_ref().unwrap().len(), 2);
-        assert_eq!(r.forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
-        assert_eq!(r.match_regex.as_deref(), Some(r"^([^/]+\.h)$"));
+        assert_eq!(r.file_paths.as_ref().unwrap().len(), 2);
+        assert_eq!(r.match_forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
+        assert_eq!(
+            r.include_match.as_ref().unwrap(),
+            &vec!["**/foo.h".to_string()]
+        );
         match r.action.as_ref().unwrap() {
-            RawAction::Rewrite { to, form } => {
-                assert_eq!(to, "mylib/internal/${1}");
-                assert_eq!(*form, Some(OutputForm::Quote));
+            RawAction::Resolve {
+                relative_to,
+                output_form,
+                ..
+            } => {
+                assert_eq!(relative_to, "include");
+                assert!(output_form.is_none());
             }
-            _ => panic!("expected rewrite action"),
+            _ => panic!("expected resolve action"),
         }
     }
 
     #[test]
-    fn auto_action_defaults_are_none_at_parse_time() {
-        // Parsing leaves sub-fields as None; defaulting happens later in the
-        // pipeline. This makes "user wrote nothing" distinguishable from
-        // "user wrote default", which inheritance needs.
+    fn copied_from_field_parses() {
         let cfg = parse_str(
             r#"
             [[rule]]
             name = "base"
-            action = { type = "auto" }
+
+            [[rule]]
+            name = "child"
+            copied_from = "base"
+            "#,
+        );
+        assert_eq!(cfg.rules[1].copied_from.as_deref(), Some("base"));
+    }
+
+    #[test]
+    fn all_six_action_variants_parse() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r1"
+            action = { type = "resolve", relative_to = "${current_file}" }
+
+            [[rule]]
+            name = "r2"
+            action = { type = "replace", with = "x" }
+
+            [[rule]]
+            name = "r3"
+            action = { type = "keep" }
+
+            [[rule]]
+            name = "r4"
+            action = { type = "remove" }
+
+            [[rule]]
+            name = "r5"
+            action = { type = "comment_out" }
+
+            [[rule]]
+            name = "r6"
+            action = { type = "error", message = "no" }
+            "#,
+        );
+        assert!(matches!(
+            cfg.rules[0].action.as_ref().unwrap(),
+            RawAction::Resolve { .. }
+        ));
+        assert!(matches!(
+            cfg.rules[1].action.as_ref().unwrap(),
+            RawAction::Replace { .. }
+        ));
+        assert!(matches!(
+            cfg.rules[2].action.as_ref().unwrap(),
+            RawAction::Keep { .. }
+        ));
+        assert!(matches!(
+            cfg.rules[3].action.as_ref().unwrap(),
+            RawAction::Remove { .. }
+        ));
+        assert!(matches!(
+            cfg.rules[4].action.as_ref().unwrap(),
+            RawAction::CommentOut { .. }
+        ));
+        assert!(matches!(
+            cfg.rules[5].action.as_ref().unwrap(),
+            RawAction::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn comment_out_style_renders_as_slashes() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r"
+            action = { type = "comment_out", style = "/**/" }
             "#,
         );
         match cfg.rules[0].action.as_ref().unwrap() {
-            RawAction::Auto { relative_to, form } => {
-                assert!(relative_to.is_none());
-                assert!(form.is_none());
+            RawAction::CommentOut { style, .. } => {
+                assert_eq!(*style, Some(CommentStyle::Block));
             }
-            _ => panic!("expected auto"),
+            _ => panic!("expected comment_out"),
         }
     }
 
     #[test]
-    fn error_action_requires_message() {
-        let err = toml::from_str::<RawConfig>(
-            r#"
-            [[rule]]
-            name = "x"
-            action = { type = "error" }
-            "#,
-        )
-        .unwrap_err();
-        assert!(format!("{err}").contains("message"));
-    }
-
-    #[test]
-    fn match_resolved_parses_known_fields() {
+    fn suppression_block_round_trips() {
         let cfg = parse_str(
             r#"
             [[rule]]
-            name = "x"
-            match_resolved = { under = "src/internal", match = '\.h$' }
+            name = "r"
+            suppression_comments_regex = {
+                block_start = "^USER CODE BEGIN.*$",
+                block_end = "^USER CODE END.*$",
+                line = "^inclean: skip$",
+            }
             "#,
         );
-        let m = cfg.rules[0].match_resolved.as_ref().unwrap();
-        assert_eq!(m.under.as_deref(), Some("src/internal"));
-        assert_eq!(m.path_regex.as_deref(), Some(r"\.h$"));
+        let s = cfg.rules[0].suppression_comments_regex.as_ref().unwrap();
+        assert_eq!(s.block_start.as_deref(), Some("^USER CODE BEGIN.*$"));
+        assert_eq!(s.block_end.as_deref(), Some("^USER CODE END.*$"));
+        assert_eq!(s.line.as_deref(), Some("^inclean: skip$"));
     }
 
     #[test]
-    fn match_resolved_rejects_unknown_fields() {
+    fn trailing_comment_transform_parses() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = {
+                transform = {
+                    match_styles = ["//"],
+                    content_regex = "^TODO.*$",
+                    action = { type = "replace", with = "FIXED" },
+                },
+                append_if_absent = " // IWYU pragma: export",
+            }
+            "#,
+        );
+        let tc = cfg.rules[0].trailing_comment.as_ref().unwrap();
+        let t = tc.transform.as_ref().unwrap();
+        assert_eq!(
+            t.match_styles.as_ref().unwrap(),
+            &vec![CommentStyle::Line]
+        );
+        assert_eq!(t.content_regex.as_deref(), Some("^TODO.*$"));
+        assert!(matches!(
+            t.action.as_ref().unwrap(),
+            RawTrailingAction::Replace { .. }
+        ));
+        assert_eq!(
+            tc.append_if_absent.as_deref(),
+            Some(" // IWYU pragma: export")
+        );
+    }
+
+    #[test]
+    fn unknown_action_field_is_rejected() {
         let err = parse(
             r#"
             [[rule]]
-            name = "x"
-            match_resolved = { kind = "exact" }
+            name = "r"
+            action = { type = "resolve", relative_to = ".", bogus = 1 }
             "#,
             Path::new("t.toml"),
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("kind"));
+        assert!(format!("{err:#}").contains("bogus"));
     }
 
     #[test]
-    fn duplicate_rule_names_across_configs_are_rejected() {
+    fn duplicate_rule_names_are_rejected() {
         let a = LoadedConfig {
             path: "/proj/inclean.toml".into(),
             raw: parse_str(
@@ -451,130 +591,5 @@ mod tests {
         };
         let err = index_rules_by_name([&a, &b]).unwrap_err();
         assert!(format!("{err}").contains("duplicate rule name"));
-    }
-
-    #[test]
-    fn trailing_comment_shortcut_parses() {
-        let cfg = parse_str(
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = "note"
-            "#,
-        );
-        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Shortcut(s) => assert_eq!(s, "note"),
-            _ => panic!("expected shortcut"),
-        }
-    }
-
-    #[test]
-    fn trailing_comment_full_form_parses_all_fields() {
-        let cfg = parse_str(
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = { match = "^$", to = "X", form = "block", spacing = 4 }
-            "#,
-        );
-        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Full(f) => {
-                assert_eq!(f.match_regex.as_deref(), Some("^$"));
-                assert_eq!(f.to.as_deref(), Some("X"));
-                assert_eq!(f.form, Some(TrailingForm::Block));
-                assert_eq!(f.spacing, Some(4));
-            }
-            _ => panic!("expected full"),
-        }
-    }
-
-    #[test]
-    fn trailing_comment_form_variants_parse() {
-        for (name, expected) in [
-            ("line", TrailingForm::Line),
-            ("block", TrailingForm::Block),
-            ("preserve", TrailingForm::Preserve),
-        ] {
-            let body = format!(
-                r#"
-                [[rule]]
-                name = "r"
-                trailing_comment = {{ to = "X", form = "{name}" }}
-                "#
-            );
-            let cfg = parse_str(&body);
-            match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-                RawTrailingComment::Full(f) => assert_eq!(f.form, Some(expected)),
-                _ => panic!("expected full"),
-            }
-        }
-    }
-
-    #[test]
-    fn trailing_comment_full_form_minimal_to() {
-        let cfg = parse_str(
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = { to = "X" }
-            "#,
-        );
-        match cfg.rules[0].trailing_comment.as_ref().unwrap() {
-            RawTrailingComment::Full(f) => {
-                assert_eq!(f.to.as_deref(), Some("X"));
-                assert!(f.match_regex.is_none());
-                assert!(f.form.is_none());
-                assert!(f.spacing.is_none());
-            }
-            _ => panic!("expected full"),
-        }
-    }
-
-    #[test]
-    fn trailing_comment_legacy_policy_field_is_rejected() {
-        // The old `policy` / `text` fields have been replaced; surfacing them
-        // as unknown ensures users get a clear migration error rather than a
-        // silently ignored field.
-        let err = parse(
-            r#"
-            [[rule]]
-            name = "r"
-            trailing_comment = { text = "X", policy = "prepend" }
-            "#,
-            Path::new("t.toml"),
-        )
-        .unwrap_err();
-        let msg = format!("{err:#}");
-        // toml's "unknown field" error mentions at least one of the rejected keys.
-        assert!(
-            msg.contains("policy") || msg.contains("text") || msg.contains("unknown field"),
-            "expected unknown-field error mentioning policy/text, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn unique_rule_names_across_configs_are_accepted() {
-        let a = LoadedConfig {
-            path: "/proj/inclean.toml".into(),
-            raw: parse_str(
-                r#"
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-        };
-        let b = LoadedConfig {
-            path: "/proj/src/inclean.toml".into(),
-            raw: parse_str(
-                r#"
-                [[rule]]
-                name = "internal"
-                extends = "base"
-                "#,
-            ),
-        };
-        let map = index_rules_by_name([&a, &b]).unwrap();
-        assert!(map.contains_key("base"));
-        assert!(map.contains_key("internal"));
     }
 }
