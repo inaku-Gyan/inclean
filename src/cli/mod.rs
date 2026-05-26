@@ -7,7 +7,6 @@ use crate::pipeline::run::CheckMode;
 mod apply;
 mod check;
 mod diff;
-mod explain;
 mod init;
 mod schema;
 
@@ -43,11 +42,6 @@ enum Command {
         /// Directory containing the root inclean.toml
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
-    },
-    /// Trace which rule matches an include in a given file
-    Explain {
-        file: std::path::PathBuf,
-        include: Option<String>,
     },
     /// Emit (or validate) the JSON Schema for inclean.toml
     Schema(schema::SchemaArgs),
@@ -90,7 +84,6 @@ pub fn run() -> ExitCode {
         Command::Check(args) => check::run(args),
         Command::Diff { dir } => diff::run(dir),
         Command::Apply { dir } => apply::run(dir),
-        Command::Explain { file, include } => explain::run(file, include),
         Command::Schema(args) => schema::run(args),
     };
 

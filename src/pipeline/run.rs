@@ -40,7 +40,6 @@ use crate::lex::include_line::{self, Include};
 use crate::rule::action::{self, Outcome};
 use crate::rule::engine::{self, CandidateMatch, CompiledRule, Match};
 use crate::rule::tree::{self, ConflictKind};
-use crate::validate::allowed as validate_allowed;
 
 /// Which slice of the pipeline to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -556,23 +555,17 @@ fn format_include_text(include: &Include) -> String {
     }
 }
 
-/// Compute the include text as it will exist after the action runs, then
-/// dispatch to `validate::allowed::validate`. Returns `Some(_)` when the
-/// final include cannot resolve under the matched rule's allowed dirs.
+/// `allowed_include_dirs` post-action validation is being removed in v0.3
+/// (the field itself disappears from the schema in M1). During the
+/// transition we keep the call sites but the function is now a no-op so
+/// nothing in the existing pipeline emits a `validation_error`.
 fn run_validation(
-    include: &Include,
-    outcome: &IncludeOutcome,
-    rule: Option<&inherit::ResolvedRule>,
-    project_root: &Path,
+    _include: &Include,
+    _outcome: &IncludeOutcome,
+    _rule: Option<&inherit::ResolvedRule>,
+    _project_root: &Path,
 ) -> Option<String> {
-    let rule = rule?;
-    let (form, content): (IncludeForm, String) = match outcome {
-        IncludeOutcome::Keep { .. } => (include.form, include.content.clone()),
-        IncludeOutcome::Rewritten { new_text, .. } => parse_argument_text(new_text)?,
-        // NoMatch / Matched / Error / EvaluationFailure / Conflict are not validated.
-        _ => return None,
-    };
-    validate_allowed::validate(form, &content, rule, project_root)
+    None
 }
 
 /// Parse a freshly-formatted include argument like `"foo.h"` or `<bar.h>`

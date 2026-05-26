@@ -20,7 +20,6 @@ use regex::Regex;
 use super::engine::Match;
 use crate::config::inherit::{ResolvedAction, ResolvedTrailingComment};
 use crate::config::schema::{AutoRelativeTo, IncludeForm, OutputForm, TrailingForm};
-use crate::index::header_index;
 use crate::lex::include_line::Include;
 
 /// What the engine should do with the matched include.
@@ -107,57 +106,22 @@ pub fn evaluate(
 
 fn evaluate_auto_arg(
     matched: &Match<'_>,
-    include: &Include,
-    file_relpath: &Path,
-    project_root: &Path,
-    relative_to: AutoRelativeTo,
-    form: OutputForm,
+    _include: &Include,
+    _file_relpath: &Path,
+    _project_root: &Path,
+    _relative_to: AutoRelativeTo,
+    _form: OutputForm,
 ) -> Result<String> {
+    // The `auto` action (and its header-resolution dependency on the
+    // deleted `index/header_index`) is being replaced by the new
+    // `resolve` action in M4. Until then, any attempt to evaluate `auto`
+    // fails loudly so callers know they hit dead code rather than a real
+    // mismatch.
     let rule = &matched.rule.rule;
-
-    let resolved = header_index::resolve_in_dirs(
-        project_root,
-        &rule.original_include_dirs,
-        &include.content,
-    )
-    .with_context(|| {
-        format!(
-            "rule `{}` action `auto`: could not resolve include `{}` under original_include_dirs ({:?})",
-            rule.name, include.content, rule.original_include_dirs,
-        )
-    })?;
-
-    let output_path = match relative_to {
-        AutoRelativeTo::Allowed => {
-            let mut found = None;
-            for allowed in &rule.allowed_include_dirs {
-                let allowed_abs = project_root.join(allowed);
-                if let Ok(rel) = resolved.strip_prefix(&allowed_abs) {
-                    found = Some(rel.to_path_buf());
-                    break;
-                }
-            }
-            found.with_context(|| {
-                format!(
-                    "rule `{}` action `auto`: resolved file `{}` is not under any allowed_include_dir ({:?})",
-                    rule.name,
-                    resolved.display(),
-                    rule.allowed_include_dirs,
-                )
-            })?
-        }
-        AutoRelativeTo::FileDir => {
-            let file_dir_abs = match file_relpath.parent() {
-                Some(p) => project_root.join(p),
-                None => project_root.to_path_buf(),
-            };
-            diff_paths(&resolved, &file_dir_abs)
-        }
-    };
-
-    let new_content = output_path.to_string_lossy().replace('\\', "/");
-    let form_out = pick_form(form, include.form);
-    Ok(format_argument(&new_content, form_out))
+    bail!(
+        "rule `{}` action `auto` is disabled during the v0.3 refactor transition (M0–M3)",
+        rule.name,
+    );
 }
 
 /// Combine the action's new argument (if any) with the rule's

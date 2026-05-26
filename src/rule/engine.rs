@@ -22,7 +22,6 @@ use regex::Regex;
 
 use super::glob::PathMatcher;
 use crate::config::inherit::ResolvedRule;
-use crate::index::header_index::{self, UniqueResolution};
 use crate::lex::include_line::Include;
 
 /// A rule with its layer-1+2 matcher and layer-4 regex pre-compiled, plus
@@ -494,44 +493,11 @@ fn evaluate_rule(
     }
 }
 
-fn evaluate_layer5(r: &CompiledRule<'_>, include: &Include, project_root: &Path) -> Layer5 {
-    let Some(spec) = r.rule.match_resolved.as_ref() else {
-        return Layer5::Skipped;
-    };
-    let abs = match header_index::resolve_in_dirs_unique(
-        project_root,
-        &r.rule.original_include_dirs,
-        &include.content,
-    ) {
-        UniqueResolution::None => return Layer5::Unresolved,
-        UniqueResolution::Ambiguous(c) => return Layer5::Ambiguous(c),
-        UniqueResolution::Unique(p) => p,
-    };
-    let relpath = abs
-        .strip_prefix(project_root)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| abs.clone());
-    let rel_str = relpath.to_string_lossy().replace('\\', "/");
-
-    if let Some(under) = &spec.under {
-        let norm_under = under.trim_end_matches('/');
-        let starts = rel_str == norm_under || rel_str.starts_with(&format!("{norm_under}/"));
-        if !starts {
-            return Layer5::FailedConstraint {
-                resolved: relpath,
-                why: format!("not under `{under}`"),
-            };
-        }
-    }
-    if let Some(re) = r.resolved_regex.as_ref() {
-        if !re.is_match(&rel_str) {
-            return Layer5::FailedConstraint {
-                resolved: relpath,
-                why: format!("did not match `{}`", re.as_str()),
-            };
-        }
-    }
-    Layer5::Matched(relpath)
+fn evaluate_layer5(_r: &CompiledRule<'_>, _include: &Include, _project_root: &Path) -> Layer5 {
+    // Layer 5 / match_resolved is being removed in v0.3 (M4). During the
+    // transition (M0–M3) we keep the function signature for the rest of
+    // the engine to compile, but it always reports "skipped".
+    Layer5::Skipped
 }
 
 #[cfg(test)]
