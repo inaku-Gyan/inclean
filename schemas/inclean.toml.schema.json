@@ -6,22 +6,36 @@
   "type": "object",
   "properties": {
     "project": {
+      "$ref": "#/$defs/RawProject"
+    },
+    "rule": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RawRule"
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "project"
+  ],
+  "$defs": {
+    "RawProject": {
       "description": "The `[project]` block.",
       "type": "object",
       "properties": {
         "root": {
-          "description": "Project root, relative to the `inclean.toml` file's directory.\nOmitted or `\".\"` means the file's directory. Resolved by\n`discover::resolve_project_root`.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "Project root, relative to the config file's directory.\nDefaults to `\".\"` (the config's own directory).\nMust be a literal path, not a glob.",
+          "type": "string",
+          "default": "."
         },
         "version": {
-          "description": "CLI version that wrote this config. Written by `inclean config new`\nand never auto-updated thereafter. Required (the discover step\nsurfaces a path-aware missing-field error).",
+          "description": "CLI version that wrote this config.",
           "type": "string"
         },
         "min_inclean_version": {
-          "description": "Minimum CLI version that can parse this config. Written by\n`inclean config new` and never auto-updated thereafter. Required.",
+          "description": "Minimum CLI version that can parse this config.",
           "type": "string"
         }
       },
@@ -31,18 +45,6 @@
         "min_inclean_version"
       ]
     },
-    "rule": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/RawRule"
-      }
-    }
-  },
-  "additionalProperties": false,
-  "required": [
-    "project"
-  ],
-  "$defs": {
     "RawRule": {
       "description": "A single `[[rule]]` entry, before defaulting / copy / constant expansion.\n`Option<_>` distinguishes \"user did not specify\" from \"user wrote empty\".",
       "type": "object",
