@@ -346,18 +346,21 @@ When multiple rules match the same `#include`:
 
 ```sh
 inclean init [PATH]                                          # alias of `config new`
-inclean check [config|unfixable|all] [-c PATH] [-j N] [PATHS...]
-inclean apply [-c PATH] [-j N] [PATHS...]
-inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]
-inclean config check [-c PATH]                               # alias of `check config`
+inclean check                                                # alias of `check all`
+inclean check config    [-c PATH]
+inclean check unfixable [-c PATH] [-j N] [PATHS...]
+inclean check all       [-c PATH] [-j N] [PATHS...]
+inclean apply           [-c PATH] [-j N] [PATHS...]
+inclean diff [-o PATH]  [-c PATH] [-j N] [PATHS...]
+inclean config check    [-c PATH]                            # alias of `check config`
 inclean config new [PATH]                                    # alias of `init`
 inclean config schema [-o PATH] [--check]
 ```
 
-`check` kinds:
+`check` subcommands:
 - `config` — validate the config file only (no source files opened).
 - `unfixable` — only report errors / evaluation failures / conflicts.
-- `all` (default) — report every per-include outcome.
+- `all` — report every per-include outcome. Bare `inclean check` runs this.
 
 `-c PATH` overrides the upward `inclean.toml` walk. `-j N` sets the
 worker thread count (default: CPU count). `PATHS...` restricts

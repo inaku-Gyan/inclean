@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-
-use crate::pipeline::run::CheckMode;
+use clap::{Args, Parser, Subcommand};
 
 mod apply;
 mod check;
@@ -36,42 +34,42 @@ enum Command {
 
 #[derive(Args, Debug)]
 pub struct CheckArgs {
-    /// Which subset of violations to report:
-    ///   config: only validate the inclean.toml (no source files opened);
-    ///   unfixable: errors / evaluation failures / conflicts only;
-    ///   all (default): every per-include outcome including fixable.
-    #[arg(value_enum, default_value_t = CheckKind::All)]
-    pub kind: CheckKind,
+    #[command(subcommand)]
+    pub command: Option<CheckSub>,
+}
 
+#[derive(Subcommand, Debug)]
+pub enum CheckSub {
+    /// Validate the inclean.toml file only — no source files opened.
+    Config(CheckConfigArgs),
+    /// Full pipeline; print only unfixable violations (errors, evaluation
+    /// failures, conflicts).
+    Unfixable(CheckRunArgs),
+    /// Full pipeline; print every per-include outcome. This is what bare
+    /// `inclean check` runs.
+    All(CheckRunArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct CheckConfigArgs {
     /// Path to inclean.toml. When omitted, the CLI walks upward from the
-    /// current directory to find one. `config` mode honors this; `unfixable`
-    /// / `all` modes use it to anchor the project root.
+    /// current directory to find one.
     #[arg(short, long)]
     pub config: Option<PathBuf>,
+}
 
-    /// Parallel worker count. `config` mode ignores this. Default = CPU count.
+#[derive(Args, Debug, Default)]
+pub struct CheckRunArgs {
+    /// Path to inclean.toml. When omitted, the CLI walks upward from the
+    /// current directory to find one.
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
+    /// Parallel worker count. Default = CPU count.
     #[arg(short, long)]
     pub jobs: Option<usize>,
-
     /// Optional file/directory restrictions. When given, only source files
-    /// rooted at one of these paths are processed. `config` mode ignores this.
+    /// rooted at one of these paths are processed.
     pub paths: Vec<PathBuf>,
-}
-
-#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
-pub enum CheckKind {
-    Config,
-    Unfixable,
-    All,
-}
-
-impl CheckKind {
-    pub fn check_mode(self) -> CheckMode {
-        match self {
-            CheckKind::Config => CheckMode::Config,
-            CheckKind::Unfixable | CheckKind::All => CheckMode::Run,
-        }
-    }
 }
 
 // ---- Apply / Diff --------------------------------------------------------
@@ -117,10 +115,7 @@ pub struct ConfigArgs {
 #[derive(Subcommand, Debug)]
 pub enum ConfigSub {
     /// Validate inclean.toml (alias of `check config`).
-    Check {
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-    },
+    Check(CheckConfigArgs),
     /// Generate a starter inclean.toml at the given path (alias of `init`).
     New(InitArgs),
     /// Emit (or validate) the JSON Schema for inclean.toml.
@@ -133,16 +128,16 @@ pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init(args) => init::run(args.path),
-        Command::Check(args) => check::run(args),
+        Command::Check(CheckArgs { command }) => match command {
+            Some(CheckSub::Config(c)) => check::run_config(c.config),
+            Some(CheckSub::Unfixable(r)) => check::run_full(r, check::ReportFilter::UnfixableOnly),
+            Some(CheckSub::All(r)) => check::run_full(r, check::ReportFilter::All),
+            None => check::run_full(CheckRunArgs::default(), check::ReportFilter::All),
+        },
         Command::Apply(args) => apply::run(args),
         Command::Diff(args) => diff::run(args),
         Command::Config(ConfigArgs { command }) => match command {
-            ConfigSub::Check { config } => check::run(CheckArgs {
-                kind: CheckKind::Config,
-                config,
-                jobs: None,
-                paths: vec![],
-            }),
+            ConfigSub::Check(c) => check::run_config(c.config),
             ConfigSub::New(args) => init::run(args.path),
             ConfigSub::Schema(args) => schema::run(args),
         },

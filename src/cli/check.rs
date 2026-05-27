@@ -1,32 +1,42 @@
-//! `inclean check [config|unfixable|all]` — read-only check.
+//! `inclean check {config|unfixable|all}` — read-only check.
 //!
 //! - `config`: parse / validate / run copy resolution only.
 //! - `unfixable`: full pipeline; only print errors / evaluation failures
 //!   / conflicts (everything fixable is silenced).
-//! - `all` (default): full pipeline; print every per-include outcome.
+//! - `all` (default for bare `inclean check`): full pipeline; print every
+//!   per-include outcome.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::{CheckArgs, CheckKind};
-use crate::pipeline::run::{self, IncludeOutcome, Summary};
+use super::CheckRunArgs;
+use crate::pipeline::run::{self, CheckMode, IncludeOutcome, Summary};
 
-pub fn run(args: CheckArgs) -> Result<u8> {
-    let mode = args.kind.check_mode();
+/// `inclean check config` / `inclean config check`. Validates the
+/// inclean.toml alone without opening any source files.
+pub fn run_config(config: Option<PathBuf>) -> Result<u8> {
+    let start_dir = start_dir_for(config.as_deref(), &[]);
+    let summary = run::run(config.as_deref(), &start_dir, &[], None, CheckMode::Config)?;
+    print_config_report(config.as_deref(), &start_dir)?;
+    for w in &summary.warnings {
+        eprintln!("{w}");
+    }
+    Ok(run::summary_exit_code(&summary))
+}
+
+/// `inclean check unfixable` / `inclean check all`. Runs the full
+/// pipeline; the `filter` controls which outcomes are printed.
+pub fn run_full(args: CheckRunArgs, filter: ReportFilter) -> Result<u8> {
     let start_dir = start_dir_for(args.config.as_deref(), &args.paths);
     let summary = run::run(
         args.config.as_deref(),
         &start_dir,
         &args.paths,
         args.jobs,
-        mode,
+        CheckMode::Run,
     )?;
-    match args.kind {
-        CheckKind::Config => print_config_report(args.config.as_deref(), &start_dir)?,
-        CheckKind::Unfixable => print_full_report(&summary, ReportFilter::UnfixableOnly),
-        CheckKind::All => print_full_report(&summary, ReportFilter::All),
-    }
+    print_full_report(&summary, filter);
     for w in &summary.warnings {
         eprintln!("{w}");
     }
@@ -97,7 +107,7 @@ fn print_config_report(
 }
 
 #[derive(Copy, Clone)]
-enum ReportFilter {
+pub enum ReportFilter {
     All,
     UnfixableOnly,
 }
