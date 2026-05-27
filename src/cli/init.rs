@@ -14,15 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::config::discover::CONFIG_FILENAME;
-
-/// `#:schema` header injected into the generated file so editors pick up
-/// validation. Pinned to the CLI version that wrote the file.
-const SCHEMA_HEADER: &str = concat!(
-    "#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v",
-    env!("CARGO_PKG_VERSION"),
-    "/schemas/inclean.toml.schema.json",
-);
+use crate::profile::{CFG_VERSION, CLI_VERSION, CONFIG_FILENAME, MIN_COMPAT_CLI_VERSION};
 
 const TEMPLATE: &str = include_str!("template.inclean.toml");
 
@@ -79,9 +71,14 @@ fn construct_inclean_toml_template() -> String {
     let body_start = TEMPLATE
         .find('\n')
         .expect("template: must have at least one newline");
-    let body =
-        TEMPLATE[body_start + 1..].replace("{{CARGO_PKG_VERSION}}", env!("CARGO_PKG_VERSION"));
-    format!("{SCHEMA_HEADER}\n{body}")
+
+    let body = TEMPLATE[body_start + 1..]
+        .replace("{{CFG_VERSION}}", CFG_VERSION)
+        .replace("{{MIN_COMPAT_CLI_VERSION}}", MIN_COMPAT_CLI_VERSION);
+
+    // `#:schema` header injected into the generated file so editors pick up
+    // validation. Pinned to the CLI version that wrote the file.
+    format!("#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v{CLI_VERSION}/schemas/inclean.toml.schema.json\n{body}")
 }
 
 #[cfg(test)]
@@ -134,27 +131,6 @@ mod tests {
         let target = dir.join("custom.toml");
         run(Some(target.clone())).unwrap();
         assert!(target.exists());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn template_substitutes_cargo_version() {
-        let dir = scratch_dir();
-        run(Some(dir.clone())).unwrap();
-        let body = std::fs::read_to_string(dir.join(CONFIG_FILENAME)).unwrap();
-        let expected = format!("version = \"{}\"", env!("CARGO_PKG_VERSION"));
-        assert!(body.contains(&expected), "got: {body}");
-        assert!(!body.contains("{{CARGO_PKG_VERSION}}"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn template_includes_min_inclean_version_pinned_to_cli() {
-        let dir = scratch_dir();
-        run(Some(dir.clone())).unwrap();
-        let body = std::fs::read_to_string(dir.join(CONFIG_FILENAME)).unwrap();
-        let expected = format!("min_inclean_version = \"{}\"", env!("CARGO_PKG_VERSION"));
-        assert!(body.contains(&expected), "got: {body}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

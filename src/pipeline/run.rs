@@ -43,9 +43,10 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 
 use crate::config::copy::{self, ResolvedRule};
-use crate::config::discover::{self, CONFIG_FILENAME};
+use crate::config::discover;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
+use crate::profile::CONFIG_FILENAME;
 use crate::rule::action::{self, Outcome};
 use crate::rule::engine::{self, CompiledRule};
 
@@ -216,7 +217,6 @@ pub fn run(
     };
     let cfg = discover::load_root_config(&resolved_config_path)?;
     let project_root_abs = discover::resolve_project_root(&resolved_config_path, &cfg.raw.project)?;
-    discover::assert_no_extra_configs(&project_root_abs, &resolved_config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 
     let duplicate_warnings = collect_duplicate_literal_warnings(&cfg);
@@ -973,6 +973,8 @@ fn apply_edits(original: &str, edits: &[(Range<usize>, String)]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::testing::config::MIN_PROJECT_BLOCK;
+
     use super::*;
     use std::fs;
 
@@ -995,12 +997,6 @@ mod tests {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, body).unwrap();
     }
-    fn min_inclean_toml() -> String {
-        format!(
-            "[project]\nroot = \".\"\nversion = \"{v}\"\nmin_inclean_version = \"{v}\"\n",
-            v = env!("CARGO_PKG_VERSION"),
-        )
-    }
 
     #[test]
     fn config_mode_skips_source_scan() {
@@ -1009,7 +1005,7 @@ mod tests {
         touch(
             &root,
             "inclean.toml",
-            &format!("{}\n[[rule]]\nname = \"base\"\n", min_inclean_toml()),
+            &format!("{}\n[[rule]]\nname = \"base\"\n", &*MIN_PROJECT_BLOCK),
         );
         let summary = run(None, &root, &[], None, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
@@ -1027,7 +1023,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1049,7 +1045,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1074,7 +1070,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\ninclude_match = [\"old.h\"]\naction = {{ type = \"error\", message = \"deprecated\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1096,7 +1092,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"A/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"B/foo.h\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1123,7 +1119,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1159,7 +1155,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
@@ -1184,7 +1180,7 @@ mod tests {
             "inclean.toml",
             &format!(
                 "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
-                min_inclean_toml()
+                &*MIN_PROJECT_BLOCK
             ),
         );
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();

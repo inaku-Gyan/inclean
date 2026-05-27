@@ -16,7 +16,7 @@
 # "*" never crosses "/"; "**" does.
 # =============================================================================
 #
-# Schema (v0.3) cheat-sheet
+# Schema (v{{MIN_COMPAT_CLI_VERSION}}) cheat-sheet
 # -------------------------
 # Each rule has up to 4 matching layers (all must pass):
 #   1. file_paths   — globset patterns relative to the project root
@@ -101,11 +101,11 @@
 # Required. - CLI version that wrote this config. Used in the two-direction
 #             compatibility check; written by `inclean init` once and
 #             never auto-updated thereafter.
-version = "{{CARGO_PKG_VERSION}}"
+version = "{{CFG_VERSION}}"
 
 # Required. - Lowest inclean version that can correctly parse this config.
 #             Also written once; never auto-updated.
-min_inclean_version = "{{CARGO_PKG_VERSION}}"
+min_inclean_version = "{{MIN_COMPAT_CLI_VERSION}}"
 
 
 # ----------------------------------------------------------------------------

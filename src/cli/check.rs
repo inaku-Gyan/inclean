@@ -79,7 +79,6 @@ fn print_config_report(
     let cfg = discover::load_root_config(&config_path)?;
     let project = &cfg.raw.project;
     let project_root = discover::resolve_project_root(&config_path, project)?;
-    discover::assert_no_extra_configs(&project_root, &config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
     println!(
         "ok: loaded {}, project root = {} ({} rule(s))",
