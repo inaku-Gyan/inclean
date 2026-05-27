@@ -27,11 +27,11 @@ pub fn run(path: Option<PathBuf>) -> Result<u8> {
             target.display()
         );
     }
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     let contents = construct_inclean_toml_template();
     std::fs::write(&target, contents).with_context(|| format!("writing {}", target.display()))?;
@@ -78,7 +78,9 @@ fn construct_inclean_toml_template() -> String {
 
     // `#:schema` header injected into the generated file so editors pick up
     // validation. Pinned to the CLI version that wrote the file.
-    format!("#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v{CLI_VERSION}/schemas/inclean.toml.schema.json\n{body}")
+    format!(
+        "#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v{CLI_VERSION}/schemas/inclean.toml.schema.json\n{body}"
+    )
 }
 
 #[cfg(test)]

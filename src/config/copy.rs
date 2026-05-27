@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use super::constants;
 use super::schema::{
@@ -631,12 +631,12 @@ fn build_trailing(
         "trailing_comment.append_if_absent",
         has_parent,
     )?;
-    if let Some(s) = append_if_absent.as_deref() {
-        if s.contains('\n') || s.contains('\r') {
-            bail!(
-                "{ctx}: `trailing_comment.append_if_absent` must not contain line terminators (\\n / \\r); it is appended onto the same line as the include"
-            );
-        }
+    if let Some(s) = append_if_absent.as_deref()
+        && (s.contains('\n') || s.contains('\r'))
+    {
+        bail!(
+            "{ctx}: `trailing_comment.append_if_absent` must not contain line terminators (\\n / \\r); it is appended onto the same line as the include"
+        );
     }
     Ok(ResolvedTrailingComment {
         transform,

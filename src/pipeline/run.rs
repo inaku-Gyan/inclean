@@ -812,23 +812,23 @@ struct FinalLineParts {
 
 fn parse_final_line(s: &str) -> FinalLineParts {
     let t = s.trim();
-    if let Some(rest) = t.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            return FinalLineParts {
-                form: "\"".to_string(),
-                path: rest[..end].to_string(),
-                trailing: rest[end + 1..].trim().to_string(),
-            };
-        }
+    if let Some(rest) = t.strip_prefix('"')
+        && let Some(end) = rest.find('"')
+    {
+        return FinalLineParts {
+            form: "\"".to_string(),
+            path: rest[..end].to_string(),
+            trailing: rest[end + 1..].trim().to_string(),
+        };
     }
-    if let Some(rest) = t.strip_prefix('<') {
-        if let Some(end) = rest.find('>') {
-            return FinalLineParts {
-                form: "<".to_string(),
-                path: rest[..end].to_string(),
-                trailing: rest[end + 1..].trim().to_string(),
-            };
-        }
+    if let Some(rest) = t.strip_prefix('<')
+        && let Some(end) = rest.find('>')
+    {
+        return FinalLineParts {
+            form: "<".to_string(),
+            path: rest[..end].to_string(),
+            trailing: rest[end + 1..].trim().to_string(),
+        };
     }
     FinalLineParts {
         form: "M".to_string(),

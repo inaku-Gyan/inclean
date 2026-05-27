@@ -15,7 +15,7 @@
 
 use std::sync::LazyLock;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Marker for whether a constant is naturally list-shaped or scalar.
 #[derive(Debug, Clone)]
@@ -33,15 +33,15 @@ pub fn lookup(name: &str) -> Option<Value> {
     if let Some(list) = lookup_list(name) {
         return Some(Value::List(list));
     }
-    if let Some(base) = name.strip_suffix("_or") {
-        if let Some(list) = lookup_list(base) {
-            let joined = list
-                .iter()
-                .map(|item| regex::escape(item))
-                .collect::<Vec<_>>()
-                .join("|");
-            return Some(Value::String(format!("(?:{joined})")));
-        }
+    if let Some(base) = name.strip_suffix("_or")
+        && let Some(list) = lookup_list(base)
+    {
+        let joined = list
+            .iter()
+            .map(|item| regex::escape(item))
+            .collect::<Vec<_>>()
+            .join("|");
+        return Some(Value::String(format!("(?:{joined})")));
     }
     None
 }

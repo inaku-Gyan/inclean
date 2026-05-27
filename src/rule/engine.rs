@@ -145,28 +145,28 @@ pub fn compute_suppressed_lines(
         let lineno = idx + 1;
 
         // The `line` regex always wins, regardless of block state.
-        if let Some(re) = &rule.suppression.line {
-            if re.is_match(probe) {
-                suppressed.insert(lineno);
-                continue;
-            }
+        if let Some(re) = &rule.suppression.line
+            && re.is_match(probe)
+        {
+            suppressed.insert(lineno);
+            continue;
         }
 
         if in_block {
             suppressed.insert(lineno);
-            if let Some(re) = &rule.suppression.block_end {
-                if re.is_match(probe) {
-                    in_block = false;
-                }
+            if let Some(re) = &rule.suppression.block_end
+                && re.is_match(probe)
+            {
+                in_block = false;
             }
             continue;
         }
 
-        if let Some(re) = &rule.suppression.block_start {
-            if re.is_match(probe) {
-                in_block = true;
-                suppressed.insert(lineno);
-            }
+        if let Some(re) = &rule.suppression.block_start
+            && re.is_match(probe)
+        {
+            in_block = true;
+            suppressed.insert(lineno);
         }
     }
     suppressed
@@ -230,10 +230,10 @@ pub fn match_all<'a>(
             continue;
         }
         // Suppression (per rule).
-        if let Some(set) = suppressed_per_rule.get(&r.rule.name) {
-            if set.contains(&include.line) {
-                continue;
-            }
+        if let Some(set) = suppressed_per_rule.get(&r.rule.name)
+            && set.contains(&include.line)
+        {
+            continue;
         }
         // Layer 3.
         if !r.rule.match_forms.contains(&include.form) {

@@ -57,10 +57,10 @@ pub(super) fn start_dir_for(config: Option<&std::path::Path>, paths: &[PathBuf])
         if first.is_dir() {
             return first.clone();
         }
-        if let Some(parent) = first.parent() {
-            if !parent.as_os_str().is_empty() {
-                return parent.to_path_buf();
-            }
+        if let Some(parent) = first.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            return parent.to_path_buf();
         }
     }
     PathBuf::from(".")

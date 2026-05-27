@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 
 /// Top-level shape of a single `inclean.toml`.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]

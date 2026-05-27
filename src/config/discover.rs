@@ -143,7 +143,7 @@ pub fn resolve_project_root(config_path: &Path, project: &RawProject) -> Result<
 mod tests {
     use crate::{
         profile::{CFG_VERSION, MIN_COMPAT_CLI_VERSION},
-        utils::testing::config::{project_block, MIN_PROJECT_BLOCK},
+        utils::testing::config::{MIN_PROJECT_BLOCK, project_block},
     };
 
     use super::*;

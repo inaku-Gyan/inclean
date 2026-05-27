@@ -415,20 +415,18 @@ fn process_trailing(
     // Run the transform (if configured) and the style matches.
     if let (Some(transform), Some(content_re)) =
         (&tc.transform, rule.trailing_content_regex.as_ref())
+        && let Some(s) = style
+        && transform.match_styles.contains(&s)
     {
-        if let Some(s) = style {
-            if transform.match_styles.contains(&s) {
-                let body = extract_comment_body(original_trailing, s);
-                if content_re.is_match(&body) {
-                    match run_transform_action(rule, &transform.action, s, &body, ctx) {
-                        Ok(Some(text)) => return Ok(text),
-                        Ok(None) => {
-                            // Removed; fall through to append_if_absent.
-                            return apply_append_if_absent(tc, "");
-                        }
-                        Err(o) => return Err(o),
-                    }
+        let body = extract_comment_body(original_trailing, s);
+        if content_re.is_match(&body) {
+            match run_transform_action(rule, &transform.action, s, &body, ctx) {
+                Ok(Some(text)) => return Ok(text),
+                Ok(None) => {
+                    // Removed; fall through to append_if_absent.
+                    return apply_append_if_absent(tc, "");
                 }
+                Err(o) => return Err(o),
             }
         }
     }
@@ -506,10 +504,10 @@ fn apply_append_if_absent(
     tc: &ResolvedTrailingComment,
     existing_trailing: &str,
 ) -> std::result::Result<String, Outcome> {
-    if existing_trailing.is_empty() {
-        if let Some(text) = &tc.append_if_absent {
-            return Ok(text.clone());
-        }
+    if existing_trailing.is_empty()
+        && let Some(text) = &tc.append_if_absent
+    {
+        return Ok(text.clone());
     }
     Ok(existing_trailing.to_string())
 }

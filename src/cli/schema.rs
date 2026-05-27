@@ -44,11 +44,12 @@ pub fn run(args: SchemaArgs) -> Result<u8> {
     match args.output {
         Some(path) => {
             let target = resolve_write_path(&path);
-            if let Some(parent) = target.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("creating {}", parent.display()))?;
-                }
+            if let Some(parent) = target.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
             }
             std::fs::write(&target, &rendered)
                 .with_context(|| format!("writing {}", target.display()))?;
