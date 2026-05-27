@@ -36,7 +36,7 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked
 
       - name: Schema drift check
-        run: cargo run --locked --quiet -- schema --check schemas/inclean.toml.schema.json
+        run: cargo run --locked --quiet -- config schema --check -o schemas/inclean.toml.schema.json
 
   test:
     needs: lint
