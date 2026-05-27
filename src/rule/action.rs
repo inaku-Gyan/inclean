@@ -33,7 +33,7 @@ use super::engine::CompiledRule;
 use crate::config::copy::{ResolvedAction, ResolvedTrailingAction, ResolvedTrailingComment};
 use crate::config::schema::{CommentStyle, IncludeForm, OutputCommentStyle, OutputForm};
 use crate::lex::include_line::Include;
-use crate::util::PathSlashExt;
+use crate::util::PathExt;
 
 /// The result of evaluating one rule's action against one include.
 #[derive(Debug, Clone, PartialEq, Eq)]

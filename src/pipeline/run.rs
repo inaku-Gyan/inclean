@@ -533,7 +533,7 @@ pub fn render_diff(summary: &Summary) -> String {
         let Some(new) = &f.rewritten else { continue };
         let diff = TextDiff::from_lines(&f.original, new);
 
-        use crate::util::PathSlashExt;
+        use crate::util::PathExt;
         let path_str = f.relpath.to_slash();
         let a_label = format!("a/{}", path_str);
         let b_label = format!("b/{}", path_str);

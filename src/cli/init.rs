@@ -28,7 +28,7 @@ const TEMPLATE: &str = include_str!("template.inclean.toml");
 
 pub fn run(path: Option<PathBuf>) -> Result<u8> {
     let path = path.unwrap_or_else(|| PathBuf::from("."));
-    let target = resolve_target(&path)?;
+    let target = resolve_target(&path);
     if target.exists() {
         anyhow::bail!(
             "{} already exists; remove it first or pick a different path",
@@ -58,31 +58,21 @@ pub fn run(path: Option<PathBuf>) -> Result<u8> {
 }
 
 /// Apply the PATH-resolution rules from the module docstring.
-fn resolve_target(path: &Path) -> Result<PathBuf> {
+fn resolve_target(path: &Path) -> PathBuf {
     if path.is_dir() {
-        return Ok(path.join(CONFIG_FILENAME));
+        return path.join(CONFIG_FILENAME);
     }
     if path.is_file() {
-        return Ok(path.to_path_buf());
+        return path.to_path_buf();
     }
     // Doesn't exist yet — decide between "create file at this path" vs
     // "treat as new directory + create CONFIG_FILENAME inside".
-    let looks_like_dir = path_looks_like_directory(path);
-    if looks_like_dir {
-        Ok(path.join(CONFIG_FILENAME))
+    use crate::util::PathExt;
+    if path.looks_like_directory() {
+        path.join(CONFIG_FILENAME)
     } else {
-        Ok(path.to_path_buf())
+        path.to_path_buf()
     }
-}
-
-fn path_looks_like_directory(path: &Path) -> bool {
-    // Trailing slash → directory.
-    let as_str = path.as_os_str().to_string_lossy();
-    if as_str.ends_with('/') || as_str.ends_with(std::path::MAIN_SEPARATOR) {
-        return true;
-    }
-    // No extension → directory (e.g. `lib`, `foo/bar`).
-    path.extension().is_none()
 }
 
 fn construct_inclean_toml_template() -> String {
