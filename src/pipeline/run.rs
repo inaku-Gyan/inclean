@@ -66,6 +66,13 @@ pub struct Summary {
     pub files: Vec<FileResult>,
     pub conflicts: Vec<Conflict>,
     pub skipped: Vec<SkippedFile>,
+    /// Every unfixable violation surfaced during the run. Populated for
+    /// `apply` / `diff` / `check unfixable` / `check all` reporting.
+    pub unfixable: Vec<UnfixableDetail>,
+    /// Non-fatal advisory messages (e.g. duplicate-literal-element warnings
+    /// in config check; per-line lex parse skip notes). Always printed; do
+    /// not affect exit codes.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -105,13 +112,32 @@ pub enum IncludeOutcome {
         edit_range: Range<usize>,
         new_text: String,
     },
-    /// One of the matched rules produced an `action.error` (or trailing
-    /// transform error). Exit code 2.
+    /// One of the matched rules produced an `action.error`. Exit code 2.
     Error { rule: String, message: String },
+    /// One of the matched rules' `trailing_comment.transform.action`
+    /// produced an `error`. Exit code 3 (unfixable).
+    TrailingCommentError { rule: String, message: String },
     /// Action evaluation failed (resolve missed, multiple matches, etc.).
     EvaluationFailure { rule: String, message: String },
     /// Matched rules disagreed on the final text. Exit code 3.
-    Conflict { rule_outputs: Vec<(String, String)> },
+    Conflict {
+        rule_outputs: Vec<(String, String)>,
+        differing_aspects: Vec<DiffAspect>,
+    },
+}
+
+/// Which sub-part of the final include line differs across the rules
+/// that produced a conflict. Computed at conflict-detection time by
+/// parsing each rule's candidate final-line text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffAspect {
+    /// Path inside the quotes / angles.
+    IncludePath,
+    /// Quote vs angle (Macro forms are excluded from rewriting and
+    /// won't reach conflict detection).
+    OutputForm,
+    /// Trailing comment text (after the close-quote / `>`).
+    TrailingComment,
 }
 
 /// A conflict surfaced for a specific include (final-text disagreement).
@@ -122,6 +148,35 @@ pub struct Conflict {
     pub include_text: String,
     /// Per-rule final-line text (the bytes that rule would have written).
     pub rule_outputs: Vec<(String, String)>,
+    pub differing_aspects: Vec<DiffAspect>,
+}
+
+/// A categorized unfixable detail aggregated for the apply / diff / check
+/// reports. Per refactor.md §"inclean apply": "文件路径、行号、原始
+/// #include 行、违规类型、触发的规则名称".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnfixableKind {
+    Error,
+    EvaluationFailure,
+    Conflict,
+    TrailingCommentError,
+}
+
+#[derive(Debug)]
+pub struct UnfixableDetail {
+    pub file_relpath: PathBuf,
+    pub line: usize,
+    /// Original `#include` line in the source file, including the
+    /// trailing comment (no terminating newline).
+    pub original_line: String,
+    pub kind: UnfixableKind,
+    /// `(rule_name, final_text)` for every participating rule. For
+    /// `Conflict`, all participating rules with their candidate final
+    /// texts. For the other kinds, the single triggering rule with
+    /// `final_text = None`.
+    pub rules: Vec<(String, Option<String>)>,
+    pub differing_aspects: Vec<DiffAspect>,
+    pub message: Option<String>,
 }
 
 // ---- Entry point ---------------------------------------------------------
@@ -168,6 +223,8 @@ pub fn run(
     discover::assert_no_extra_configs(&project_root_abs, &resolved_config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 
+    let duplicate_warnings = collect_duplicate_literal_warnings(&cfg);
+
     if mode == CheckMode::Config {
         return Ok(Summary {
             mode,
@@ -175,6 +232,8 @@ pub fn run(
             files: Vec::new(),
             conflicts: Vec::new(),
             skipped: Vec::new(),
+            unfixable: Vec::new(),
+            warnings: duplicate_warnings,
         });
     }
 
@@ -209,18 +268,73 @@ pub fn run(
     let mut files: Vec<FileResult> = Vec::with_capacity(per_file.len());
     let mut skipped: Vec<SkippedFile> = Vec::new();
     let mut conflicts: Vec<Conflict> = Vec::new();
+    let mut unfixable: Vec<UnfixableDetail> = Vec::new();
     for res in per_file {
         match res {
             Ok(file_result) => {
-                // Pull conflicts out of include_results into the top-level vec.
+                // Pull conflicts + unfixable details out of include_results.
                 for r in &file_result.include_results {
-                    if let IncludeOutcome::Conflict { rule_outputs } = &r.outcome {
-                        conflicts.push(Conflict {
-                            file_relpath: file_result.relpath.clone(),
-                            include_line: r.include.line,
-                            include_text: format_include_text(&r.include),
-                            rule_outputs: rule_outputs.clone(),
-                        });
+                    let original_line =
+                        source_line_for(&file_result.original, r.include.line);
+                    match &r.outcome {
+                        IncludeOutcome::Conflict {
+                            rule_outputs,
+                            differing_aspects,
+                        } => {
+                            conflicts.push(Conflict {
+                                file_relpath: file_result.relpath.clone(),
+                                include_line: r.include.line,
+                                include_text: format_include_text(&r.include),
+                                rule_outputs: rule_outputs.clone(),
+                                differing_aspects: differing_aspects.clone(),
+                            });
+                            unfixable.push(UnfixableDetail {
+                                file_relpath: file_result.relpath.clone(),
+                                line: r.include.line,
+                                original_line,
+                                kind: UnfixableKind::Conflict,
+                                rules: rule_outputs
+                                    .iter()
+                                    .map(|(n, t)| (n.clone(), Some(t.clone())))
+                                    .collect(),
+                                differing_aspects: differing_aspects.clone(),
+                                message: None,
+                            });
+                        }
+                        IncludeOutcome::Error { rule, message } => {
+                            unfixable.push(UnfixableDetail {
+                                file_relpath: file_result.relpath.clone(),
+                                line: r.include.line,
+                                original_line,
+                                kind: UnfixableKind::Error,
+                                rules: vec![(rule.clone(), None)],
+                                differing_aspects: vec![],
+                                message: Some(message.clone()),
+                            });
+                        }
+                        IncludeOutcome::TrailingCommentError { rule, message } => {
+                            unfixable.push(UnfixableDetail {
+                                file_relpath: file_result.relpath.clone(),
+                                line: r.include.line,
+                                original_line,
+                                kind: UnfixableKind::TrailingCommentError,
+                                rules: vec![(rule.clone(), None)],
+                                differing_aspects: vec![],
+                                message: Some(message.clone()),
+                            });
+                        }
+                        IncludeOutcome::EvaluationFailure { rule, message } => {
+                            unfixable.push(UnfixableDetail {
+                                file_relpath: file_result.relpath.clone(),
+                                line: r.include.line,
+                                original_line,
+                                kind: UnfixableKind::EvaluationFailure,
+                                rules: vec![(rule.clone(), None)],
+                                differing_aspects: vec![],
+                                message: Some(message.clone()),
+                            });
+                        }
+                        _ => {}
                     }
                 }
                 files.push(file_result);
@@ -235,20 +349,99 @@ pub fn run(
         files,
         conflicts,
         skipped,
+        unfixable,
+        warnings: duplicate_warnings,
     })
 }
 
-/// Apply rewrites to disk. Refuses if any conflict is present. Files
-/// whose include results include any `Error` / `EvaluationFailure` /
-/// `Conflict` outcome are skipped (no partial writes). Returns the
-/// number of files actually written.
-pub fn apply(summary: &Summary) -> Result<usize> {
-    if !summary.conflicts.is_empty() {
-        anyhow::bail!(
-            "refusing to apply: {} conflict(s) must be resolved first",
-            summary.conflicts.len()
+/// Walk every rule's raw array fields for duplicates among elements the
+/// user typed *literally* in this rule (i.e. excluding any `${copied}`
+/// splat token). Per refactor.md §"inclean config check": `${copied}`
+/// splat-expanded duplicates are intentional and never warn.
+fn collect_duplicate_literal_warnings(cfg: &crate::config::schema::LoadedConfig) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut out: Vec<String> = Vec::new();
+    for raw in &cfg.raw.rules {
+        check_list_dup(&raw.name, "file_paths", raw.file_paths.as_deref(), &mut out);
+        check_list_dup(
+            &raw.name,
+            "file_suffixes",
+            raw.file_suffixes.as_deref(),
+            &mut out,
         );
+        check_list_dup(
+            &raw.name,
+            "include_match",
+            raw.include_match.as_deref(),
+            &mut out,
+        );
+        check_list_dup(
+            &raw.name,
+            "include_directories",
+            raw.include_directories.as_deref(),
+            &mut out,
+        );
+        if let Some(forms) = raw.match_forms.as_ref() {
+            let mut seen = HashSet::new();
+            for f in forms {
+                let key = format!("{f:?}");
+                if !seen.insert(key.clone()) {
+                    out.push(format!(
+                        "warning: rule '{}': duplicate literal element '{}' in match_forms",
+                        raw.name,
+                        format!("{f:?}").to_lowercase(),
+                    ));
+                }
+            }
+        }
     }
+    out
+}
+
+fn check_list_dup(
+    rule_name: &str,
+    field: &str,
+    list: Option<&[String]>,
+    out: &mut Vec<String>,
+) {
+    use std::collections::HashSet;
+    let Some(v) = list else { return };
+    let mut seen: HashSet<&str> = HashSet::new();
+    for elem in v {
+        if elem == "${copied}" {
+            // Splat token: never counted; per-spec the splat-expanded
+            // copies coming from the parent are intentional.
+            continue;
+        }
+        if !seen.insert(elem.as_str()) {
+            out.push(format!(
+                "warning: rule '{rule_name}': duplicate literal element '{elem}' in {field}"
+            ));
+        }
+    }
+}
+
+/// Slice the source's physical line for diagnostics. 1-based line number.
+fn source_line_for(source: &str, line: usize) -> String {
+    if line == 0 {
+        return String::new();
+    }
+    source
+        .lines()
+        .nth(line - 1)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Apply rewrites to disk.
+///
+/// Per refactor.md §"inclean apply": when unfixable violations coexist
+/// with fixable rewrites, the fixable parts are written; files that
+/// contain *any* unfixable outcome (Error / TrailingCommentError /
+/// EvaluationFailure / Conflict) are skipped entirely (no partial
+/// writes per file). The caller (`cli::apply`) then prints a separate
+/// unfixable report from `summary.unfixable`.
+pub fn apply(summary: &Summary) -> Result<usize> {
     let mut written = 0usize;
     for f in &summary.files {
         if file_has_errors(f) {
@@ -267,15 +460,67 @@ pub fn apply(summary: &Summary) -> Result<usize> {
     Ok(written)
 }
 
-fn file_has_errors(f: &FileResult) -> bool {
+pub fn file_has_errors(f: &FileResult) -> bool {
     f.include_results.iter().any(|r| {
         matches!(
             r.outcome,
             IncludeOutcome::Error { .. }
+                | IncludeOutcome::TrailingCommentError { .. }
                 | IncludeOutcome::EvaluationFailure { .. }
                 | IncludeOutcome::Conflict { .. }
         )
     })
+}
+
+/// Render the unfixable report for human consumption. Each entry
+/// includes file path, line, original `#include` line, violation kind,
+/// triggering rule name(s), and (for conflicts) the differing aspects.
+/// Empty string when there are no unfixable entries.
+pub fn render_unfixable_report(summary: &Summary) -> String {
+    if summary.unfixable.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{} unfixable violation(s):\n",
+        summary.unfixable.len()
+    ));
+    for u in &summary.unfixable {
+        let kind = match u.kind {
+            UnfixableKind::Error => "error",
+            UnfixableKind::EvaluationFailure => "evaluation_failure",
+            UnfixableKind::Conflict => "conflict",
+            UnfixableKind::TrailingCommentError => "trailing_comment_error",
+        };
+        out.push_str(&format!(
+            "  {}:{}: {kind}\n",
+            u.file_relpath.display(),
+            u.line
+        ));
+        out.push_str(&format!("    original: {}\n", u.original_line));
+        if let Some(msg) = &u.message {
+            out.push_str(&format!("    message:  {msg}\n"));
+        }
+        for (rule, final_text) in &u.rules {
+            match final_text {
+                Some(text) => out.push_str(&format!("    rule `{rule}` -> {text}\n")),
+                None => out.push_str(&format!("    rule `{rule}`\n")),
+            }
+        }
+        if !u.differing_aspects.is_empty() {
+            let parts: Vec<&str> = u
+                .differing_aspects
+                .iter()
+                .map(|a| match a {
+                    DiffAspect::IncludePath => "include path",
+                    DiffAspect::OutputForm => "output_form",
+                    DiffAspect::TrailingComment => "trailing_comment",
+                })
+                .collect();
+            out.push_str(&format!("    differs in: {}\n", parts.join(", ")));
+        }
+    }
+    out
 }
 
 /// Render a unified diff for every changed file in `summary`.
@@ -317,6 +562,7 @@ pub fn summary_exit_code(summary: &Summary) -> u8 {
             match &r.outcome {
                 IncludeOutcome::Error { .. } => code = code.max(2),
                 IncludeOutcome::EvaluationFailure { .. } => code = code.max(3),
+                IncludeOutcome::TrailingCommentError { .. } => code = code.max(3),
                 IncludeOutcome::Conflict { .. } => code = code.max(3),
                 _ => {}
             }
@@ -438,19 +684,18 @@ fn process_file(
 
 /// Conflict-by-final-text rules:
 ///
-/// 1. If any matched rule errored (`Outcome::Error`) → `IncludeOutcome::Error`.
-/// 2. If any matched rule had an `EvaluationFailure` → propagate.
-/// 3. If matched rules all produced `Keep` → `IncludeOutcome::Keep`.
-/// 4. If matched rules all produced `Rewrite` with identical
-///    `(edit_range, new_text)` → `IncludeOutcome::Rewritten`.
-/// 5. Otherwise → `IncludeOutcome::Conflict { rule_outputs }` where
-///    `rule_outputs[i] = (rule_name, final_line_text)`.
+/// 1. Any `Outcome::Error` (action.error) → `IncludeOutcome::Error`.
+/// 2. Any `Outcome::TrailingCommentError` → `IncludeOutcome::TrailingCommentError`.
+/// 3. Any `Outcome::EvaluationFailure` → propagate.
+/// 4. All rules produced `Keep` → `IncludeOutcome::Keep`.
+/// 5. All rules produced `Rewrite` with identical `(edit_range, new_text)`
+///    → `IncludeOutcome::Rewritten`.
+/// 6. Otherwise → `IncludeOutcome::Conflict { rule_outputs, differing_aspects }`.
 fn collapse_outcomes(
     include: &Include,
     source: &str,
     outcomes: Vec<(String, Outcome)>,
 ) -> IncludeOutcome {
-    // (1) any Error wins
     for (rule_name, o) in &outcomes {
         if let Outcome::Error { message } = o {
             return IncludeOutcome::Error {
@@ -459,7 +704,14 @@ fn collapse_outcomes(
             };
         }
     }
-    // (2) any EvaluationFailure wins
+    for (rule_name, o) in &outcomes {
+        if let Outcome::TrailingCommentError { message } = o {
+            return IncludeOutcome::TrailingCommentError {
+                rule: rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
     for (rule_name, o) in &outcomes {
         if let Outcome::EvaluationFailure { message } = o {
             return IncludeOutcome::EvaluationFailure {
@@ -484,7 +736,9 @@ fn collapse_outcomes(
             } => {
                 finals.push((rule_name, edit_range, new_text));
             }
-            Outcome::Error { .. } | Outcome::EvaluationFailure { .. } => unreachable!(),
+            Outcome::Error { .. }
+            | Outcome::TrailingCommentError { .. }
+            | Outcome::EvaluationFailure { .. } => unreachable!(),
         }
     }
 
@@ -507,9 +761,72 @@ fn collapse_outcomes(
             }
         }
     } else {
+        let differing_aspects = compute_differing_aspects(
+            &finals.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(),
+        );
         IncludeOutcome::Conflict {
             rule_outputs: finals.into_iter().map(|(n, _, t)| (n, t)).collect(),
+            differing_aspects,
         }
+    }
+}
+
+/// Parse each rule's final-line text and report which sub-parts diverge.
+/// The texts span `[argument_start, line_end_excl_newline)`, so they look
+/// like `"lib/foo.h" // comment` or `<lib/foo.h>  /* x */`.
+fn compute_differing_aspects(texts: &[&str]) -> Vec<DiffAspect> {
+    let parsed: Vec<FinalLineParts> = texts.iter().map(|t| parse_final_line(t)).collect();
+    let mut out: Vec<DiffAspect> = Vec::new();
+    let any_differ = |proj: fn(&FinalLineParts) -> &str| -> bool {
+        let first = proj(&parsed[0]);
+        parsed.iter().any(|p| proj(p) != first)
+    };
+    if any_differ(|p| &p.path) {
+        out.push(DiffAspect::IncludePath);
+    }
+    if any_differ(|p| &p.form) {
+        out.push(DiffAspect::OutputForm);
+    }
+    if any_differ(|p| &p.trailing) {
+        out.push(DiffAspect::TrailingComment);
+    }
+    out
+}
+
+struct FinalLineParts {
+    /// `"`, `<`, or `M` (macro).
+    form: String,
+    /// Path between the quotes / angles (or whole text for macros).
+    path: String,
+    /// Trailing comment text (delimiter included), trimmed of surrounding
+    /// whitespace.
+    trailing: String,
+}
+
+fn parse_final_line(s: &str) -> FinalLineParts {
+    let t = s.trim();
+    if let Some(rest) = t.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return FinalLineParts {
+                form: "\"".to_string(),
+                path: rest[..end].to_string(),
+                trailing: rest[end + 1..].trim().to_string(),
+            };
+        }
+    }
+    if let Some(rest) = t.strip_prefix('<') {
+        if let Some(end) = rest.find('>') {
+            return FinalLineParts {
+                form: "<".to_string(),
+                path: rest[..end].to_string(),
+                trailing: rest[end + 1..].trim().to_string(),
+            };
+        }
+    }
+    FinalLineParts {
+        form: "M".to_string(),
+        path: t.to_string(),
+        trailing: String::new(),
     }
 }
 
@@ -776,9 +1093,14 @@ mod tests {
         let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert_eq!(summary.conflicts.len(), 1);
         assert_eq!(summary_exit_code(&summary), 3);
-        // apply refuses
-        let err = apply(&summary).unwrap_err();
-        assert!(format!("{err:#}").contains("conflict"));
+        assert_eq!(summary.unfixable.len(), 1);
+        // apply does NOT refuse — the file is skipped (it had conflict),
+        // and 0 files get written. fixable parts of OTHER files would be.
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 0);
+        // Existing source was not overwritten.
+        let body = fs::read_to_string(root.join("src/main.c")).unwrap();
+        assert_eq!(body, "#include \"foo.h\"\n");
         fs::remove_dir_all(&root).ok();
     }
 

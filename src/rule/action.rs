@@ -50,8 +50,12 @@ pub enum Outcome {
         edit_range: Range<usize>,
         new_text: String,
     },
-    /// Rule's `action = error` (or trailing_comment.transform.action = error) matched.
+    /// Rule's `action = error` matched.
     Error { message: String },
+    /// Rule's `trailing_comment.transform.action = error` matched. Kept
+    /// separate from `Error` so the unfixable report can label the cause
+    /// distinctly per refactor.md §"inclean apply".
+    TrailingCommentError { message: String },
     /// Action evaluation failed at runtime (e.g. `resolve` couldn't
     /// resolve, multiple include_directories contain the file, ...).
     EvaluationFailure { message: String },
@@ -448,7 +452,7 @@ fn run_transform_action(
     ctx: &TemplateCtx,
 ) -> std::result::Result<Option<String>, Outcome> {
     match action {
-        ResolvedTrailingAction::Error { message } => Err(Outcome::Error {
+        ResolvedTrailingAction::Error { message } => Err(Outcome::TrailingCommentError {
             message: substitute_trailing(message, ctx, existing_body),
         }),
         ResolvedTrailingAction::Remove { message: _ } => Ok(None),
@@ -880,7 +884,9 @@ mod tests {
             Path::new("/proj"),
         );
         match out {
-            Outcome::Error { message } => assert!(message.contains("no TODO comments")),
+            Outcome::TrailingCommentError { message } => {
+                assert!(message.contains("no TODO comments"))
+            }
             other => panic!("unexpected: {other:?}"),
         }
     }

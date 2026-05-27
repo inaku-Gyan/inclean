@@ -27,6 +27,9 @@ pub fn run(args: CheckArgs) -> Result<u8> {
         CheckKind::Unfixable => print_full_report(&summary, ReportFilter::UnfixableOnly),
         CheckKind::All => print_full_report(&summary, ReportFilter::All),
     }
+    for w in &summary.warnings {
+        eprintln!("{w}");
+    }
     Ok(run::summary_exit_code(&summary))
 }
 
@@ -133,7 +136,10 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     "  L{:>4} fail    \"{}\"   (rule: {rule}): {message}",
                     r.include.line, r.include.content
                 ),
-                IncludeOutcome::Conflict { rule_outputs } => {
+                IncludeOutcome::Conflict {
+                    rule_outputs,
+                    differing_aspects,
+                } => {
                     eprintln!(
                         "  L{:>4} conflict \"{}\":",
                         r.include.line, r.include.content
@@ -141,7 +147,24 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     for (rule, text) in rule_outputs {
                         eprintln!("           rule `{rule}` -> {text}");
                     }
+                    if !differing_aspects.is_empty() {
+                        let parts: Vec<&str> = differing_aspects
+                            .iter()
+                            .map(|a| match a {
+                                crate::pipeline::run::DiffAspect::IncludePath => "include path",
+                                crate::pipeline::run::DiffAspect::OutputForm => "output_form",
+                                crate::pipeline::run::DiffAspect::TrailingComment => {
+                                    "trailing_comment"
+                                }
+                            })
+                            .collect();
+                        eprintln!("           differs in: {}", parts.join(", "));
+                    }
                 }
+                IncludeOutcome::TrailingCommentError { rule, message } => eprintln!(
+                    "  L{:>4} trailing-comment error \"{}\"   (rule: {rule}): {message}",
+                    r.include.line, r.include.content
+                ),
             }
         }
     }
@@ -169,6 +192,7 @@ fn should_print(outcome: &IncludeOutcome, filter: ReportFilter) -> bool {
         ReportFilter::UnfixableOnly => matches!(
             outcome,
             IncludeOutcome::Error { .. }
+                | IncludeOutcome::TrailingCommentError { .. }
                 | IncludeOutcome::EvaluationFailure { .. }
                 | IncludeOutcome::Conflict { .. }
         ),

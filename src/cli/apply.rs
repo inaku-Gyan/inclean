@@ -1,9 +1,15 @@
 //! `inclean apply` — apply rewrites in place.
+//!
+//! Fixable rewrites are written even when the same run produced
+//! unfixable violations elsewhere. A file containing *any* unfixable
+//! outcome is skipped entirely (no partial writes per file). After
+//! writing, the unfixable report is printed; the exit code is non-zero
+//! iff at least one unfixable violation surfaced.
 
 use anyhow::Result;
 
 use super::ApplyArgs;
-use crate::pipeline::run::{self, CheckMode, IncludeOutcome};
+use crate::pipeline::run::{self, CheckMode};
 
 pub fn run(args: ApplyArgs) -> Result<u8> {
     let start_dir = super::check::start_dir_for(args.config.as_deref(), &args.paths);
@@ -26,21 +32,8 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
         CheckMode::Run,
     )?;
     let written = run::apply(&summary)?;
-    let code = run::summary_exit_code(&summary);
-    let skipped_for_errors = summary
-        .files
-        .iter()
-        .filter(|f| {
-            f.include_results.iter().any(|r| {
-                matches!(
-                    r.outcome,
-                    IncludeOutcome::Error { .. }
-                        | IncludeOutcome::EvaluationFailure { .. }
-                        | IncludeOutcome::Conflict { .. }
-                )
-            })
-        })
-        .count();
+    let skipped_for_errors = summary.files.iter().filter(|f| run::file_has_errors(f)).count();
+
     if !summary.skipped.is_empty() {
         eprintln!(
             "warning: skipped {} file(s) that could not be parsed",
@@ -50,6 +43,13 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
             eprintln!("  - {}: {}", s.relpath.display(), s.reason);
         }
     }
-    println!("wrote {written} file(s); {skipped_for_errors} file(s) skipped due to errors");
-    Ok(code)
+    for w in &summary.warnings {
+        eprintln!("{w}");
+    }
+    println!("wrote {written} file(s); {skipped_for_errors} file(s) skipped due to unfixable violations");
+    let report = run::render_unfixable_report(&summary);
+    if !report.is_empty() {
+        eprint!("{report}");
+    }
+    Ok(run::summary_exit_code(&summary))
 }
