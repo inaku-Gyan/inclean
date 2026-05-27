@@ -26,7 +26,7 @@
 //!
 //! Defaults are applied after copy resolution.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
@@ -163,9 +163,13 @@ fn default_action() -> ResolvedAction {
 /// Resolve every rule across `configs`. Rules are walked in declaration
 /// order so that `copied_from` references can point only at already-
 /// resolved earlier rules.
-pub fn resolve(configs: &[LoadedConfig]) -> Result<BTreeMap<String, ResolvedRule>> {
-    let mut by_name: HashMap<String, ResolvedRule> = HashMap::new();
-    let mut decl_order: Vec<String> = Vec::new();
+///
+/// Returns a `Vec<(name, rule)>` in declaration order. Downstream code
+/// (engine, CLI, conflict diagnostics) depends on this order. Use
+/// [`find_resolved`] for name lookup.
+pub fn resolve(configs: &[LoadedConfig]) -> Result<Vec<(String, ResolvedRule)>> {
+    let mut out: Vec<(String, ResolvedRule)> = Vec::new();
+    let mut by_name: HashMap<String, usize> = HashMap::new();
 
     for cfg in configs {
         for (idx, raw) in cfg.raw.rules.iter().enumerate() {
@@ -192,7 +196,7 @@ pub fn resolve(configs: &[LoadedConfig]) -> Result<BTreeMap<String, ResolvedRule
                             cfg.path.display()
                         );
                     }
-                    let parent = by_name.get(parent_name).ok_or_else(|| {
+                    let parent_idx = by_name.get(parent_name).ok_or_else(|| {
                         anyhow::anyhow!(
                             "rule `{}` at {}: copied_from = `{}` refers to a rule that is not declared earlier (forward-only references)",
                             raw.name,
@@ -200,21 +204,25 @@ pub fn resolve(configs: &[LoadedConfig]) -> Result<BTreeMap<String, ResolvedRule
                             parent_name,
                         )
                     })?;
-                    Some(parent.clone())
+                    Some(out[*parent_idx].1.clone())
                 }
             };
             let rule = build(&locator, parent.as_ref())?;
-            decl_order.push(rule.name.clone());
-            by_name.insert(rule.name.clone(), rule);
+            by_name.insert(rule.name.clone(), out.len());
+            out.push((rule.name.clone(), rule));
         }
     }
 
-    let mut out: BTreeMap<String, ResolvedRule> = BTreeMap::new();
-    for name in decl_order {
-        let r = by_name.remove(&name).unwrap();
-        out.insert(name, r);
-    }
     Ok(out)
+}
+
+/// Look up a resolved rule by name. Linear scan over the declaration-
+/// ordered vec; fine for sizes we care about. Returns `None` when not found.
+pub fn find_resolved<'a>(
+    resolved: &'a [(String, ResolvedRule)],
+    name: &str,
+) -> Option<&'a ResolvedRule> {
+    resolved.iter().find(|(n, _)| n == name).map(|(_, r)| r)
 }
 
 // ---- Per-rule build -------------------------------------------------------
@@ -729,6 +737,10 @@ mod tests {
         }
     }
 
+    fn get<'a>(rules: &'a [(String, ResolvedRule)], name: &str) -> &'a ResolvedRule {
+        find_resolved(rules, name).unwrap_or_else(|| panic!("rule `{name}` not found"))
+    }
+
     #[test]
     fn standalone_rule_gets_defaults() {
         let cfg = load(
@@ -738,8 +750,8 @@ mod tests {
             name = "base"
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let r = &map["base"];
+        let resolved = resolve(&[cfg]).unwrap();
+        let r = get(&resolved, "base");
         assert_eq!(r.file_paths, vec!["**/*"]);
         assert!(r.file_suffixes.contains(&".c".to_string()));
         assert!(r.file_suffixes.contains(&".h".to_string()));
@@ -765,8 +777,8 @@ mod tests {
             action = { type = "replace", with = "x" }
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let child = &map["child"];
+        let resolved = resolve(&[cfg]).unwrap();
+        let child = get(&resolved, "child");
         assert_eq!(child.file_paths, vec!["src/**"]);
         assert_eq!(child.include_directories, vec!["src", "src/internal"]);
         assert!(matches!(child.action, ResolvedAction::Replace { .. }));
@@ -787,8 +799,8 @@ mod tests {
             file_paths = ["src/foo/**"]
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        assert_eq!(map["narrow"].file_paths, vec!["src/foo/**"]);
+        let resolved = resolve(&[cfg]).unwrap();
+        assert_eq!(get(&resolved, "narrow").file_paths, vec!["src/foo/**"]);
     }
 
     #[test]
@@ -809,8 +821,8 @@ mod tests {
             copied_from = "b"
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        assert_eq!(map["c"].file_paths, vec!["src/**"]);
+        let resolved = resolve(&[cfg]).unwrap();
+        assert_eq!(get(&resolved, "c").file_paths, vec!["src/**"]);
     }
 
     #[test]
@@ -828,8 +840,11 @@ mod tests {
             file_suffixes = ["${copied}", ".inl"]
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        assert_eq!(map["child"].file_suffixes, vec![".c", ".h", ".inl"]);
+        let resolved = resolve(&[cfg]).unwrap();
+        assert_eq!(
+            get(&resolved, "child").file_suffixes,
+            vec![".c", ".h", ".inl"]
+        );
     }
 
     #[test]
@@ -847,9 +862,9 @@ mod tests {
             suppression_comments_regex = { line = "${copied}" }
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
+        let resolved = resolve(&[cfg]).unwrap();
         assert_eq!(
-            map["child"].suppression.line.as_deref(),
+            get(&resolved, "child").suppression.line.as_deref(),
             Some("^inclean: skip$")
         );
     }
@@ -873,8 +888,8 @@ mod tests {
             suppression_comments_regex = { line = "${copied}" }
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let s = &map["child"].suppression;
+        let resolved = resolve(&[cfg]).unwrap();
+        let s = &get(&resolved, "child").suppression;
         assert_eq!(s.line.as_deref(), Some("^inclean: skip$"));
         assert!(s.block_start.is_none());
         assert!(s.block_end.is_none());
@@ -897,10 +912,30 @@ mod tests {
             copied_from = "base"
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let s = &map["child"].suppression;
+        let resolved = resolve(&[cfg]).unwrap();
+        let s = &get(&resolved, "child").suppression;
         assert_eq!(s.block_start.as_deref(), Some("BEGIN"));
         assert_eq!(s.line.as_deref(), Some("L"));
+    }
+
+    #[test]
+    fn resolve_preserves_declaration_order() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "zeta"
+
+            [[rule]]
+            name = "alpha"
+
+            [[rule]]
+            name = "middle"
+            "#,
+        );
+        let resolved = resolve(&[cfg]).unwrap();
+        let names: Vec<&str> = resolved.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["zeta", "alpha", "middle"]);
     }
 
     #[test]
@@ -973,8 +1008,8 @@ mod tests {
             file_suffixes = ["@std.c.extensions", ".inl"]
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let s = &map["r"].file_suffixes;
+        let resolved = resolve(&[cfg]).unwrap();
+        let s = &get(&resolved, "r").file_suffixes;
         assert!(s.contains(&".c".to_string()));
         assert!(s.contains(&".h".to_string()));
         assert!(s.contains(&".inl".to_string()));
@@ -1011,8 +1046,8 @@ mod tests {
             action = { type = "error", message = "${copied}" }
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        match &map["child"].action {
+        let resolved = resolve(&[cfg]).unwrap();
+        match &get(&resolved, "child").action {
             ResolvedAction::Error { message } => assert_eq!(message, "deprecated"),
             _ => panic!("expected error"),
         }
@@ -1037,8 +1072,8 @@ mod tests {
             copied_from = "p"
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        let tc = &map["c"].trailing_comment;
+        let resolved = resolve(&[cfg]).unwrap();
+        let tc = &get(&resolved, "c").trailing_comment;
         let t = tc.transform.as_ref().unwrap();
         assert_eq!(t.content_regex, "^TODO.*$");
         assert!(matches!(t.action, ResolvedTrailingAction::Remove { .. }));
@@ -1064,11 +1099,9 @@ mod tests {
             trailing_comment = { append_if_absent = " // note" }
             "#,
         );
-        let map = resolve(&[cfg]).unwrap();
-        assert!(map["c"].trailing_comment.transform.is_none());
-        assert_eq!(
-            map["c"].trailing_comment.append_if_absent.as_deref(),
-            Some(" // note")
-        );
+        let resolved = resolve(&[cfg]).unwrap();
+        let c = get(&resolved, "c");
+        assert!(c.trailing_comment.transform.is_none());
+        assert_eq!(c.trailing_comment.append_if_absent.as_deref(), Some(" // note"));
     }
 }

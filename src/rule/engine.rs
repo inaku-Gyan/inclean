@@ -24,7 +24,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
@@ -42,7 +44,6 @@ pub struct CompiledRule<'a> {
     pub include_matcher: GlobSet,
     pub suppression: CompiledSuppression,
     pub trailing_content_regex: Option<Regex>,
-    pub config_dir_relpath: PathBuf,
 }
 
 #[derive(Debug, Default)]
@@ -59,7 +60,7 @@ impl CompiledSuppression {
 }
 
 impl<'a> CompiledRule<'a> {
-    pub fn new(rule: &'a ResolvedRule, project_root: &Path) -> Result<Self> {
+    pub fn new(rule: &'a ResolvedRule) -> Result<Self> {
         let path_matcher = PathMatcher::build(&rule.file_paths, &rule.file_suffixes)
             .with_context(|| format!("rule `{}`: file_paths/file_suffixes compile", rule.name))?;
 
@@ -84,20 +85,12 @@ impl<'a> CompiledRule<'a> {
             None => None,
         };
 
-        let config_dir_relpath = rule
-            .origin
-            .config_dir
-            .strip_prefix(project_root)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-
         Ok(CompiledRule {
             rule,
             path_matcher,
             include_matcher,
             suppression,
             trailing_content_regex,
-            config_dir_relpath,
         })
     }
 }
@@ -272,8 +265,8 @@ mod tests {
         // Leak to get a 'static lifetime for the test.
         let leaked: &'static _ = Box::leak(Box::new(resolved));
         leaked
-            .values()
-            .map(|r| CompiledRule::new(r, Path::new("/proj")).unwrap())
+            .iter()
+            .map(|(_, r)| CompiledRule::new(r).unwrap())
             .collect()
     }
 

@@ -541,8 +541,8 @@ mod tests {
         let resolved = resolve(&[lc]).unwrap();
         let leaked: &'static _ = Box::leak(Box::new(resolved));
         leaked
-            .values()
-            .map(|r| CompiledRule::new(r, Path::new("/proj")).unwrap())
+            .iter()
+            .map(|(_, r)| CompiledRule::new(r).unwrap())
             .collect()
     }
 

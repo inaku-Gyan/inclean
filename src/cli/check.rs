@@ -10,7 +10,7 @@ use crate::pipeline::run::{self, CheckMode, IncludeOutcome, Summary};
 
 pub fn run(args: CheckArgs) -> Result<u8> {
     let mode: CheckMode = args.level.into();
-    let summary = run::run(&args.dir, mode)?;
+    let summary = run::run(None, &args.dir, &[], None, mode)?;
     match summary.mode {
         CheckMode::Config => print_config_report(&args)?,
         CheckMode::Run => print_full_report(&summary),
@@ -37,7 +37,7 @@ fn print_config_report(args: &CheckArgs) -> Result<()> {
         project_root.display(),
         resolved.len()
     );
-    for (name, rule) in &resolved {
+    for (name, rule) in resolved.iter() {
         let copied = rule
             .copied_from
             .as_deref()

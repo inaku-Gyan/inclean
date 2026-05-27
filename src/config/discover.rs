@@ -10,8 +10,11 @@
 //! - [`assert_no_extra_configs`] errors if any other `inclean.toml` exists
 //!   under the resolved project root — sub-configs are not a feature.
 //!
-//! Tree-walking honors `.gitignore` plus hard-coded skip directories
-//! (`.git`, `target`, `node_modules`).
+//! Tree-walking is unfiltered — per refactor.md §Engine "所有忽略和包含
+//! 文件都由配置文件显示指定。不要自动加料"; we do NOT honor `.gitignore`
+//! or skip `.git` / `target` / `node_modules` implicitly. Stray
+//! `inclean.toml` files anywhere under the resolved project root are
+//! flagged regardless of where they sit.
 
 use std::path::{Path, PathBuf};
 
@@ -185,14 +188,7 @@ pub fn assert_no_extra_configs(project_root: &Path, root_config_path: &Path) -> 
     let mut extras: Vec<PathBuf> = Vec::new();
 
     let walker = WalkBuilder::new(project_root)
-        .standard_filters(true)
-        .filter_entry(|entry| {
-            let name = entry.file_name();
-            !matches!(
-                name.to_str(),
-                Some(".git") | Some("target") | Some("node_modules")
-            )
-        })
+        .standard_filters(false)
         .build();
 
     for entry in walker {
@@ -440,7 +436,9 @@ name = "sub""#,
     }
 
     #[test]
-    fn assert_no_extra_configs_skips_target_and_node_modules() {
+    fn assert_no_extra_configs_detects_extras_in_target_and_node_modules() {
+        // Per refactor.md §Engine "不要自动加料": no implicit skip of
+        // .git/target/node_modules. Stray configs anywhere are reported.
         let proj = build_tree(&[
             ("inclean.toml", &min_project_block()),
             (
@@ -455,7 +453,13 @@ name = "in-nm""#,
             ),
         ]);
         let root_cfg = proj.path().join("inclean.toml");
-        assert_no_extra_configs(proj.path(), &root_cfg).unwrap();
+        let err = assert_no_extra_configs(proj.path(), &root_cfg).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("target/inclean.toml") || msg.contains("target\\inclean.toml"));
+        assert!(
+            msg.contains("node_modules/inclean.toml")
+                || msg.contains("node_modules\\inclean.toml")
+        );
     }
 
     mod tempdir {

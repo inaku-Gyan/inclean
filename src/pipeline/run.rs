@@ -28,10 +28,15 @@
 //!
 //! Per-file parse failures (malformed UTF-8) are reported in
 //! [`Summary::skipped`] and do not contribute to the exit code.
+//!
+//! Walk policy: per refactor.md §Engine, the walker does **not** honor
+//! `.gitignore` and does **not** implicitly skip `.git` / `target` /
+//! `node_modules`. The only built-in filter is to skip `inclean.toml`
+//! files themselves (they're not source).
 
-use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
@@ -121,16 +126,46 @@ pub struct Conflict {
 
 // ---- Entry point ---------------------------------------------------------
 
-pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
-    let config_path = discover::find_root_config(start_dir)?;
-    let cfg = discover::load_root_config(&config_path)?;
+/// Run the pipeline.
+///
+/// - `config_path`: when `Some`, load that file directly; when `None`,
+///   walk upward from `start_dir` to find the nearest `inclean.toml`.
+/// - `start_dir`: where the upward walk begins (used only when
+///   `config_path` is `None`); also the cwd-relative anchor for any
+///   `paths` filter entries.
+/// - `paths`: when non-empty, restricts processing to source files
+///   rooted at one of these paths (file or directory; resolved relative
+///   to the current working directory). `CheckMode::Config` ignores it.
+/// - `jobs`: when `Some(n)`, install a rayon global thread pool of that
+///   size. Best-effort: a second call with a different `n` is a no-op
+///   because rayon's global pool is set-once.
+pub fn run(
+    config_path: Option<&Path>,
+    start_dir: &Path,
+    paths: &[PathBuf],
+    jobs: Option<usize>,
+    mode: CheckMode,
+) -> Result<Summary> {
+    let resolved_config_path: PathBuf = match config_path {
+        Some(p) => {
+            if !p.is_file() {
+                anyhow::bail!(
+                    "--config path does not point at a file: {}",
+                    p.display(),
+                );
+            }
+            p.to_path_buf()
+        }
+        None => discover::find_root_config(start_dir)?,
+    };
+    let cfg = discover::load_root_config(&resolved_config_path)?;
     let project = cfg
         .raw
         .project
         .as_ref()
         .expect("load_root_config guarantees [project] is present");
-    let project_root_abs = discover::resolve_project_root(&config_path, project)?;
-    discover::assert_no_extra_configs(&project_root_abs, &config_path)?;
+    let project_root_abs = discover::resolve_project_root(&resolved_config_path, project)?;
+    discover::assert_no_extra_configs(&project_root_abs, &resolved_config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 
     if mode == CheckMode::Config {
@@ -143,7 +178,10 @@ pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
         });
     }
 
-    let compiled = compile_rules(&resolved, &project_root_abs)?;
+    install_thread_pool(jobs);
+
+    let compiled = compile_rules(&resolved)?;
+    let path_filter = build_path_filter(&project_root_abs, paths)?;
 
     // Walk + filter + sort candidate files.
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -153,6 +191,9 @@ pub fn run(start_dir: &Path, mode: CheckMode) -> Result<Summary> {
             .strip_prefix(&project_root_abs)
             .unwrap_or(&entry)
             .to_path_buf();
+        if !path_filter.matches(&relpath) {
+            continue;
+        }
         if any_rule_eligible(&compiled, &relpath) {
             candidates.push(relpath);
         }
@@ -480,27 +521,13 @@ fn argument_and_trailing_range(include: &Include) -> Range<usize> {
 
 // ---- file discovery & filtering ------------------------------------------
 
-fn compile_rules<'a>(
-    rules: &'a BTreeMap<String, ResolvedRule>,
-    project_root: &Path,
-) -> Result<Vec<CompiledRule<'a>>> {
-    rules
-        .values()
-        .map(|r| CompiledRule::new(r, project_root))
-        .collect()
+fn compile_rules<'a>(rules: &'a [(String, ResolvedRule)]) -> Result<Vec<CompiledRule<'a>>> {
+    rules.iter().map(|(_, r)| CompiledRule::new(r)).collect()
 }
 
 fn source_files(root: &Path) -> impl Iterator<Item = Result<PathBuf>> {
-    let walker = WalkBuilder::new(root)
-        .standard_filters(true)
-        .filter_entry(|entry| {
-            let name = entry.file_name();
-            !matches!(
-                name.to_str(),
-                Some(".git") | Some("target") | Some("node_modules")
-            )
-        })
-        .build();
+    // Per refactor.md §Engine: no implicit ignore behavior. Stay flat.
+    let walker = WalkBuilder::new(root).standard_filters(false).build();
     walker.filter_map(|res| match res {
         Ok(entry) => {
             if entry.file_type().is_some_and(|ft| ft.is_file())
@@ -516,22 +543,88 @@ fn source_files(root: &Path) -> impl Iterator<Item = Result<PathBuf>> {
 }
 
 fn any_rule_eligible(rules: &[CompiledRule<'_>], file_relpath: &Path) -> bool {
-    let file_dir = file_relpath.parent().unwrap_or_else(|| Path::new(""));
-    rules.iter().any(|r| {
-        is_ancestor_or_self(&r.config_dir_relpath, file_dir) && r.path_matcher.matches(file_relpath)
-    })
+    rules.iter().any(|r| r.path_matcher.matches(file_relpath))
 }
 
-fn is_ancestor_or_self(dir: &Path, descendant: &Path) -> bool {
-    let dir_components: Vec<_> = dir.components().collect();
-    let desc_components: Vec<_> = descendant.components().collect();
-    if dir_components.len() > desc_components.len() {
-        return false;
+// ---- jobs / paths --------------------------------------------------------
+
+static THREAD_POOL_INIT: Once = Once::new();
+
+fn install_thread_pool(jobs: Option<usize>) {
+    let Some(n) = jobs else { return };
+    if n == 0 {
+        return;
     }
-    dir_components
-        .iter()
-        .zip(desc_components.iter())
-        .all(|(a, b)| a == b)
+    THREAD_POOL_INIT.call_once(|| {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global();
+    });
+}
+
+/// A list of project-root-relative path prefixes used to filter the
+/// walker output. An empty list matches everything (no filter).
+struct PathFilter {
+    prefixes: Vec<PathBuf>,
+}
+
+impl PathFilter {
+    fn empty() -> Self {
+        Self { prefixes: vec![] }
+    }
+    fn matches(&self, relpath: &Path) -> bool {
+        if self.prefixes.is_empty() {
+            return true;
+        }
+        self.prefixes.iter().any(|prefix| {
+            // Exact-match (file): equality.
+            if relpath == prefix {
+                return true;
+            }
+            // Directory prefix: every component of `prefix` must be a
+            // prefix of `relpath` and `relpath` must have strictly more
+            // components.
+            let prefix_components: Vec<_> = prefix.components().collect();
+            let rel_components: Vec<_> = relpath.components().collect();
+            if prefix_components.len() >= rel_components.len() {
+                return false;
+            }
+            prefix_components
+                .iter()
+                .zip(rel_components.iter())
+                .all(|(a, b)| a == b)
+        })
+    }
+}
+
+/// Normalize user-supplied `paths` to project-root-relative form.
+///
+/// Each entry is canonicalized when possible. If a user passes a path
+/// outside the project root, return an error citing the offending path.
+fn build_path_filter(project_root: &Path, paths: &[PathBuf]) -> Result<PathFilter> {
+    if paths.is_empty() {
+        return Ok(PathFilter::empty());
+    }
+    let root_canon = std::fs::canonicalize(project_root).with_context(|| {
+        format!("canonicalize project root {}", project_root.display())
+    })?;
+    let cwd = std::env::current_dir().context("read current working directory")?;
+    let mut prefixes: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for p in paths {
+        let absolute = if p.is_absolute() { p.clone() } else { cwd.join(p) };
+        let canon = std::fs::canonicalize(&absolute).with_context(|| {
+            format!("path filter entry {} does not exist", absolute.display())
+        })?;
+        let rel = canon.strip_prefix(&root_canon).map_err(|_| {
+            anyhow::anyhow!(
+                "path filter entry {} is outside the project root {}",
+                canon.display(),
+                root_canon.display(),
+            )
+        })?;
+        prefixes.push(rel.to_path_buf());
+    }
+    Ok(PathFilter { prefixes })
 }
 
 fn format_include_text(include: &Include) -> String {
@@ -592,7 +685,7 @@ mod tests {
             "inclean.toml",
             &format!("{}\n[[rule]]\nname = \"base\"\n", min_inclean_toml()),
         );
-        let summary = run(&root, CheckMode::Config).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
         assert!(summary.conflicts.is_empty());
         assert_eq!(summary_exit_code(&summary), 0);
@@ -611,7 +704,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
         assert!(matches!(
             f.include_results[0].outcome,
@@ -633,7 +726,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
         assert!(matches!(
             f.include_results[0].outcome,
@@ -658,7 +751,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert!(matches!(
             summary.files[0].include_results[0].outcome,
             IncludeOutcome::Error { .. }
@@ -680,7 +773,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert_eq!(summary.conflicts.len(), 1);
         assert_eq!(summary_exit_code(&summary), 3);
         // apply refuses
@@ -702,7 +795,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert!(summary.conflicts.is_empty());
         match &summary.files[0].include_results[0].outcome {
             IncludeOutcome::Rewritten {
@@ -738,7 +831,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert!(summary.files[0].had_bom);
         apply(&summary).unwrap();
         let read_back = fs::read(&main_path).unwrap();
@@ -763,7 +856,7 @@ mod tests {
                 min_inclean_toml()
             ),
         );
-        let summary = run(&root, CheckMode::Run).unwrap();
+        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
         assert_eq!(summary.skipped.len(), 1);
         assert_eq!(summary.skipped[0].relpath, PathBuf::from("src/bad.c"));
         assert_eq!(summary_exit_code(&summary), 0);

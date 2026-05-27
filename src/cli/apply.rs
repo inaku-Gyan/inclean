@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::pipeline::run::{self, CheckMode, IncludeOutcome};
 
 pub fn run(dir: PathBuf) -> Result<u8> {
-    let summary = run::run(&dir, CheckMode::Run)?;
+    let summary = run::run(None, &dir, &[], None, CheckMode::Run)?;
     let written = run::apply(&summary)?;
     let code = run::summary_exit_code(&summary);
     let skipped_for_errors = summary
