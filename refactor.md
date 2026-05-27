@@ -16,14 +16,18 @@ type Rule = {
   file_paths?: string[]; // glob pattern. Defaults to `["**/*"]` (匹配所有文件).
   file_suffixes?: string[]; // 只支持字面量和内置占位符. Defaults to `["@std.c.extensions", "@std.cpp.extensions"]`.
   suppression_comments_regex?: {
-    // 匹配时按行匹配，不区分 // 和 /* */ 注释。匹配时，会把该行首尾的空白去掉再进行正则表达式匹配
+    // 按物理行匹配。每行先按下面的规则归一化，再喂给正则：
+    //   1. 若整行（trim 后）以 `//` 开头，剥去前缀 `//` 后再 trim
+    //   2. 若整行（trim 后）以 `/*` 开头且本行内闭合 `*/`，剥去定界符后再 trim
+    //   3. 否则只 trim 首尾空白
+    // 也就是说正则面对的是"注释内容"或"纯行内容"，看不到 // / /* */ 定界符。
     block_start?: string | null; // regex pattern. Defaults to `null` (disabled).
     block_end?: string | null; // regex pattern. Defaults to `null` (disabled).
     line?: string | null; // regex pattern. Defaults to `null` (disabled).
   };
   match_forms?: ("quote" | "angle" | "macro")[]; // Defaults to `["quote"]`. v1 中匹配到 `"macro"` 形式的 include 一律报错（即使 action 不是 `error`）；该枚举值保留以便未来扩展。
   include_match?: string[]; // glob pattern. Defaults to `["**"]` (匹配所有 include 语句).
-  include_directories?: string[]; // glob pattern
+  include_directories?: string[]; // 字面路径列表（相对于项目根目录）；不展开 glob、不做尾部 `/**` 隐式扩展。`resolve` action 会依序在这些目录下尝试拼接 include 文本来定位实际头文件
   action:
     | {
         type: "resolve";
@@ -254,8 +258,16 @@ inclean apply [-c|--config <PATH>] [-j|--jobs <N>] [PATHS...]
 - 如果 `PATHS` 为空，则不限制任何路径，对文件系统中任何路径生效
 
 apply 正式启动引擎前，自动先检查 config（类似 `inclean config check`）。如果 config 有错误，则直接报错退出，不进入引擎阶段。
-自动修复所有可修复的违规。
-修复结束后，如果有无法修复的违规，则最后报错显示这些违规的详细信息（包括文件路径、行号、违规的 include 语句、违规类型、违规的规则名称等），并以非零状态码退出。如果没有无法修复的违规，则以零状态码成功退出。
+
+**fixable / unfixable 并存时的行为**：apply 不会因为同一次 run 里出现 unfixable 违规而中止；可修复的部分一律写入磁盘，无法修复的部分跳过该 include 语句，并在最后以人类可读的报告打印每一条 unfixable 的详情：
+
+- 文件路径（项目根相对路径）
+- 行号
+- 原始 `#include` 行（连同 trailing comment 原样）
+- 违规类型（error / evaluation_failure / conflict / trailing_comment_error）
+- 触发的规则名称（conflict 时列出全部参与的规则及其各自最终行文本）
+
+只要存在任何 unfixable 违规，apply 以非零状态码退出；全部可修复或没有违规时，以零状态码退出。
 
 ```sh
 inclean diff [-o|--output <PATH>] [-c|--config <PATH>] [-j|--jobs <N>] [PATHS...]
