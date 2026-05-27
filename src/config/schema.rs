@@ -6,9 +6,10 @@
 //! Keep this module free of policy.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 
 /// Top-level shape of a single `inclean.toml`.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
@@ -42,6 +43,70 @@ pub struct RawProject {
     pub min_inclean_version: Option<String>,
 }
 
+/// Sentinel emitted when a user wrote a top-level object field as the
+/// literal string `"${copied}"` (e.g. `action = "${copied}"`). Resolution
+/// at [`copy::resolve`] time substitutes the parent's resolved object.
+#[derive(Debug, Clone, Copy)]
+pub enum MaybeCopiedObject<T> {
+    Copied,
+    Object(T),
+}
+
+impl<'de, T> Deserialize<'de> for MaybeCopiedObject<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::fmt;
+        struct V<T>(PhantomData<T>);
+        impl<'de, T> de::Visitor<'de> for V<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = MaybeCopiedObject<T>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("either the string \"${copied}\" or an object")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == "${copied}" {
+                    Ok(MaybeCopiedObject::Copied)
+                } else {
+                    Err(E::custom(format!(
+                        "expected \"${{copied}}\" or an object, got string {v:?}"
+                    )))
+                }
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                self.visit_str(&v)
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let t = T::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(MaybeCopiedObject::Object(t))
+            }
+        }
+        de.deserialize_any(V(PhantomData))
+    }
+}
+
+// For schemars: emit T's own schema. The `"${copied}"` string sentinel is
+// documented in docs/configuration.md and the template; we don't currently
+// teach the JSON Schema about it (a future M-G pass can switch to a
+// proper oneOf when/if editor tooling needs it).
+impl<T: JsonSchema> JsonSchema for MaybeCopiedObject<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        T::schema_name()
+    }
+    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        T::json_schema(g)
+    }
+}
+
 /// A single `[[rule]]` entry, before defaulting / copy / constant expansion.
 /// `Option<_>` distinguishes "user did not specify" from "user wrote empty".
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
@@ -65,7 +130,9 @@ pub struct RawRule {
     pub file_suffixes: Option<Vec<String>>,
 
     // ---- Off-limits regions inside source files --------------------------
-    pub suppression_comments_regex: Option<RawSuppression>,
+    /// The whole field can also be the string `"${copied}"` to reuse the
+    /// parent rule's resolved value verbatim (object-context `${copied}`).
+    pub suppression_comments_regex: Option<MaybeCopiedObject<RawSuppression>>,
 
     // ---- Layer 3: include forms ------------------------------------------
     pub match_forms: Option<Vec<IncludeForm>>,
@@ -74,13 +141,18 @@ pub struct RawRule {
     pub include_match: Option<Vec<String>>,
 
     // ---- Non-matching configuration --------------------------------------
-    /// Literal directory paths under the project root that the `resolve`
-    /// action probes when resolving an include's text to a physical file.
+    /// Literal directory paths under the project root (relative to it) that
+    /// the `resolve` action probes to locate the include's actual header.
+    /// NOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.
     pub include_directories: Option<Vec<String>>,
 
-    pub action: Option<RawAction>,
+    /// The whole field can also be the string `"${copied}"` to reuse the
+    /// parent rule's resolved action verbatim (object-context `${copied}`).
+    pub action: Option<MaybeCopiedObject<RawAction>>,
 
-    pub trailing_comment: Option<RawTrailingComment>,
+    /// The whole field can also be the string `"${copied}"` to reuse the
+    /// parent rule's resolved value verbatim (object-context `${copied}`).
+    pub trailing_comment: Option<MaybeCopiedObject<RawTrailingComment>>,
 }
 
 /// Suppression markers: regex patterns matched line-by-line.
@@ -208,13 +280,15 @@ pub struct RawTrailingComment {
 }
 
 /// Trailing-comment transform: matches an existing comment, then runs an
-/// action over it.
-#[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
+/// action over it. `action` is required — per refactor.md §"Config File"
+/// the schema lists it without a `?`, and silent defaulting to `Keep`
+/// hides config bugs.
+#[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawTrailingTransform {
     pub match_styles: Option<Vec<CommentStyle>>,
     pub content_regex: Option<String>,
-    pub action: Option<RawTrailingAction>,
+    pub action: RawTrailingAction,
 }
 
 /// The action a trailing-comment transform runs on its match.
@@ -382,6 +456,34 @@ mod tests {
         assert!(cfg.rules[0].action.is_none());
     }
 
+    /// Unwrap `MaybeCopiedObject::Object(...)`; panics on the sentinel form.
+    fn raw_action_of(rule: &RawRule) -> &RawAction {
+        match rule.action.as_ref().expect("action missing") {
+            MaybeCopiedObject::Object(a) => a,
+            MaybeCopiedObject::Copied => panic!("test expects an Object action, got Copied"),
+        }
+    }
+    fn raw_suppression_of(rule: &RawRule) -> &RawSuppression {
+        match rule
+            .suppression_comments_regex
+            .as_ref()
+            .expect("suppression missing")
+        {
+            MaybeCopiedObject::Object(s) => s,
+            MaybeCopiedObject::Copied => panic!("test expects an Object suppression, got Copied"),
+        }
+    }
+    fn raw_trailing_of(rule: &RawRule) -> &RawTrailingComment {
+        match rule
+            .trailing_comment
+            .as_ref()
+            .expect("trailing_comment missing")
+        {
+            MaybeCopiedObject::Object(t) => t,
+            MaybeCopiedObject::Copied => panic!("test expects an Object trailing, got Copied"),
+        }
+    }
+
     #[test]
     fn full_rule_with_resolve_action() {
         let cfg = parse_str(
@@ -403,7 +505,7 @@ mod tests {
             r.include_match.as_ref().unwrap(),
             &vec!["**/foo.h".to_string()]
         );
-        match r.action.as_ref().unwrap() {
+        match raw_action_of(r) {
             RawAction::Resolve {
                 relative_to,
                 output_form,
@@ -460,30 +562,12 @@ mod tests {
             action = { type = "error", message = "no" }
             "#,
         );
-        assert!(matches!(
-            cfg.rules[0].action.as_ref().unwrap(),
-            RawAction::Resolve { .. }
-        ));
-        assert!(matches!(
-            cfg.rules[1].action.as_ref().unwrap(),
-            RawAction::Replace { .. }
-        ));
-        assert!(matches!(
-            cfg.rules[2].action.as_ref().unwrap(),
-            RawAction::Keep { .. }
-        ));
-        assert!(matches!(
-            cfg.rules[3].action.as_ref().unwrap(),
-            RawAction::Remove { .. }
-        ));
-        assert!(matches!(
-            cfg.rules[4].action.as_ref().unwrap(),
-            RawAction::CommentOut { .. }
-        ));
-        assert!(matches!(
-            cfg.rules[5].action.as_ref().unwrap(),
-            RawAction::Error { .. }
-        ));
+        assert!(matches!(raw_action_of(&cfg.rules[0]), RawAction::Resolve { .. }));
+        assert!(matches!(raw_action_of(&cfg.rules[1]), RawAction::Replace { .. }));
+        assert!(matches!(raw_action_of(&cfg.rules[2]), RawAction::Keep { .. }));
+        assert!(matches!(raw_action_of(&cfg.rules[3]), RawAction::Remove { .. }));
+        assert!(matches!(raw_action_of(&cfg.rules[4]), RawAction::CommentOut { .. }));
+        assert!(matches!(raw_action_of(&cfg.rules[5]), RawAction::Error { .. }));
     }
 
     #[test]
@@ -495,7 +579,7 @@ mod tests {
             action = { type = "comment_out", style = "/**/" }
             "#,
         );
-        match cfg.rules[0].action.as_ref().unwrap() {
+        match raw_action_of(&cfg.rules[0]) {
             RawAction::CommentOut { style, .. } => {
                 assert_eq!(*style, Some(CommentStyle::Block));
             }
@@ -516,7 +600,7 @@ mod tests {
             }
             "#,
         );
-        let s = cfg.rules[0].suppression_comments_regex.as_ref().unwrap();
+        let s = raw_suppression_of(&cfg.rules[0]);
         assert_eq!(s.block_start.as_deref(), Some("^USER CODE BEGIN.*$"));
         assert_eq!(s.block_end.as_deref(), Some("^USER CODE END.*$"));
         assert_eq!(s.line.as_deref(), Some("^inclean: skip$"));
@@ -538,14 +622,11 @@ mod tests {
             }
             "#,
         );
-        let tc = cfg.rules[0].trailing_comment.as_ref().unwrap();
+        let tc = raw_trailing_of(&cfg.rules[0]);
         let t = tc.transform.as_ref().unwrap();
         assert_eq!(t.match_styles.as_ref().unwrap(), &vec![CommentStyle::Line]);
         assert_eq!(t.content_regex.as_deref(), Some("^TODO.*$"));
-        assert!(matches!(
-            t.action.as_ref().unwrap(),
-            RawTrailingAction::Replace { .. }
-        ));
+        assert!(matches!(t.action, RawTrailingAction::Replace { .. }));
         assert_eq!(
             tc.append_if_absent.as_deref(),
             Some(" // IWYU pragma: export")
@@ -564,6 +645,74 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("bogus"));
+    }
+
+    #[test]
+    fn object_context_copied_sentinel_for_action() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "c"
+            copied_from = "p"
+            action = "${copied}"
+            "#,
+        );
+        assert!(matches!(
+            cfg.rules[0].action.as_ref().unwrap(),
+            MaybeCopiedObject::Copied
+        ));
+    }
+
+    #[test]
+    fn object_context_copied_sentinel_for_suppression_and_trailing() {
+        let cfg = parse_str(
+            r#"
+            [[rule]]
+            name = "c"
+            copied_from = "p"
+            suppression_comments_regex = "${copied}"
+            trailing_comment = "${copied}"
+            "#,
+        );
+        assert!(matches!(
+            cfg.rules[0].suppression_comments_regex.as_ref().unwrap(),
+            MaybeCopiedObject::Copied
+        ));
+        assert!(matches!(
+            cfg.rules[0].trailing_comment.as_ref().unwrap(),
+            MaybeCopiedObject::Copied
+        ));
+    }
+
+    #[test]
+    fn non_copied_string_for_object_field_is_rejected() {
+        let err = parse(
+            r#"
+            [[rule]]
+            name = "c"
+            action = "bogus"
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("${copied}"));
+    }
+
+    #[test]
+    fn trailing_transform_missing_action_is_rejected() {
+        let err = parse(
+            r#"
+            [[rule]]
+            name = "r"
+            trailing_comment = {
+                transform = { content_regex = "^TODO.*$" },
+            }
+            "#,
+            Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("action"), "got: {msg}");
     }
 
     #[test]

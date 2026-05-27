@@ -33,8 +33,9 @@ use anyhow::{bail, Context, Result};
 
 use super::constants;
 use super::schema::{
-    CommentStyle, IncludeForm, LoadedConfig, OutputCommentStyle, OutputForm, RawAction, RawRule,
-    RawSuppression, RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
+    CommentStyle, IncludeForm, LoadedConfig, MaybeCopiedObject, OutputCommentStyle, OutputForm,
+    RawAction, RawRule, RawSuppression, RawTrailingAction, RawTrailingComment,
+    RawTrailingTransform, RuleLocator,
 };
 
 const COPIED_TOKEN: &str = "${copied}";
@@ -280,19 +281,49 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     )?;
 
     let suppression = match raw.suppression_comments_regex.as_ref() {
-        Some(s) => build_suppression(s, parent.map(|p| &p.suppression), has_parent, &ctx)?,
+        Some(MaybeCopiedObject::Copied) => {
+            if !has_parent {
+                bail!(
+                    "{ctx}: `suppression_comments_regex = \"${{copied}}\"` requires `copied_from`"
+                );
+            }
+            parent.map(|p| p.suppression.clone()).unwrap_or_default()
+        }
+        Some(MaybeCopiedObject::Object(s)) => {
+            build_suppression(s, parent.map(|p| &p.suppression), has_parent, &ctx)?
+        }
         None => parent.map(|p| p.suppression.clone()).unwrap_or_default(),
     };
 
     let action = match raw.action.as_ref() {
-        Some(a) => build_action(a, parent.map(|p| &p.action), has_parent, &ctx)?,
+        Some(MaybeCopiedObject::Copied) => {
+            if !has_parent {
+                bail!("{ctx}: `action = \"${{copied}}\"` requires `copied_from`");
+            }
+            parent
+                .map(|p| p.action.clone())
+                .unwrap_or_else(default_action)
+        }
+        Some(MaybeCopiedObject::Object(a)) => {
+            build_action(a, parent.map(|p| &p.action), has_parent, &ctx)?
+        }
         None => parent
             .map(|p| p.action.clone())
             .unwrap_or_else(default_action),
     };
 
     let trailing_comment = match raw.trailing_comment.as_ref() {
-        Some(t) => build_trailing(t, parent.map(|p| &p.trailing_comment), has_parent, &ctx)?,
+        Some(MaybeCopiedObject::Copied) => {
+            if !has_parent {
+                bail!("{ctx}: `trailing_comment = \"${{copied}}\"` requires `copied_from`");
+            }
+            parent
+                .map(|p| p.trailing_comment.clone())
+                .unwrap_or_default()
+        }
+        Some(MaybeCopiedObject::Object(t)) => {
+            build_trailing(t, parent.map(|p| &p.trailing_comment), has_parent, &ctx)?
+        }
         None => parent
             .map(|p| p.trailing_comment.clone())
             .unwrap_or_default(),
@@ -633,13 +664,7 @@ fn build_trailing_transform(
         "trailing_comment.transform.content_regex",
         has_parent,
     )?;
-    let action = match raw.action.as_ref() {
-        Some(a) => build_trailing_action(a, parent.map(|p| &p.action), has_parent, ctx)?,
-        None => ResolvedTrailingAction::Keep {
-            output_style: OutputCommentStyle::Preserve,
-            message: String::new(),
-        },
-    };
+    let action = build_trailing_action(&raw.action, parent.map(|p| &p.action), has_parent, ctx)?;
     Ok(ResolvedTrailingTransform {
         match_styles,
         content_regex,
@@ -1084,6 +1109,69 @@ mod tests {
         let t = tc.transform.as_ref().unwrap();
         assert_eq!(t.content_regex, "^TODO.*$");
         assert!(matches!(t.action, ResolvedTrailingAction::Remove { .. }));
+    }
+
+    #[test]
+    fn object_context_copied_action() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "p"
+            action = { type = "error", message = "deprecated" }
+
+            [[rule]]
+            name = "c"
+            copied_from = "p"
+            action = "${copied}"
+            "#,
+        );
+        let resolved = resolve(&[cfg]).unwrap();
+        match &get(&resolved, "c").action {
+            ResolvedAction::Error { message } => assert_eq!(message, "deprecated"),
+            other => panic!("expected inherited Error action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_context_copied_trailing_inherits_whole_object() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "p"
+            trailing_comment = {
+                transform = {
+                    content_regex = "^TODO.*$",
+                    action = { type = "remove" },
+                },
+                append_if_absent = " // note",
+            }
+
+            [[rule]]
+            name = "c"
+            copied_from = "p"
+            trailing_comment = "${copied}"
+            "#,
+        );
+        let resolved = resolve(&[cfg]).unwrap();
+        let tc = &get(&resolved, "c").trailing_comment;
+        assert!(tc.transform.is_some());
+        assert_eq!(tc.append_if_absent.as_deref(), Some(" // note"));
+    }
+
+    #[test]
+    fn object_context_copied_without_parent_is_rejected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            r#"
+            [[rule]]
+            name = "lone"
+            action = "${copied}"
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        assert!(format!("{err:#}").contains("${copied}"));
     }
 
     #[test]
