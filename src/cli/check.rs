@@ -1,27 +1,65 @@
-//! `inclean check [-l/--level config|full]` — read-only check.
+//! `inclean check [config|unfixable|all]` — read-only check.
 //!
 //! - `config`: parse / validate / run copy resolution only.
-//! - `full` (default): full pipeline, report all per-include outcomes.
+//! - `unfixable`: full pipeline; only print errors / evaluation failures
+//!   / conflicts (everything fixable is silenced).
+//! - `all` (default): full pipeline; print every per-include outcome.
+
+use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::CheckArgs;
-use crate::pipeline::run::{self, CheckMode, IncludeOutcome, Summary};
+use super::{CheckArgs, CheckKind};
+use crate::pipeline::run::{self, IncludeOutcome, Summary};
 
 pub fn run(args: CheckArgs) -> Result<u8> {
-    let mode: CheckMode = args.level.into();
-    let summary = run::run(None, &args.dir, &[], None, mode)?;
-    match summary.mode {
-        CheckMode::Config => print_config_report(&args)?,
-        CheckMode::Run => print_full_report(&summary),
+    let mode = args.kind.check_mode();
+    let start_dir = start_dir_for(args.config.as_deref(), &args.paths);
+    let summary = run::run(
+        args.config.as_deref(),
+        &start_dir,
+        &args.paths,
+        args.jobs,
+        mode,
+    )?;
+    match args.kind {
+        CheckKind::Config => print_config_report(args.config.as_deref(), &start_dir)?,
+        CheckKind::Unfixable => print_full_report(&summary, ReportFilter::UnfixableOnly),
+        CheckKind::All => print_full_report(&summary, ReportFilter::All),
     }
     Ok(run::summary_exit_code(&summary))
 }
 
-fn print_config_report(args: &CheckArgs) -> Result<()> {
+/// Pick a starting directory for config discovery. Prefers the config
+/// flag's parent if given, else the first user-supplied path (if it's a
+/// directory), else CWD.
+pub(super) fn start_dir_for(config: Option<&std::path::Path>, paths: &[PathBuf]) -> PathBuf {
+    if let Some(c) = config {
+        return c
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+    }
+    if let Some(first) = paths.first() {
+        if first.is_dir() {
+            return first.clone();
+        }
+        if let Some(parent) = first.parent() {
+            if !parent.as_os_str().is_empty() {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    PathBuf::from(".")
+}
+
+fn print_config_report(config: Option<&std::path::Path>, start_dir: &std::path::Path) -> Result<()> {
     use crate::config::copy;
     use crate::config::discover;
-    let config_path = discover::find_root_config(&args.dir)?;
+    let config_path: PathBuf = match config {
+        Some(p) => p.to_path_buf(),
+        None => discover::find_root_config(start_dir)?,
+    };
     let cfg = discover::load_root_config(&config_path)?;
     let project = cfg
         .raw
@@ -52,21 +90,27 @@ fn print_config_report(args: &CheckArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_full_report(summary: &Summary) {
+#[derive(Copy, Clone)]
+enum ReportFilter {
+    All,
+    UnfixableOnly,
+}
+
+fn print_full_report(summary: &Summary, filter: ReportFilter) {
     let mut interesting = 0usize;
     for file in &summary.files {
-        let any = file
-            .include_results
-            .iter()
-            .any(|r| !matches!(r.outcome, IncludeOutcome::NoMatch));
+        let any = file.include_results.iter().any(|r| should_print(&r.outcome, filter));
         if !any {
             continue;
         }
         interesting += 1;
         println!("{}:", file.relpath.display());
         for r in &file.include_results {
+            if !should_print(&r.outcome, filter) {
+                continue;
+            }
             match &r.outcome {
-                IncludeOutcome::NoMatch => continue,
+                IncludeOutcome::NoMatch => {}
                 IncludeOutcome::Keep { rules } => println!(
                     "  L{:>4} keep    \"{}\"   (rules: {})",
                     r.include.line,
@@ -112,6 +156,21 @@ fn print_full_report(summary: &Summary) {
         }
     }
     if interesting == 0 && summary.conflicts.is_empty() {
-        println!("no changes proposed");
+        match filter {
+            ReportFilter::All => println!("no changes proposed"),
+            ReportFilter::UnfixableOnly => println!("no unfixable violations"),
+        }
+    }
+}
+
+fn should_print(outcome: &IncludeOutcome, filter: ReportFilter) -> bool {
+    match filter {
+        ReportFilter::All => !matches!(outcome, IncludeOutcome::NoMatch),
+        ReportFilter::UnfixableOnly => matches!(
+            outcome,
+            IncludeOutcome::Error { .. }
+                | IncludeOutcome::EvaluationFailure { .. }
+                | IncludeOutcome::Conflict { .. }
+        ),
     }
 }

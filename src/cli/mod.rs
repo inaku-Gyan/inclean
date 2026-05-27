@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,18 +14,6 @@ mod schema;
 #[derive(Parser, Debug)]
 #[command(name = "inclean", version, about = "C/C++ #include path normalizer")]
 struct Cli {
-    /// Parallel worker count (defaults to CPU count). Currently advisory
-    /// — the pipeline uses rayon's default thread pool.
-    #[arg(short, long, global = true)]
-    #[allow(dead_code)]
-    jobs: Option<usize>,
-
-    /// Path to the project's inclean.toml. If omitted, the CLI walks
-    /// upward from the working directory to find one.
-    #[arg(short, long, global = true)]
-    #[allow(dead_code)]
-    config: Option<std::path::PathBuf>,
-
     #[command(subcommand)]
     command: Command,
 }
@@ -32,55 +21,92 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Generate a starter inclean.toml at the given path (alias of `config new`).
-    Init {
-        #[arg(default_value = ".")]
-        path: std::path::PathBuf,
-    },
+    Init(InitArgs),
     /// Read-only check.
     Check(CheckArgs),
     /// Apply rewrites in place.
-    Apply {
-        #[arg(default_value = ".")]
-        dir: std::path::PathBuf,
-    },
+    Apply(ApplyArgs),
     /// Show a unified diff of would-be rewrites.
-    Diff {
-        #[arg(default_value = ".")]
-        dir: std::path::PathBuf,
-    },
+    Diff(DiffArgs),
     /// Subcommands for managing the inclean.toml config file.
     Config(ConfigArgs),
-    /// Emit (or validate) the JSON Schema for inclean.toml.
-    /// (Kept as a top-level shortcut alongside `config schema`.)
-    Schema(schema::SchemaArgs),
 }
+
+// ---- Check ---------------------------------------------------------------
 
 #[derive(Args, Debug)]
 pub struct CheckArgs {
-    /// Directory containing the root inclean.toml.
-    #[arg(default_value = ".")]
-    pub dir: std::path::PathBuf,
-    /// Which slice of the pipeline to run.
-    ///   config: only validate inclean.toml (no source files opened).
-    ///   full (default): scan source and report every per-include outcome.
-    #[arg(short, long, value_enum, default_value_t = CheckLevel::Full)]
-    pub level: CheckLevel,
+    /// Which subset of violations to report:
+    ///   config: only validate the inclean.toml (no source files opened);
+    ///   unfixable: errors / evaluation failures / conflicts only;
+    ///   all (default): every per-include outcome including fixable.
+    #[arg(value_enum, default_value_t = CheckKind::All)]
+    pub kind: CheckKind,
+
+    /// Path to inclean.toml. When omitted, the CLI walks upward from the
+    /// current directory to find one. `config` mode honors this; `unfixable`
+    /// / `all` modes use it to anchor the project root.
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
+
+    /// Parallel worker count. `config` mode ignores this. Default = CPU count.
+    #[arg(short, long)]
+    pub jobs: Option<usize>,
+
+    /// Optional file/directory restrictions. When given, only source files
+    /// rooted at one of these paths are processed. `config` mode ignores this.
+    pub paths: Vec<PathBuf>,
 }
 
-#[derive(Copy, Clone, Debug, ValueEnum)]
-pub enum CheckLevel {
+#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
+pub enum CheckKind {
     Config,
-    Full,
+    Unfixable,
+    All,
 }
 
-impl From<CheckLevel> for CheckMode {
-    fn from(level: CheckLevel) -> Self {
-        match level {
-            CheckLevel::Config => CheckMode::Config,
-            CheckLevel::Full => CheckMode::Run,
+impl CheckKind {
+    pub fn check_mode(self) -> CheckMode {
+        match self {
+            CheckKind::Config => CheckMode::Config,
+            CheckKind::Unfixable | CheckKind::All => CheckMode::Run,
         }
     }
 }
+
+// ---- Apply / Diff --------------------------------------------------------
+
+#[derive(Args, Debug)]
+pub struct ApplyArgs {
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
+    #[arg(short, long)]
+    pub jobs: Option<usize>,
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct DiffArgs {
+    /// Write the unified diff to PATH instead of stdout.
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
+    #[arg(short, long)]
+    pub jobs: Option<usize>,
+    pub paths: Vec<PathBuf>,
+}
+
+// ---- Init ----------------------------------------------------------------
+
+#[derive(Args, Debug)]
+pub struct InitArgs {
+    /// Target path. Existing dir → create inclean.toml inside. Nonexistent
+    /// path → see init module docs. Omitted → CWD.
+    pub path: Option<PathBuf>,
+}
+
+// ---- Config sub-commands -------------------------------------------------
 
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
@@ -90,34 +116,34 @@ pub struct ConfigArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigSub {
-    /// Validate inclean.toml (alias of `check --level config`).
+    /// Validate inclean.toml (alias of `check config`).
     Check {
-        #[arg(default_value = ".")]
-        dir: std::path::PathBuf,
+        #[arg(short, long)]
+        config: Option<PathBuf>,
     },
     /// Generate a starter inclean.toml at the given path (alias of `init`).
-    New {
-        #[arg(default_value = ".")]
-        path: std::path::PathBuf,
-    },
+    New(InitArgs),
     /// Emit (or validate) the JSON Schema for inclean.toml.
     Schema(schema::SchemaArgs),
 }
 
+// ---- Entry ---------------------------------------------------------------
+
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Init { path } => init::run(path),
+        Command::Init(args) => init::run(args.path),
         Command::Check(args) => check::run(args),
-        Command::Apply { dir } => apply::run(dir),
-        Command::Diff { dir } => diff::run(dir),
-        Command::Schema(args) => schema::run(args),
+        Command::Apply(args) => apply::run(args),
+        Command::Diff(args) => diff::run(args),
         Command::Config(ConfigArgs { command }) => match command {
-            ConfigSub::Check { dir } => check::run(CheckArgs {
-                dir,
-                level: CheckLevel::Config,
+            ConfigSub::Check { config } => check::run(CheckArgs {
+                kind: CheckKind::Config,
+                config,
+                jobs: None,
+                paths: vec![],
             }),
-            ConfigSub::New { path } => init::run(path),
+            ConfigSub::New(args) => init::run(args.path),
             ConfigSub::Schema(args) => schema::run(args),
         },
     };

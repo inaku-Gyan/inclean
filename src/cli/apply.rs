@@ -1,15 +1,30 @@
-//! `inclean apply` — apply rewrites in place. Refuses to write any
-//! file if the run produced conflicts. Files that report any per-include
-//! Error / EvaluationFailure / Conflict are skipped (no partial writes).
-
-use std::path::PathBuf;
+//! `inclean apply` — apply rewrites in place.
 
 use anyhow::Result;
 
+use super::ApplyArgs;
 use crate::pipeline::run::{self, CheckMode, IncludeOutcome};
 
-pub fn run(dir: PathBuf) -> Result<u8> {
-    let summary = run::run(None, &dir, &[], None, CheckMode::Run)?;
+pub fn run(args: ApplyArgs) -> Result<u8> {
+    let start_dir = super::check::start_dir_for(args.config.as_deref(), &args.paths);
+    // Pre-flight config-only check so failures surface with a friendly
+    // prefix rather than mid-pipeline.
+    let _ = run::run(
+        args.config.as_deref(),
+        &start_dir,
+        &[],
+        None,
+        CheckMode::Config,
+    )
+    .map_err(|e| anyhow::anyhow!("config-only check failed: {e:#}"))?;
+
+    let summary = run::run(
+        args.config.as_deref(),
+        &start_dir,
+        &args.paths,
+        args.jobs,
+        CheckMode::Run,
+    )?;
     let written = run::apply(&summary)?;
     let code = run::summary_exit_code(&summary);
     let skipped_for_errors = summary

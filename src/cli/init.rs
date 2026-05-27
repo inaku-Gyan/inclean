@@ -26,7 +26,8 @@ const SCHEMA_HEADER: &str = concat!(
 
 const TEMPLATE: &str = include_str!("template.inclean.toml");
 
-pub fn run(path: PathBuf) -> Result<u8> {
+pub fn run(path: Option<PathBuf>) -> Result<u8> {
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
     let target = resolve_target(&path)?;
     if target.exists() {
         anyhow::bail!(
@@ -112,7 +113,7 @@ mod tests {
     #[test]
     fn writes_into_existing_dir() {
         let dir = scratch_dir();
-        run(dir.clone()).unwrap();
+        run(Some(dir.clone())).unwrap();
         let target = dir.join(CONFIG_FILENAME);
         assert!(target.exists());
         std::fs::remove_dir_all(&dir).ok();
@@ -123,7 +124,7 @@ mod tests {
         let dir = scratch_dir();
         let target = dir.join(CONFIG_FILENAME);
         std::fs::write(&target, "pre-existing").unwrap();
-        let err = run(dir.clone()).unwrap_err();
+        let err = run(Some(dir.clone())).unwrap_err();
         assert!(format!("{err:#}").contains("already exists"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -132,7 +133,7 @@ mod tests {
     fn nonexistent_directory_like_path_creates_dir_and_file() {
         let dir = scratch_dir();
         let new_subdir = dir.join("new-sub-dir");
-        run(new_subdir.clone()).unwrap();
+        run(Some(new_subdir.clone())).unwrap();
         assert!(new_subdir.join(CONFIG_FILENAME).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -141,7 +142,7 @@ mod tests {
     fn nonexistent_file_like_path_creates_file_at_path() {
         let dir = scratch_dir();
         let target = dir.join("custom.toml");
-        run(target.clone()).unwrap();
+        run(Some(target.clone())).unwrap();
         assert!(target.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -149,7 +150,7 @@ mod tests {
     #[test]
     fn template_substitutes_cargo_version() {
         let dir = scratch_dir();
-        run(dir.clone()).unwrap();
+        run(Some(dir.clone())).unwrap();
         let body = std::fs::read_to_string(dir.join(CONFIG_FILENAME)).unwrap();
         let expected = format!("version = \"{}\"", env!("CARGO_PKG_VERSION"));
         assert!(body.contains(&expected), "got: {body}");
@@ -160,7 +161,7 @@ mod tests {
     #[test]
     fn template_includes_min_inclean_version_pinned_to_cli() {
         let dir = scratch_dir();
-        run(dir.clone()).unwrap();
+        run(Some(dir.clone())).unwrap();
         let body = std::fs::read_to_string(dir.join(CONFIG_FILENAME)).unwrap();
         let expected = format!("min_inclean_version = \"{}\"", env!("CARGO_PKG_VERSION"));
         assert!(body.contains(&expected), "got: {body}");
