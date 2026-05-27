@@ -77,11 +77,7 @@ fn print_config_report(
         None => discover::find_root_config(start_dir)?,
     };
     let cfg = discover::load_root_config(&config_path)?;
-    let project = cfg
-        .raw
-        .project
-        .as_ref()
-        .expect("load_root_config guarantees [project] is present");
+    let project = &cfg.raw.project;
     let project_root = discover::resolve_project_root(&config_path, project)?;
     discover::assert_no_extra_configs(&project_root, &config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;

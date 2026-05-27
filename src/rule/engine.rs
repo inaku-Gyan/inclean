@@ -25,8 +25,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
@@ -254,13 +252,11 @@ pub fn match_all<'a>(
 mod tests {
     use super::*;
     use crate::config::copy::resolve;
-    use crate::config::schema::{parse, IncludeForm, LoadedConfig};
+    use crate::config::schema::IncludeForm;
+    use crate::util::testing::config::load_rules;
 
-    fn cfg(body: &str) -> Vec<CompiledRule<'static>> {
-        let lc = LoadedConfig {
-            path: PathBuf::from("/proj/inclean.toml"),
-            raw: parse(body, &PathBuf::from("/proj/inclean.toml")).unwrap(),
-        };
+    fn compile_rules(body: &str) -> Vec<CompiledRule<'static>> {
+        let lc = load_rules(body);
         let resolved = resolve(&[lc]).unwrap();
         // Leak to get a 'static lifetime for the test.
         let leaked: &'static _ = Box::leak(Box::new(resolved));
@@ -284,10 +280,12 @@ mod tests {
 
     #[test]
     fn quote_form_matches_default_rule() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let out = match_all(
             &rules,
@@ -300,10 +298,12 @@ mod tests {
 
     #[test]
     fn angle_form_does_not_match_default_quote_only_rule() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let out = match_all(
             &rules,
@@ -316,11 +316,13 @@ mod tests {
 
     #[test]
     fn include_match_glob_filters() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "old-only"
             include_match = ["old_*.h"]
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let out_old = match_all(
             &rules,
@@ -340,11 +342,13 @@ mod tests {
 
     #[test]
     fn file_paths_glob_filters() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "src-only"
             file_paths = ["src/**/*"]
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let in_src = match_all(
             &rules,
@@ -364,12 +368,14 @@ mod tests {
 
     #[test]
     fn file_suffixes_filters_when_glob_has_wildcards() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "c-only"
             file_paths = ["**/*"]
             file_suffixes = [".c"]
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let c_file = match_all(
             &rules,
@@ -389,7 +395,8 @@ mod tests {
 
     #[test]
     fn multiple_rules_all_match_return() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "a"
             include_match = ["foo.h"]
@@ -397,7 +404,8 @@ mod tests {
             [[rule]]
             name = "b"
             include_match = ["**/foo.h", "foo.h"]
-            "#);
+            "#,
+        );
         let sup = BTreeMap::new();
         let out = match_all(
             &rules,
@@ -410,11 +418,13 @@ mod tests {
 
     #[test]
     fn suppressed_line_skips_rule() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             suppression_comments_regex = { line = "^inclean: skip$" }
-            "#);
+            "#,
+        );
         let src = "// inclean: skip\n#include \"foo.h\"\nfoo;\n";
         let line_table = crate::lex::include_line::line_table(src);
         let sup = compute_all_suppressed(&rules, src, &line_table);
@@ -434,14 +444,16 @@ mod tests {
 
     #[test]
     fn block_suppression_covers_inner_lines() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             suppression_comments_regex = {
                 block_start = "^USER CODE BEGIN.*$",
                 block_end = "^USER CODE END.*$",
             }
-            "#);
+            "#,
+        );
         let src = "// USER CODE BEGIN here\n#include \"foo.h\"\n// USER CODE END here\n#include \"bar.h\"\n";
         let line_table = crate::lex::include_line::line_table(src);
         let sup = compute_all_suppressed(&rules, src, &line_table);

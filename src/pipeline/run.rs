@@ -215,12 +215,7 @@ pub fn run(
         None => discover::find_root_config(start_dir)?,
     };
     let cfg = discover::load_root_config(&resolved_config_path)?;
-    let project = cfg
-        .raw
-        .project
-        .as_ref()
-        .expect("load_root_config guarantees [project] is present");
-    let project_root_abs = discover::resolve_project_root(&resolved_config_path, project)?;
+    let project_root_abs = discover::resolve_project_root(&resolved_config_path, &cfg.raw.project)?;
     discover::assert_no_extra_configs(&project_root_abs, &resolved_config_path)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 

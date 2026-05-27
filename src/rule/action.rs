@@ -547,14 +547,13 @@ fn relative_path(target: &Path, base: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use crate::config::copy::resolve;
-    use crate::config::schema::{parse, IncludeForm, LoadedConfig};
+    use crate::config::schema::IncludeForm;
+    use crate::util::testing::config::load_rules;
 
-    fn cfg(body: &str) -> Vec<CompiledRule<'static>> {
-        let lc = LoadedConfig {
-            path: PathBuf::from("/proj/inclean.toml"),
-            raw: parse(body, &PathBuf::from("/proj/inclean.toml")).unwrap(),
-        };
+    fn compile_rules(body: &str) -> Vec<CompiledRule<'static>> {
+        let lc = load_rules(body);
         let resolved = resolve(&[lc]).unwrap();
+        // Leak to get a 'static lifetime for the test.
         let leaked: &'static _ = Box::leak(Box::new(resolved));
         leaked
             .iter()
@@ -570,11 +569,13 @@ mod tests {
 
     #[test]
     fn keep_with_default_output_form_is_a_noop() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -588,11 +589,13 @@ mod tests {
 
     #[test]
     fn keep_with_output_form_angle_rewrites_to_angle() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep", output_form = "angle" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -609,11 +612,13 @@ mod tests {
 
     #[test]
     fn replace_substitutes_original_placeholder() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "replace", with = "lib/${original}" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -630,11 +635,13 @@ mod tests {
 
     #[test]
     fn error_action_produces_error_outcome() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "error", message = "no `${original}`" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -651,12 +658,14 @@ mod tests {
 
     #[test]
     fn resolve_no_match_emits_spec_wording() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             include_directories = ["nonexistent"]
             action = { type = "resolve", relative_to = "${current_file}" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -679,12 +688,14 @@ mod tests {
 
     #[test]
     fn macro_form_always_errors() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             match_forms = ["macro"]
             action = { type = "keep" }
-            "#);
+            "#,
+        );
         let inc = Include {
             form: IncludeForm::Macro,
             content: "MY_HEADER".to_string(),
@@ -709,11 +720,13 @@ mod tests {
 
     #[test]
     fn comment_out_line_style_wraps_with_slashes() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "comment_out" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -730,11 +743,13 @@ mod tests {
 
     #[test]
     fn comment_out_block_style_wraps_with_slash_star() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "comment_out", style = "/**/" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -751,11 +766,13 @@ mod tests {
 
     #[test]
     fn remove_default_drops_line_entirely() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "remove" }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -780,11 +797,13 @@ mod tests {
 
     #[test]
     fn remove_keep_blank_line_emits_terminator_only() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "remove", keep_blank_line = true, keep_trailing_comment = false }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -801,7 +820,8 @@ mod tests {
 
     #[test]
     fn trailing_comment_replace_overrides_existing() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -810,7 +830,8 @@ mod tests {
                     action = { type = "replace", with = "REPLACED" },
                 },
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\" // old\n");
         let out = evaluate(
             &rules[0],
@@ -829,7 +850,8 @@ mod tests {
 
     #[test]
     fn trailing_comment_remove_drops_comment() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -838,7 +860,8 @@ mod tests {
                     action = { type = "remove" },
                 },
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\" // unwanted\n");
         let out = evaluate(
             &rules[0],
@@ -857,14 +880,16 @@ mod tests {
 
     #[test]
     fn trailing_comment_append_if_absent_adds_for_uncommented() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
             trailing_comment = {
                 append_if_absent = "  // IWYU pragma: export",
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\"\n");
         let out = evaluate(
             &rules[0],
@@ -886,14 +911,16 @@ mod tests {
         // Per refactor.md §"Trailing comment 的定义": cross-line block
         // comments are NOT trailing comments. append_if_absent must NOT
         // fire even though `original_trailing` is empty.
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
             trailing_comment = {
                 append_if_absent = " // IWYU pragma: export",
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\" /* opens\nnever closes */\n");
         assert!(inc.has_cross_line_block_trailing);
         let out = evaluate(
@@ -909,14 +936,16 @@ mod tests {
 
     #[test]
     fn trailing_comment_append_if_absent_skips_when_comment_present() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
             trailing_comment = {
                 append_if_absent = "  // extra",
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\" // existing\n");
         let out = evaluate(
             &rules[0],
@@ -931,7 +960,8 @@ mod tests {
 
     #[test]
     fn trailing_comment_error_produces_error_outcome() {
-        let rules = cfg(r#"
+        let rules = compile_rules(
+            r#"
             [[rule]]
             name = "base"
             action = { type = "keep" }
@@ -941,7 +971,8 @@ mod tests {
                     action = { type = "error", message = "no TODO comments" },
                 },
             }
-            "#);
+            "#,
+        );
         let (src, inc) = first_include("#include \"foo.h\" // TODO: rename\n");
         let out = evaluate(
             &rules[0],

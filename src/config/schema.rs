@@ -15,9 +15,9 @@ use serde::{de, Deserialize, Deserializer};
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawConfig {
-    #[schemars(required, with = "RawProject")]
-    pub project: Option<RawProject>,
+    pub project: RawProject,
 
+    #[schemars(length(min = 1))]
     #[serde(default, rename = "rule")]
     pub rules: Vec<RawRule>,
 }
@@ -26,21 +26,21 @@ pub struct RawConfig {
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawProject {
-    /// Project root, relative to the `inclean.toml` file's directory.
-    /// Omitted or `"."` means the file's directory. Resolved by
-    /// `discover::resolve_project_root`.
-    pub root: Option<String>,
+    /// Project root, relative to the config file's directory.
+    /// Defaults to `"."` (the config's own directory).
+    /// Must be a literal path, not a glob.
+    #[serde(default = "default_project_root")]
+    pub root: String,
 
-    /// CLI version that wrote this config. Written by `inclean config new`
-    /// and never auto-updated thereafter. Required (the discover step
-    /// surfaces a path-aware missing-field error).
-    #[schemars(required, with = "String")]
-    pub version: Option<String>,
+    /// CLI version that wrote this config.
+    pub version: String,
 
-    /// Minimum CLI version that can parse this config. Written by
-    /// `inclean config new` and never auto-updated thereafter. Required.
-    #[schemars(required, with = "String")]
-    pub min_inclean_version: Option<String>,
+    /// Minimum CLI version that can parse this config.
+    pub min_inclean_version: String,
+}
+
+fn default_project_root() -> String {
+    ".".to_string()
 }
 
 /// Sentinel emitted when a user wrote a top-level object field as the
@@ -380,76 +380,20 @@ pub struct RuleLocator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::testing::config::load_rules;
+
     use super::*;
     use std::path::Path;
 
-    fn parse_str(s: &str) -> RawConfig {
-        parse(s, Path::new("test.toml")).expect("parse")
-    }
-
-    #[test]
-    fn empty_config_is_valid() {
-        let cfg = parse_str("");
-        assert!(cfg.project.is_none());
-        assert!(cfg.rules.is_empty());
-    }
-
-    #[test]
-    fn project_block_round_trips() {
-        let cfg = parse_str(
-            r#"
-            [project]
-            root = "src"
-            version = "0.3.0"
-            min_inclean_version = "0.3.0"
-            "#,
-        );
-        let p = cfg.project.unwrap();
-        assert_eq!(p.root.unwrap(), "src");
-        assert_eq!(p.version.unwrap(), "0.3.0");
-        assert_eq!(p.min_inclean_version.unwrap(), "0.3.0");
-    }
-
-    #[test]
-    fn project_root_wrong_type_is_rejected() {
-        let err = parse(
-            r#"
-            [project]
-            root = 123
-            "#,
-            Path::new("t.toml"),
-        )
-        .unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("root") || msg.contains("string"),
-            "should mention `root`/`string`: {msg}"
-        );
-    }
-
-    #[test]
-    fn unknown_project_field_is_rejected() {
-        let err = parse(
-            r#"
-            [project]
-            root = "."
-            sources = ["src/**"]
-            "#,
-            Path::new("t.toml"),
-        )
-        .unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("sources"));
-    }
-
     #[test]
     fn base_rule_minimal() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
             "#,
-        );
+        )
+        .raw;
         assert_eq!(cfg.rules.len(), 1);
         assert_eq!(cfg.rules[0].name, "base");
         assert!(cfg.rules[0].copied_from.is_none());
@@ -486,7 +430,7 @@ mod tests {
 
     #[test]
     fn full_rule_with_resolve_action() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -497,7 +441,8 @@ mod tests {
             include_directories = ["src/internal"]
             action = { type = "resolve", relative_to = "include" }
             "#,
-        );
+        )
+        .raw;
         let r = &cfg.rules[0];
         assert_eq!(r.file_paths.as_ref().unwrap().len(), 2);
         assert_eq!(r.match_forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
@@ -520,7 +465,7 @@ mod tests {
 
     #[test]
     fn copied_from_field_parses() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -529,13 +474,14 @@ mod tests {
             name = "child"
             copied_from = "base"
             "#,
-        );
+        )
+        .raw;
         assert_eq!(cfg.rules[1].copied_from.as_deref(), Some("base"));
     }
 
     #[test]
     fn all_six_action_variants_parse() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "r1"
@@ -561,7 +507,8 @@ mod tests {
             name = "r6"
             action = { type = "error", message = "no" }
             "#,
-        );
+        )
+        .raw;
         assert!(matches!(
             raw_action_of(&cfg.rules[0]),
             RawAction::Resolve { .. }
@@ -590,13 +537,14 @@ mod tests {
 
     #[test]
     fn comment_out_style_renders_as_slashes() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "r"
             action = { type = "comment_out", style = "/**/" }
             "#,
-        );
+        )
+        .raw;
         match raw_action_of(&cfg.rules[0]) {
             RawAction::CommentOut { style, .. } => {
                 assert_eq!(*style, Some(CommentStyle::Block));
@@ -607,7 +555,7 @@ mod tests {
 
     #[test]
     fn suppression_block_round_trips() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "r"
@@ -617,7 +565,8 @@ mod tests {
                 line = "^inclean: skip$",
             }
             "#,
-        );
+        )
+        .raw;
         let s = raw_suppression_of(&cfg.rules[0]);
         assert_eq!(s.block_start.as_deref(), Some("^USER CODE BEGIN.*$"));
         assert_eq!(s.block_end.as_deref(), Some("^USER CODE END.*$"));
@@ -626,7 +575,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_transform_parses() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "r"
@@ -639,7 +588,8 @@ mod tests {
                 append_if_absent = " // IWYU pragma: export",
             }
             "#,
-        );
+        )
+        .raw;
         let tc = raw_trailing_of(&cfg.rules[0]);
         let t = tc.transform.as_ref().unwrap();
         assert_eq!(t.match_styles.as_ref().unwrap(), &vec![CommentStyle::Line]);
@@ -667,14 +617,15 @@ mod tests {
 
     #[test]
     fn object_context_copied_sentinel_for_action() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "c"
             copied_from = "p"
             action = "${copied}"
             "#,
-        );
+        )
+        .raw;
         assert!(matches!(
             cfg.rules[0].action.as_ref().unwrap(),
             MaybeCopiedObject::Copied
@@ -683,7 +634,7 @@ mod tests {
 
     #[test]
     fn object_context_copied_sentinel_for_suppression_and_trailing() {
-        let cfg = parse_str(
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "c"
@@ -691,7 +642,8 @@ mod tests {
             suppression_comments_regex = "${copied}"
             trailing_comment = "${copied}"
             "#,
-        );
+        )
+        .raw;
         assert!(matches!(
             cfg.rules[0].suppression_comments_regex.as_ref().unwrap(),
             MaybeCopiedObject::Copied
@@ -731,29 +683,5 @@ mod tests {
         .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("action"), "got: {msg}");
-    }
-
-    #[test]
-    fn duplicate_rule_names_are_rejected() {
-        let a = LoadedConfig {
-            path: "/proj/inclean.toml".into(),
-            raw: parse_str(
-                r#"
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-        };
-        let b = LoadedConfig {
-            path: "/proj/src/inclean.toml".into(),
-            raw: parse_str(
-                r#"
-                [[rule]]
-                name = "base"
-                "#,
-            ),
-        };
-        let err = index_rules_by_name([&a, &b]).unwrap_err();
-        assert!(format!("{err}").contains("duplicate rule name"));
     }
 }

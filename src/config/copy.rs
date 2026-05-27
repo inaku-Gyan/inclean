@@ -758,16 +758,9 @@ fn with_ctx<T>(r: Result<T>, ctx: &str, field: &str) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::schema::parse;
-    use std::path::Path;
+    use crate::util::testing::config::load_rules;
 
-    fn load(path: &str, body: &str) -> LoadedConfig {
-        LoadedConfig {
-            path: PathBuf::from(path),
-            raw: parse(body, Path::new(path)).unwrap(),
-        }
-    }
+    use super::*;
 
     fn get<'a>(rules: &'a [(String, ResolvedRule)], name: &str) -> &'a ResolvedRule {
         find_resolved(rules, name).unwrap_or_else(|| panic!("rule `{name}` not found"))
@@ -775,8 +768,7 @@ mod tests {
 
     #[test]
     fn standalone_rule_gets_defaults() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -795,8 +787,7 @@ mod tests {
 
     #[test]
     fn child_inherits_unspecified_fields() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -818,8 +809,7 @@ mod tests {
 
     #[test]
     fn child_overrides_parent_at_top_level() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -837,8 +827,7 @@ mod tests {
 
     #[test]
     fn transitive_copy_through_intermediate() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "a"
@@ -859,8 +848,7 @@ mod tests {
 
     #[test]
     fn copied_token_splats_parent_list() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -881,8 +869,7 @@ mod tests {
 
     #[test]
     fn copied_token_in_scalar_inherits_parent_value() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -903,8 +890,7 @@ mod tests {
 
     #[test]
     fn asymmetric_reset_for_nested_object() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -929,8 +915,7 @@ mod tests {
 
     #[test]
     fn unset_top_level_object_inherits_parent_wholesale() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -952,8 +937,7 @@ mod tests {
 
     #[test]
     fn resolve_preserves_declaration_order() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "zeta"
@@ -972,8 +956,7 @@ mod tests {
 
     #[test]
     fn copied_token_without_parent_errors() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "lone"
@@ -986,8 +969,7 @@ mod tests {
 
     #[test]
     fn copied_from_pointing_at_later_rule_is_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "first"
@@ -1004,8 +986,7 @@ mod tests {
 
     #[test]
     fn self_copy_is_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "a"
@@ -1018,8 +999,7 @@ mod tests {
 
     #[test]
     fn unknown_copied_from_target_is_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "child"
@@ -1032,8 +1012,7 @@ mod tests {
 
     #[test]
     fn constant_expansion_in_file_suffixes() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "r"
@@ -1049,8 +1028,7 @@ mod tests {
 
     #[test]
     fn duplicate_rule_names_are_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "x"
@@ -1065,8 +1043,7 @@ mod tests {
 
     #[test]
     fn action_message_inherits_via_copied_token() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "base"
@@ -1087,8 +1064,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_transform_inherits_when_omitted() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "p"
@@ -1113,8 +1089,7 @@ mod tests {
 
     #[test]
     fn object_context_copied_action() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "p"
@@ -1135,8 +1110,7 @@ mod tests {
 
     #[test]
     fn object_context_copied_trailing_inherits_whole_object() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "p"
@@ -1162,8 +1136,7 @@ mod tests {
 
     #[test]
     fn object_context_copied_without_parent_is_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "lone"
@@ -1176,8 +1149,7 @@ mod tests {
 
     #[test]
     fn append_if_absent_with_newline_is_rejected() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             "[[rule]]\nname = \"r\"\ntrailing_comment = { append_if_absent = \"x\\ny\" }\n",
         );
         let err = resolve(&[cfg]).unwrap_err();
@@ -1187,8 +1159,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_writes_reset_transform_to_none() {
-        let cfg = load(
-            "/p/inclean.toml",
+        let cfg = load_rules(
             r#"
             [[rule]]
             name = "p"
