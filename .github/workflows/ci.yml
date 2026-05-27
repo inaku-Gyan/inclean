@@ -3,6 +3,7 @@ name: ci
 on:
   workflow_call:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - "**/*.md"
       - "LICENSE"
@@ -20,6 +21,9 @@ jobs:
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest
+    # Run on non-pull-request events, or on pull requests that are not drafts.
+    # Guard against missing github.event.pull_request when the event is not a pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request == null || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v6
 
