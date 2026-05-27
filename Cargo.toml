@@ -45,3 +45,6 @@ libtest-mimic = "0.8"
 name = "golden"
 path = "tests/run_golden_tests.rs"
 harness = false
+
+[lints.clippy]
+too_many_arguments = "allow"

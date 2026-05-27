@@ -427,7 +427,7 @@ fn process_trailing(
 }
 
 fn extract_comment_body(trailing: &str, style: CommentStyle) -> String {
-    let s = trailing.trim_start_matches(|c: char| c == ' ' || c == '\t');
+    let s = trailing.trim_start_matches([' ', '\t']);
     let body = match style {
         CommentStyle::Line => s.trim_start_matches("//"),
         CommentStyle::Block => {
@@ -457,7 +457,7 @@ fn run_transform_action(
             message: _,
         } => {
             let out_style = pick_comment_style(*output_style, existing_style);
-            Ok(Some(format_trailing(&existing_body.to_string(), out_style)))
+            Ok(Some(format_trailing(existing_body, out_style)))
         }
         ResolvedTrailingAction::Replace {
             with,
