@@ -1,0 +1,17 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+# A fake "flat" library whose internal sources include headers by bare
+# basename (#include "foo.h") even though those headers live at
+# include/mylib/internal/foo.h. After inclean, the includes should
+# resolve relative to the source file so consumers only need
+# -Iinclude. This is the canonical resolve-action use case.
+
+[[rule]]
+name = "flat"
+file_paths = ["src/**", "include/**"]
+match_forms = ["quote"]
+include_directories = ["include/mylib/internal"]
+action = { type = "resolve", relative_to = "include" }

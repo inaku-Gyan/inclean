@@ -1,0 +1,16 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+# Exercise the trailing-comment policies:
+# - transform.replace : substitute the body of matching trailing comments
+# - append_if_absent  : add a comment when no trailing comment survives
+# - non-matching transforms leave existing comments alone
+
+[[rule]]
+name = "trailing"
+file_paths = ["src/**/*"]
+include_match = ["**"]
+action = { type = "keep" }
+trailing_comment = { append_if_absent = " // generated", transform = { match_styles = ["//"], content_regex = "^TODO:.*$", action = { type = "replace", with = "WAS_${original}" } } }

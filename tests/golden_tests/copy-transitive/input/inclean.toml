@@ -1,0 +1,26 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+# A → B → C copy chain. B omits everything (inherits A wholesale).
+# C overrides `file_paths` and uses `${copied}` splat in `file_suffixes`
+# to mean "parent's array + new element".
+
+[[rule]]
+name = "a"
+file_paths = ["src/**"]
+file_suffixes = [".c"]
+include_match = ["foo.h"]
+action = { type = "replace", with = "lib/foo.h" }
+
+[[rule]]
+name = "b"
+copied_from = "a"
+
+[[rule]]
+name = "c"
+copied_from = "b"
+file_paths = ["other/**"]
+file_suffixes = ["${copied}", ".cpp"]
+action = { type = "replace", with = "lib/c-foo.h" }

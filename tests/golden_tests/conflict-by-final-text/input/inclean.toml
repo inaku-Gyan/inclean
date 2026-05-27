@@ -1,0 +1,30 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+# agree.c — both rules end up writing the same final text, no conflict.
+[[rule]]
+name = "agree-a"
+file_paths = ["src/agree.c"]
+include_match = ["foo.h"]
+action = { type = "replace", with = "lib/foo.h" }
+
+[[rule]]
+name = "agree-b"
+file_paths = ["src/agree.c"]
+include_match = ["foo.h"]
+action = { type = "replace", with = "lib/foo.h" }
+
+# clash.c — output_form diverges; conflict, file skipped.
+[[rule]]
+name = "clash-quote"
+file_paths = ["src/clash.c"]
+include_match = ["bar.h"]
+action = { type = "replace", with = "lib/bar.h", output_form = "quote" }
+
+[[rule]]
+name = "clash-angle"
+file_paths = ["src/clash.c"]
+include_match = ["bar.h"]
+action = { type = "replace", with = "lib/bar.h", output_form = "angle" }

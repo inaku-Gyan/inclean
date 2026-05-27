@@ -1,0 +1,10 @@
+[project]
+root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+[[rule]]
+name = "rewrite"
+file_paths = ["src/**/*"]
+include_match = ["**"]
+action = { type = "replace", with = "lib/${original}" }
