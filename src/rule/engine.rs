@@ -24,9 +24,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
+use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};

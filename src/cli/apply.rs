@@ -32,7 +32,11 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
         CheckMode::Run,
     )?;
     let written = run::apply(&summary)?;
-    let skipped_for_errors = summary.files.iter().filter(|f| run::file_has_errors(f)).count();
+    let skipped_for_errors = summary
+        .files
+        .iter()
+        .filter(|f| run::file_has_errors(f))
+        .count();
 
     if !summary.skipped.is_empty() {
         eprintln!(
@@ -46,7 +50,9 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
     for w in &summary.warnings {
         eprintln!("{w}");
     }
-    println!("wrote {written} file(s); {skipped_for_errors} file(s) skipped due to unfixable violations");
+    println!(
+        "wrote {written} file(s); {skipped_for_errors} file(s) skipped due to unfixable violations"
+    );
     let report = run::render_unfixable_report(&summary);
     if !report.is_empty() {
         eprint!("{report}");

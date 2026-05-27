@@ -56,7 +56,10 @@ pub(super) fn start_dir_for(config: Option<&std::path::Path>, paths: &[PathBuf])
     PathBuf::from(".")
 }
 
-fn print_config_report(config: Option<&std::path::Path>, start_dir: &std::path::Path) -> Result<()> {
+fn print_config_report(
+    config: Option<&std::path::Path>,
+    start_dir: &std::path::Path,
+) -> Result<()> {
     use crate::config::copy;
     use crate::config::discover;
     let config_path: PathBuf = match config {
@@ -102,7 +105,10 @@ enum ReportFilter {
 fn print_full_report(summary: &Summary, filter: ReportFilter) {
     let mut interesting = 0usize;
     for file in &summary.files {
-        let any = file.include_results.iter().any(|r| should_print(&r.outcome, filter));
+        let any = file
+            .include_results
+            .iter()
+            .any(|r| should_print(&r.outcome, filter));
         if !any {
             continue;
         }

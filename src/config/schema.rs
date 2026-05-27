@@ -562,12 +562,30 @@ mod tests {
             action = { type = "error", message = "no" }
             "#,
         );
-        assert!(matches!(raw_action_of(&cfg.rules[0]), RawAction::Resolve { .. }));
-        assert!(matches!(raw_action_of(&cfg.rules[1]), RawAction::Replace { .. }));
-        assert!(matches!(raw_action_of(&cfg.rules[2]), RawAction::Keep { .. }));
-        assert!(matches!(raw_action_of(&cfg.rules[3]), RawAction::Remove { .. }));
-        assert!(matches!(raw_action_of(&cfg.rules[4]), RawAction::CommentOut { .. }));
-        assert!(matches!(raw_action_of(&cfg.rules[5]), RawAction::Error { .. }));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[0]),
+            RawAction::Resolve { .. }
+        ));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[1]),
+            RawAction::Replace { .. }
+        ));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[2]),
+            RawAction::Keep { .. }
+        ));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[3]),
+            RawAction::Remove { .. }
+        ));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[4]),
+            RawAction::CommentOut { .. }
+        ));
+        assert!(matches!(
+            raw_action_of(&cfg.rules[5]),
+            RawAction::Error { .. }
+        ));
     }
 
     #[test]

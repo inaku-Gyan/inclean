@@ -457,8 +457,7 @@ name = "in-nm""#,
         let msg = format!("{err:#}");
         assert!(msg.contains("target/inclean.toml") || msg.contains("target\\inclean.toml"));
         assert!(
-            msg.contains("node_modules/inclean.toml")
-                || msg.contains("node_modules\\inclean.toml")
+            msg.contains("node_modules/inclean.toml") || msg.contains("node_modules\\inclean.toml")
         );
     }
 

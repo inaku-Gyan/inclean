@@ -208,10 +208,7 @@ pub fn run(
     let resolved_config_path: PathBuf = match config_path {
         Some(p) => {
             if !p.is_file() {
-                anyhow::bail!(
-                    "--config path does not point at a file: {}",
-                    p.display(),
-                );
+                anyhow::bail!("--config path does not point at a file: {}", p.display(),);
             }
             p.to_path_buf()
         }
@@ -278,8 +275,7 @@ pub fn run(
             Ok(file_result) => {
                 // Pull conflicts + unfixable details out of include_results.
                 for r in &file_result.include_results {
-                    let original_line =
-                        source_line_for(&file_result.original, r.include.line);
+                    let original_line = source_line_for(&file_result.original, r.include.line);
                     match &r.outcome {
                         IncludeOutcome::Conflict {
                             rule_outputs,
@@ -408,12 +404,7 @@ fn collect_duplicate_literal_warnings(cfg: &crate::config::schema::LoadedConfig)
     out
 }
 
-fn check_list_dup(
-    rule_name: &str,
-    field: &str,
-    list: Option<&[String]>,
-    out: &mut Vec<String>,
-) {
+fn check_list_dup(rule_name: &str, field: &str, list: Option<&[String]>, out: &mut Vec<String>) {
     use std::collections::HashSet;
     let Some(v) = list else { return };
     let mut seen: HashSet<&str> = HashSet::new();
@@ -436,11 +427,7 @@ fn source_line_for(source: &str, line: usize) -> String {
     if line == 0 {
         return String::new();
     }
-    source
-        .lines()
-        .nth(line - 1)
-        .unwrap_or("")
-        .to_string()
+    source.lines().nth(line - 1).unwrap_or("").to_string()
 }
 
 /// Apply rewrites to disk.
@@ -642,11 +629,7 @@ fn process_file(
     let (includes, report) = include_line::scan_with_report(original);
     let mut lex_warnings: Vec<String> = Vec::new();
     for (line, reason) in &report.skipped_lines {
-        lex_warnings.push(format!(
-            "{}:{}: {reason}",
-            relpath.display(),
-            line
-        ));
+        lex_warnings.push(format!("{}:{}: {reason}", relpath.display(), line));
     }
     let line_table = include_line::line_table(original);
     let suppressed = engine::compute_all_suppressed(rules, original, &line_table);
@@ -783,7 +766,10 @@ fn collapse_outcomes(
         }
     } else {
         let differing_aspects = compute_differing_aspects(
-            &finals.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(),
+            &finals
+                .iter()
+                .map(|(_, _, t)| t.as_str())
+                .collect::<Vec<_>>(),
         );
         IncludeOutcome::Conflict {
             rule_outputs: finals.into_iter().map(|(n, _, t)| (n, t)).collect(),
@@ -943,16 +929,18 @@ fn build_path_filter(project_root: &Path, paths: &[PathBuf]) -> Result<PathFilte
     if paths.is_empty() {
         return Ok(PathFilter::empty());
     }
-    let root_canon = std::fs::canonicalize(project_root).with_context(|| {
-        format!("canonicalize project root {}", project_root.display())
-    })?;
+    let root_canon = std::fs::canonicalize(project_root)
+        .with_context(|| format!("canonicalize project root {}", project_root.display()))?;
     let cwd = std::env::current_dir().context("read current working directory")?;
     let mut prefixes: Vec<PathBuf> = Vec::with_capacity(paths.len());
     for p in paths {
-        let absolute = if p.is_absolute() { p.clone() } else { cwd.join(p) };
-        let canon = std::fs::canonicalize(&absolute).with_context(|| {
-            format!("path filter entry {} does not exist", absolute.display())
-        })?;
+        let absolute = if p.is_absolute() {
+            p.clone()
+        } else {
+            cwd.join(p)
+        };
+        let canon = std::fs::canonicalize(&absolute)
+            .with_context(|| format!("path filter entry {} does not exist", absolute.display()))?;
         let rel = canon.strip_prefix(&root_canon).map_err(|_| {
             anyhow::anyhow!(
                 "path filter entry {} is outside the project root {}",

@@ -1,8 +1,16 @@
 # inclean 重构问题清单（v0.3 spec vs 现实现）
 
+> **状态：全部条目已在 M-A → M-G 中修复，并经 M-VERIFY 验证。**
+> 详见仓库 `refactor` 分支自 commit `f633c15` 起的 7 个修复 commit
+> （`M-A` 流水线基础设施、`M-B` CLI 重构、`M-C` apply/diff/check 语义、
+> `M-D` 引擎/动作正确性、`M-E` 配置语义、`M-F` 测试 fixtures、`M-G`
+> 文档/模板/schema）。本文件的诊断条目保留作为修复轨迹的参考；
+> 每个区块末尾标注 "✅ 修复" 时附带承担该修复的 milestone。
+
+
 对照源：[refactor.md](refactor.md) / [src/](src/) / [tests/](tests/) / `/home/inaku/.claude/plans/eventual-leaping-cloud.md`
 
-## A. CLI 命令结构（与 spec 严重偏差）
+## A. CLI 命令结构（与 spec 严重偏差） — ✅ M-B 全部修复
 
 | # | spec 要求 | 现实现 | 文件 |
 |---|---|---|---|
@@ -15,7 +23,7 @@
 | A7 | `inclean check config` 应是 `inclean config check` 的等价 alias | `check --level config` 走 alias，子命令 `check config` 不存在（spec 用法 `inclean check config` 会被 clap 解为 `dir=config`） | 同上 |
 | A8 | `inclean config new [PATH]` 与 `inclean init [PATH]` 是 alias | OK，但都把 PATH 默认设为 `"."`，无法区分"用户没传"和"用户传了 `.`" — spec 对二者并无明示差异，但应一致 | [src/cli/mod.rs:35-38](src/cli/mod.rs#L35-L38) [src/cli/mod.rs:99-101](src/cli/mod.rs#L99-L101) |
 
-## B. Apply / Diff / Check 行为偏差
+## B. Apply / Diff / Check 行为偏差 — ✅ M-C 全部修复
 
 | # | spec 要求 | 现实现 | 文件 |
 |---|---|---|---|
@@ -26,7 +34,7 @@
 | B5 | check：`unfixable` 档"只要 hit 到任何一条配置了 `action.type='error'` 或 `trailing_comment.transform.action.type='error'` 的规则，或 rule conflict，就算 unfixable" | 既无 `unfixable` 档也无对应过滤逻辑 | 整个 check.rs |
 | B6 | apply 显式 "正式启动引擎前，自动先检查 config" | 当前是隐式（`run(.., Run)` 一路加载配置），没有"先 config-only check 一次再跑引擎"的两步语义；config 错误时也不会先给出 config-check 风格的友好提示 | [src/cli/apply.rs:11-12](src/cli/apply.rs#L11-L12) |
 
-## C. 引擎 / 管道行为偏差
+## C. 引擎 / 管道行为偏差 — ✅ C1/C2/C8/C9 在 M-A；C4 在 M-C；C5/C6/C10/C11 在 M-D；C3 用户决定保留 par_iter（仅 M-G 文档说明等价性）；C7 在 M-E
 
 | # | spec 要求 | 现实现 | 文件 |
 |---|---|---|---|
@@ -42,7 +50,7 @@
 | C10 | scan 的"parse 失败 → skip + warn"应同时覆盖**畸形预处理 / 不支持的语法**等情况，不止 UTF-8 失败 | 现实现只有"非 UTF-8 → SkippedFile"。lex 出现未闭合 `"` / 未闭合 `<` 等情况是静默吞掉、不报告。最后一个 include 之后的 `#includefoo` 等 case 也无 warn | [src/pipeline/run.rs:294-313](src/pipeline/run.rs#L294-L313) [src/lex/include_line.rs:236-253](src/lex/include_line.rs#L236-L253) |
 | C11 | 行尾保留：spec 要求"行尾（CRLF / LF / 混合）逐文件检测并保持。引擎不做任何统一化" | 行尾在 action 端从原行抓 `\r\n`/`\n`（OK），但**整个文件层面没有归一化检测/回写策略文档**。新插入文本（如 `comment_out`/`remove`）若文件是 CRLF 也是 OK 因从原行复制 terminator，但若 `append_if_absent` 含 `\n`，没保证转 CRLF | [src/rule/action.rs:192-207](src/rule/action.rs#L192-L207) |
 
-## D. 配置语义 / 占位符
+## D. 配置语义 / 占位符 — ✅ D1/D2/D4 在 M-E；D5（refactor.md 文案）已在最初 audit 阶段修正
 
 | # | spec 要求 | 现实现 | 文件 |
 |---|---|---|---|
@@ -52,7 +60,7 @@
 | D4 | `RawTrailingTransform.action` 在 TS 类型里**不是 optional**（`action: ...` 无 `?`） | 现实现是 `Option<RawTrailingAction>`；None 时悄悄退化为 `Keep { Preserve, "" }`。spec 不允许这种隐式默认 | [src/config/schema.rs:212-218](src/config/schema.rs#L212-L218) [src/config/copy.rs:621-627](src/config/copy.rs#L621-L627) |
 | D5 | spec 的 `include_directories` 字段，类型 `string[]`，注释 `// glob pattern`，**但例子里全是字面路径**。用户决策已定为 literal — spec 文案需要修正 | refactor.md 的字段注释还是 `// glob pattern`，没改 | [refactor.md:26](refactor.md) |
 
-## E. M7 测试覆盖（plan 列出的几乎全部缺失）
+## E. M7 测试覆盖（plan 列出的几乎全部缺失） — ✅ M-F 补齐 9 个 golden（已删除的 8 个旧 fixture 中两个最具代表性的——`flat-library-resolve` 与 `trailing-comment-policies`——以 v0.3 schema 重建，其余以新行为 golden 覆盖）
 
 plan §M7 列举要保留/重写/新增的固件与测试，对照实际结果：
 
@@ -80,7 +88,7 @@ plan §M7 列举要保留/重写/新增的固件与测试，对照实际结果�
 
 总计：plan 列出 16 项 M7 工作，**实际完成 1 项**（comment-out golden），其余通过单元测试粗略覆盖或完全缺失。
 
-## F. 文档 / 模板细节
+## F. 文档 / 模板细节 — ✅ M-G 全部修复
 
 | # | spec 要求 | 现实现 | 文件 |
 |---|---|---|---|
@@ -90,7 +98,7 @@ plan §M7 列举要保留/重写/新增的固件与测试，对照实际结果�
 | F4 | refactor.md 第 26 行的 `// glob pattern` 注释错误（与用户决策"literal"冲突） | 文件未改 | [refactor.md:26](refactor.md) |
 | F5 | README.zh-CN.md 在本次重构中**完全没有更新** | 整文件仍是旧 v0.2 描述（如果存在） | [README.zh-CN.md](README.zh-CN.md) |
 
-## G. 死代码 / 残留
+## G. 死代码 / 残留 — ✅ G1 在 M-B（移除 #[allow(dead_code)]）；G2 在 M-A（移除 config_dir_relpath + is_ancestor_or_self）；G3 在 M-C 中通过新增 TrailingCommentError 变体使分类完整
 
 | # | 描述 | 文件 |
 |---|---|---|
@@ -98,7 +106,7 @@ plan §M7 列举要保留/重写/新增的固件与测试，对照实际结果�
 | G2 | `CompiledRule.config_dir_relpath` + `is_ancestor_or_self`：v0.3 禁止 sub-config，已成死代码 | [src/rule/engine.rs:87-92](src/rule/engine.rs#L87-L92) [src/pipeline/run.rs:518-535](src/pipeline/run.rs#L518-L535) |
 | G3 | `Outcome` 中 `EvaluationFailure` 与 `Error` 的退出码处理在 `summary_exit_code` 里分别给 3 和 2 — spec §"checks" 列了四类违规，但当前没有 `EvaluationFailure` 对应的明确 spec 分类（应归为 unfixable，没问题） | [src/pipeline/run.rs:269-285](src/pipeline/run.rs#L269-L285) |
 
-## H. plan 自身的遗漏
+## H. plan 自身的遗漏 — ✅ M-G 修复（默认 action 文档化 / README.zh-CN.md 更新 / Status 段更新到 0.3.0）
 
 - plan §"Open implementation-time decisions"里把"默认 action"列为待定：现实现敲定为 `Keep { Preserve }`，但**未在任何用户可见文档里说明**。
 - plan §M8 写"`README.zh-CN.md` 与 README 一并更新"——实际只动了 README.md。

@@ -110,8 +110,8 @@ fn check_against(path: &Path, rendered: &str) -> Result<u8> {
             target.display()
         );
     }
-    let on_disk =
-        std::fs::read_to_string(&target).with_context(|| format!("reading {}", target.display()))?;
+    let on_disk = std::fs::read_to_string(&target)
+        .with_context(|| format!("reading {}", target.display()))?;
     if on_disk == rendered {
         return Ok(0);
     }

@@ -1208,6 +1208,9 @@ mod tests {
         let resolved = resolve(&[cfg]).unwrap();
         let c = get(&resolved, "c");
         assert!(c.trailing_comment.transform.is_none());
-        assert_eq!(c.trailing_comment.append_if_absent.as_deref(), Some(" // note"));
+        assert_eq!(
+            c.trailing_comment.append_if_absent.as_deref(),
+            Some(" // note")
+        );
     }
 }
