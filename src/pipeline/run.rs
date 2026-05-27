@@ -500,7 +500,12 @@ pub fn render_unfixable_report(summary: &Summary) -> String {
         }
         for (rule, final_text) in &u.rules {
             match final_text {
-                Some(text) => out.push_str(&format!("    rule `{rule}` -> {text}\n")),
+                Some(text) => {
+                    // Per refactor.md §"规则冲突": show the per-rule final
+                    // line with `#include ` reattached so the diagnostic
+                    // reads as the bytes that rule would write.
+                    out.push_str(&format!("    rule `{rule}`: #include {text}\n"))
+                }
                 None => out.push_str(&format!("    rule `{rule}`\n")),
             }
         }
