@@ -4,4 +4,4 @@ pub mod lex;
 pub mod pipeline;
 pub mod profile;
 pub mod rule;
-pub mod util;
+pub mod utils;

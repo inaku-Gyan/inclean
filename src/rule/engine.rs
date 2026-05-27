@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use crate::config::copy::resolve;
     use crate::config::schema::IncludeForm;
-    use crate::util::testing::config::load_rules;
+    use crate::utils::testing::config::load_rules;
 
     fn compile_rules(body: &str) -> Vec<CompiledRule<'static>> {
         let lc = load_rules(body);

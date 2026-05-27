@@ -380,7 +380,7 @@ pub struct RuleLocator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::testing::config::load_rules;
+    use crate::utils::testing::config::load_rules;
 
     use super::*;
     use std::path::Path;

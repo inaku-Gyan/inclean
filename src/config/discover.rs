@@ -210,7 +210,7 @@ pub fn assert_no_extra_configs(project_root: &Path, root_config_path: &Path) -> 
 
 #[cfg(test)]
 mod tests {
-    use crate::util::testing::config::MIN_PROJECT_BLOCK;
+    use crate::utils::testing::config::MIN_PROJECT_BLOCK;
 
     use super::*;
 

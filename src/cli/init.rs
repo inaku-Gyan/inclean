@@ -67,7 +67,7 @@ fn resolve_target(path: &Path) -> PathBuf {
     }
     // Doesn't exist yet — decide between "create file at this path" vs
     // "treat as new directory + create CONFIG_FILENAME inside".
-    use crate::util::PathExt;
+    use crate::utils::PathExt;
     if path.looks_like_directory() {
         path.join(CONFIG_FILENAME)
     } else {

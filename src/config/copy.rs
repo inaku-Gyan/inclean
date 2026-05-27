@@ -758,7 +758,7 @@ fn with_ctx<T>(r: Result<T>, ctx: &str, field: &str) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::testing::config::load_rules;
+    use crate::utils::testing::config::load_rules;
 
     use super::*;
 

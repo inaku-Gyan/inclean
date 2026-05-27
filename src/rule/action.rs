@@ -33,7 +33,7 @@ use super::engine::CompiledRule;
 use crate::config::copy::{ResolvedAction, ResolvedTrailingAction, ResolvedTrailingComment};
 use crate::config::schema::{CommentStyle, IncludeForm, OutputCommentStyle, OutputForm};
 use crate::lex::include_line::Include;
-use crate::util::PathExt;
+use crate::utils::PathExt;
 
 /// The result of evaluating one rule's action against one include.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -548,7 +548,7 @@ mod tests {
     use super::*;
     use crate::config::copy::resolve;
     use crate::config::schema::IncludeForm;
-    use crate::util::testing::config::load_rules;
+    use crate::utils::testing::config::load_rules;
 
     fn compile_rules(body: &str) -> Vec<CompiledRule<'static>> {
         let lc = load_rules(body);
