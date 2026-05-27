@@ -85,50 +85,50 @@ inclean diff                # 以 unified diff 形式查看改写
 inclean apply               # 就地写入改写
 ```
 
-除 `explain` 外的每个命令都接受一个可选的 `[DIR]` 参数 —— 指向
-存放根 `inclean.toml` 的目录，默认为 `.`。
+`check` / `diff` / `apply` 可额外接受 `[PATHS...]` 用于限制处理范围；
+未传时考虑项目根下所有源文件。`-c PATH` 覆盖向上查找 `inclean.toml`
+的行为；`-j N` 指定工作线程数。
 
 ### 示例
 
-考虑一个「扁平」库：头文件真正位于
-`include/mylib/internal/foo.h`，但内部 `#include` 仅用 basename。
-[tests/fixtures/flat-library/](tests/fixtures/flat-library/) 这个
-fixture 自带如下配置：
+用 `replace` 动作把 `#include "foo.h"` 改写为
+`#include "lib/foo.h"`：
 
 ```toml
 [project]
 root = "."
+version = "0.3.0"
+min_inclean_version = "0.3.0"
 
 [[rule]]
-name = "base"
-paths = ["src/**", "include/**"]
-forms = ["quote"]
-allowed_include_dirs = ["include"]
-original_include_dirs = ["include/mylib/internal"]
+name = "lib-prefix"
+file_paths = ["src/**/*"]
+include_match = ["foo.h", "bar.h"]
+action = { type = "replace", with = "lib/${original}" }
 ```
 
-源码中的 `#include "foo.h"` 会被改写为
-`#include "mylib/internal/foo.h"` —— 使用者只需 `-Iinclude`。
+完整端到端示例见 [tests/golden_tests/](tests/golden_tests/)。
 
 ## 命令
 
-| 命令                                     | 用途                                                 |
-| ---------------------------------------- | ---------------------------------------------------- |
-| `inclean init [DIR]`                     | 生成带注释的 `inclean.toml` 模板。拒绝覆盖已有文件。 |
-| `inclean check [DIR] [-l/--level LEVEL]` | 三个深度之一的只读检查。永不写入。                   |
-| `inclean diff [DIR]`                     | 以 unified diff 形式打印每一处拟改写。               |
-| `inclean apply [DIR]`                    | 就地应用改写。若存在任何规则树冲突，整体拒绝执行。   |
-| `inclean explain <FILE> [INCLUDE]`         | 逐层追踪指定 `#include` 被哪条规则匹配 —— 调试辅助。 |
+| 命令                                                                  | 用途                                                                                                                                              |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inclean init [PATH]`                                                 | 生成带注释的 `inclean.toml` 模板。`inclean config new` 的别名。                                                                                   |
+| `inclean check [config\|unfixable\|all] [-c PATH] [-j N] [PATHS...]`  | 只读检查。`config` 仅校验配置文件；`unfixable` 只报告无法自动修复的违规；`all`（默认）报告每一处 per-include 结果。                               |
+| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]`                  | 以 unified diff 形式打印每一处拟改写。`-o` 写入文件而非 stdout。                                                                                  |
+| `inclean apply [-c PATH] [-j N] [PATHS...]`                           | 就地应用改写。无 unfixable 违规的文件被写入；存在违规（error / conflict / evaluation_failure）的文件整体跳过，最后打印一份违规详情报告。          |
+| `inclean config check [-c PATH]`                                      | `inclean check config` 的别名。                                                                                                                   |
+| `inclean config new [PATH]`                                           | `inclean init` 的别名。                                                                                                                           |
+| `inclean config schema [-o PATH] [--check]`                           | 输出 / 校验 `inclean.toml` 的 JSON Schema。`--check` 模式要求 `-o`，若 schema 偏移则以非零状态码退出。                                            |
 
-`inclean check` 可在三个层级之一运行（`-l config | rules | full`，
-默认 `full`）。每一层是上一层的严格超集；完整说明见
-[docs/configuration.md](docs/configuration.md#inclean-check-levels)。
+未指定 action 的规则默认采用 `{ type = "keep", output_form = "preserve" }`
+（即不动作）。
 
 ## 文档
 
 - **[docs/configuration.md](docs/configuration.md)** —— 完整的
-  `inclean.toml` schema：五层匹配模型、继承、`@std.*` 常量、动作、
-  占位符、退出码。
+  `inclean.toml` schema：四层匹配模型、`copied_from` 复制语义、
+  `@std.*` 常量、6 种动作、占位符、退出码。
 - **[docs/architecture.md](docs/architecture.md)** —— 代码层面的
   架构：模块图、流水线阶段、关键不变量。
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 工具链、开发流程、
@@ -137,9 +137,17 @@ original_include_dirs = ["include/mylib/internal"]
 
 ## 状态
 
-`0.1.1` —— 当前版本。包含对 `trailing_comment` 动作 schema 的
-不兼容改动；迁移说明详见 [CHANGELOG.md](CHANGELOG.md)。v1 功能
-已完整。
+`0.3.0` —— 当前版本。围绕 `copied_from`（单层、可传递的复制语义，
+替代原来的 `extends` AND 合并）、4 层匹配（`file_paths` /
+`file_suffixes` / `match_forms` / `include_match`）、六种动作
+（`resolve` / `replace` / `keep` / `remove` / `comment_out` /
+`error`）、`suppression_comments_regex` 屏蔽区域、新的
+`trailing_comment.transform` 模型，以及"按最终行文本判定冲突"
+（而非依赖规则树不变量）等设计做了大规模重构。CLI 新增
+`check unfixable` / `check all`、`[PATHS...]` 过滤、以及通过
+`inclean diff -o` 将统一 diff 写入文件。inclean 处于 pre-1.0
+beta，breaking schema 变更不提供迁移 shim；详见
+[CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy)。
 
 ## 许可证
 

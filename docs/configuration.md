@@ -250,15 +250,62 @@ Trailing-comment processing applies to `resolve` / `replace` / `keep`.
 
 ## `${copied}` and other placeholders
 
-- `${copied}` — used in a child rule's field to pull the parent's value
-  at that position. In a string field, the whole string must be
-  `"${copied}"`. In a string-list field, an element equal to `"${copied}"`
-  is a splat (parent's entire list expanded at that position).
+`${copied}` resolves at config-load time (not at action-evaluation time)
+and may appear in three contexts inside a rule that has `copied_from`:
+
+1. **Scalar context** — a string field's entire value is `"${copied}"`.
+   The field inherits the parent's resolved scalar value verbatim.
+   Example: `relative_to = "${copied}"` inside a child's `action`.
+
+2. **Array-element context** — an element equal to `"${copied}"` inside
+   a string list is a splat: the parent's entire array expands in place.
+   Empty / unset parent lists splat to zero elements. Example:
+   `file_suffixes = ["${copied}", ".inl"]` extends the parent's list.
+
+3. **Object context** — the whole top-level field is the string
+   `"${copied}"`, inheriting the parent's entire resolved object.
+   Valid only on `action`, `suppression_comments_regex`, and
+   `trailing_comment`. Example:
+   ```toml
+   [[rule]]
+   name = "child"
+   copied_from = "base"
+   trailing_comment = "${copied}"
+   ```
+   The child's `trailing_comment` is identical to `base`'s resolved
+   trailing_comment.
+
+If a rule lacks `copied_from`, any `${copied}` use is a config error.
+
+Other placeholders (applied at action-evaluation time, on the matched
+include):
+
 - `${current_file}` — project-relative path of the file being edited
   (forward-slash separated).
 - `${original}` — the original include argument (in an action template)
   or the original trailing-comment body (in a trailing-comment template).
 - `$$` — literal `$` inside a substitution string.
+
+## Glob anchoring (footgun)
+
+Every glob field — `file_paths`, `include_match`, internal matchers —
+is **full-string anchored**, matching `globset` / `.gitignore`
+semantics:
+
+- `foo.h` matches ONLY the literal `foo.h`, not `a/foo.h`.
+- Use `**/foo.h` to match `foo.h` at any depth.
+- `*` does NOT cross `/`; only `**` does.
+
+`include_directories` is **NOT a glob** — its entries are literal
+directory paths under the project root. No `**` expansion; no
+`.gitignore` semantics.
+
+## `append_if_absent` line-terminator rule
+
+`trailing_comment.append_if_absent` must not contain `\n` or `\r`. It's
+appended onto the same physical line as the include; an embedded line
+terminator would silently mangle CRLF↔LF behavior on different
+platforms. Config-check rejects newlines in the field at load time.
 
 ## `@std.*` built-in constants
 
@@ -298,15 +345,42 @@ When multiple rules match the same `#include`:
 ## CLI
 
 ```sh
-inclean init [PATH]                 # alias of `inclean config new`
-inclean check [-l config|full] [DIR]
-inclean apply [DIR]
-inclean diff [DIR]
-inclean config check [DIR]          # alias of `check -l config`
-inclean config new [PATH]           # alias of `init`
-inclean config schema [-o OUT] [--check PATH]
-inclean schema [-o OUT] [--check PATH]
+inclean init [PATH]                                          # alias of `config new`
+inclean check [config|unfixable|all] [-c PATH] [-j N] [PATHS...]
+inclean apply [-c PATH] [-j N] [PATHS...]
+inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]
+inclean config check [-c PATH]                               # alias of `check config`
+inclean config new [PATH]                                    # alias of `init`
+inclean config schema [-o PATH] [--check]
 ```
+
+`check` kinds:
+- `config` — validate the config file only (no source files opened).
+- `unfixable` — only report errors / evaluation failures / conflicts.
+- `all` (default) — report every per-include outcome.
+
+`-c PATH` overrides the upward `inclean.toml` walk. `-j N` sets the
+worker thread count (default: CPU count). `PATHS...` restricts
+processing to source files rooted at any of the given paths.
+
+`apply` and `diff` pre-flight a config-only check; failures surface with
+a `config-only check failed:` prefix. Apply does **not** abort when a
+run produces unfixable violations: fixable files are written normally;
+files containing any unfixable outcome are skipped (no partial writes),
+and the unfixable details are printed at the end. The exit code is
+non-zero iff any unfixable violation surfaced.
+
+The unfixable report's kinds:
+
+- `error` — a rule's `action = { type = "error" }` matched.
+- `evaluation_failure` — `resolve` found zero or multiple matches,
+  or a similar runtime failure.
+- `conflict` — multiple rules matched the same include and produced
+  different final-line texts; the report lists each rule, its final
+  text, and a `differs in:` line naming the parts (include path /
+  output_form / trailing_comment).
+- `trailing_comment_error` —
+  `trailing_comment.transform.action = { type = "error" }` matched.
 
 ## Exit codes
 

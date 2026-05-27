@@ -21,29 +21,30 @@ Nothing in `config`/`lex`/`rule` depends on `pipeline` or `cli`.
 
 | File | Responsibility |
 | --- | --- |
-| [src/cli/mod.rs](../src/cli/mod.rs) | clap `Cli`/`Command` parser; routes to per-subcommand handlers; owns `CheckLevel` and the `config` subcommand group. |
+| [src/cli/mod.rs](../src/cli/mod.rs) | clap `Cli`/`Command` parser; routes to per-subcommand handlers; owns `CheckKind` (`config`/`unfixable`/`all`) and the `config` subcommand group. |
 | [src/cli/init.rs](../src/cli/init.rs) | `inclean init` / `inclean config new`. Resolves the PATH (existing dir vs nonexistent dir-like vs file-like) and writes the starter `inclean.toml`. |
-| [src/cli/check.rs](../src/cli/check.rs) | Calls `pipeline::run`, prints per-outcome report (config-only or full). |
-| [src/cli/diff.rs](../src/cli/diff.rs) | `inclean diff` — runs the pipeline and renders unified diff. |
-| [src/cli/apply.rs](../src/cli/apply.rs) | `inclean apply` — runs the pipeline and writes rewritten files (refuses on conflicts; skips files with errors). |
-| [src/cli/schema.rs](../src/cli/schema.rs) | `inclean schema` / `inclean config schema`. Emits the JSON schema from `schemars`; `--check PATH` diffs against an existing file. |
+| [src/cli/check.rs](../src/cli/check.rs) | Calls `pipeline::run`; prints config-only / unfixable-only / all-outcomes reports per `CheckKind`. Surfaces `Summary.warnings`. |
+| [src/cli/diff.rs](../src/cli/diff.rs) | `inclean diff` — runs the pipeline, writes the unified diff to `-o PATH` (or stdout), prints the unfixable report to stderr. |
+| [src/cli/apply.rs](../src/cli/apply.rs) | `inclean apply` — runs the pipeline; writes fixable files; skips files that contain any unfixable outcome; prints the unfixable report at the end. |
+| [src/cli/schema.rs](../src/cli/schema.rs) | `inclean config schema`. Emits the JSON schema from `schemars`; `--check` (requires `-o PATH`) diffs against an existing file. |
 | [src/config/schema.rs](../src/config/schema.rs) | serde structs (`RawConfig`, `RawRule`, `RawAction`, `RawTrailingComment`, `CommentStyle`, `OutputForm`, `OutputCommentStyle`); pure deserialisation. |
 | [src/config/discover.rs](../src/config/discover.rs) | Finds the single `inclean.toml` by walking upward; parses it; runs the two-direction version compatibility check (`CLI_COMPAT_MIN <= cfg.version` and `cfg.min_inclean_version <= CLI_CURRENT`); resolves `[project].root`; errors if any extra `inclean.toml` is present. |
-| [src/config/copy.rs](../src/config/copy.rs) | Single-level `copied_from` resolution (transitive — the parent's already-resolved value is taken); `${copied}` placeholder substitution (scalar, splat); defaults; `@std.*` expansion. Produces `ResolvedRule`. |
+| [src/config/copy.rs](../src/config/copy.rs) | Single-level `copied_from` resolution (transitive — the parent's already-resolved value is taken); `${copied}` placeholder substitution in scalar / array-splat / object contexts; defaults; `@std.*` expansion; rejects `append_if_absent` containing `\n` / `\r`. Produces a declaration-ordered `Vec<(String, ResolvedRule)>`. |
 | [src/config/constants.rs](../src/config/constants.rs) | `@std.*` definitions and `expand_list` / `substitute_in_string` expansion logic. Includes the `_or` suffix for regex alternation. |
-| [src/lex/include_line.rs](../src/lex/include_line.rs) | Scans source for `#include` directives, skipping comments, string literals. Returns `Include { form, content, line, argument_range, trailing_range, trailing_comment_style }`. Also exposes `line_table(src)` for the engine's suppression scan. Cross-line `/* */` after the argument is **not** counted as a trailing comment. |
+| [src/lex/include_line.rs](../src/lex/include_line.rs) | Scans source for `#include` directives, skipping comments / string literals. Returns `Include { form, content, line, argument_range, trailing_range, trailing_comment_style, has_cross_line_block_trailing }`. `scan_with_report` also returns a `ScanReport` of per-line skip warnings (unterminated quote/angle, malformed `#include<id>`). Cross-line `/* */` after the argument flips `has_cross_line_block_trailing`, telling the action layer to skip trailing-comment processing entirely. |
 | [src/rule/glob.rs](../src/rule/glob.rs) | Layer 1 + 2 file matcher (`globset` with `literal_separator: true`). |
 | [src/rule/engine.rs](../src/rule/engine.rs) | Four-layer matcher (`file_paths` glob, `file_suffixes` literal, `match_forms` set, `include_match` glob). Per-rule suppression-region scan over the file's line table. Returns every matched rule (no chain selection — conflicts are pipeline-side now). |
-| [src/rule/action.rs](../src/rule/action.rs) | Evaluates the six action variants (`resolve`, `replace`, `keep`, `remove`, `comment_out`, `error`) and applies `trailing_comment.transform` / `append_if_absent`. Substitutes `${current_file}` and `${original}` (`${copied}` is handled at copy resolution time, not here). Macro-form includes always produce `Outcome::Error`. |
-| [src/pipeline/run.rs](../src/pipeline/run.rs) | Top-level orchestrator. Owns `CheckMode`, `Summary`, `FileResult`, `IncludeOutcome`, `Conflict`, `SkippedFile`. Drives `discover → copy::resolve → walk → lex → match_all → action::evaluate → conflict-by-final-text`. Also exports `apply`, `render_diff`, `summary_exit_code`. |
+| [src/rule/action.rs](../src/rule/action.rs) | Evaluates the six action variants (`resolve`, `replace`, `keep`, `remove`, `comment_out`, `error`) and applies `trailing_comment.transform` / `append_if_absent`. Cross-line block trailing short-circuits trailing-comment handling entirely. Substitutes `${current_file}` and `${original}` (`${copied}` is handled at copy resolution time, not here). Macro-form includes always produce `Outcome::Error`. Resolve diagnostics use the canonical wording from `refactor.md` ("no include_directories entry contains '<text>'" / "include resolves under multiple include_directories: …"). |
+| [src/pipeline/run.rs](../src/pipeline/run.rs) | Top-level orchestrator. Owns `CheckMode`, `Summary`, `FileResult`, `IncludeOutcome`, `DiffAspect`, `UnfixableDetail`, `Conflict`, `SkippedFile`. Drives `discover → copy::resolve → walk → lex → match_all → action::evaluate → conflict-by-final-text`. Builds the duplicate-literal-element warning vec at config-check time. Exports `apply`, `render_diff`, `render_unfixable_report`, `summary_exit_code`. |
 
 ## Pipeline phases
 
-`pipeline::run::run(start_dir, mode: CheckMode) -> Result<Summary>` is
-the single entry point used by every subcommand that actually processes
-the project.
+`pipeline::run::run(config_path, start_dir, paths, jobs, mode) -> Result<Summary>`
+is the single entry point used by every subcommand that actually
+processes the project.
 
-1. **Load config.** `discover::find_root_config` walks up from
+1. **Load config.** When `config_path = Some(p)` the file is read
+   directly; otherwise `discover::find_root_config` walks up from
    `start_dir`. `load_root_config` parses the file and runs the
    two-direction version check.
 2. **Resolve project root.** `discover::resolve_project_root` joins the
@@ -53,36 +54,59 @@ the project.
 3. **Resolve copies.** `copy::resolve` walks rules in declaration order,
    resolving each `copied_from` against already-resolved earlier rules.
    Applies defaults; expands `@std.*` constants in string lists and
-   strings; substitutes `${copied}` per the asymmetric reset rule.
-4. **Early exit for `Config` mode.** Returns an empty `Summary`.
-5. **Compile rules.** Compile layer-1/2/4 globs and any
+   strings; substitutes `${copied}` (scalar / splat / object) per the
+   asymmetric reset rule. Returns a `Vec<(String, ResolvedRule)>` that
+   preserves the user's declaration order.
+4. **Collect duplicate-literal warnings.** Walk each rule's raw array
+   fields once; flag any user-typed duplicate inside `file_paths`,
+   `file_suffixes`, `match_forms`, `include_match`, or
+   `include_directories`. Tokens equal to `"${copied}"` are not counted.
+5. **Early exit for `Config` mode.** Returns an empty `Summary`
+   carrying the duplicate-literal warnings (if any).
+6. **Install thread pool** if `jobs = Some(n)`. Builds a `rayon`
+   global pool of that size (set-once; subsequent calls are no-ops).
+7. **Compile rules.** Compile layer-1/2/4 globs and any
    `suppression_comments_regex` / `trailing_comment.content_regex`
    regexes into a `CompiledRule`.
-6. **Walk source files.** `ignore::WalkBuilder` honors `.gitignore` and
-   skips `.git/`, `target/`, `node_modules/`. The walker filters to
-   files that some compiled rule's `file_paths` glob accepts.
-7. **Sort candidates by lexicographic path** so `rayon::par_iter` (which
+8. **Walk source files.** `ignore::WalkBuilder` with
+   `standard_filters(false)` — per refactor.md §Engine ("不要自动加料")
+   no implicit `.gitignore`, no implicit `.git`/`target`/`node_modules`
+   skip. The walker filters to files that some compiled rule's
+   `file_paths` glob accepts AND that fall under a user-supplied
+   `paths` prefix (no prefix → no path filter).
+9. **Sort candidates by lexicographic path** so `rayon::par_iter` (which
    preserves input order) yields a deterministic `Summary.files`.
-8. **Per-file (parallel)**:
-   - Read bytes; detect + strip UTF-8 BOM; decode UTF-8 (skip+warn on
-     failure).
-   - Lex includes + line table.
-   - For each rule, compute its set of off-limits line numbers via
-     `engine::compute_suppressed_lines`.
-   - For each include: `engine::match_all` returns all rules whose four
-     layers pass and whose suppression doesn't cover the include's
-     line.
-   - For each matched rule, `action::evaluate` produces an `Outcome`.
-   - **Conflict resolution** — `IncludeOutcome` is built by:
-     - Any `Error` wins → `IncludeOutcome::Error`.
-     - Any `EvaluationFailure` wins next → `IncludeOutcome::EvaluationFailure`.
-     - All `Keep` (or `Rewrite` resolved to no-op) → `IncludeOutcome::Keep`.
-     - All `Rewrite` with identical `(edit_range, new_text)` →
-       `IncludeOutcome::Rewritten`.
-     - Otherwise → `IncludeOutcome::Conflict { rule_outputs }`.
-9. **Apply edits.** Per file, edits are applied in reverse byte order
-   so earlier ranges stay valid. Files that contain any
-   `Error`/`EvaluationFailure`/`Conflict` outcome are skipped.
+10. **Per-file (parallel)**:
+    - Read bytes; detect + strip UTF-8 BOM; decode UTF-8 (skip+warn on
+      failure).
+    - Lex includes + line table via `scan_with_report`; per-line lex
+      warnings are surfaced via the file's `lex_warnings` and later
+      lifted into `Summary.warnings`.
+    - For each rule, compute its set of off-limits line numbers via
+      `engine::compute_suppressed_lines`.
+    - For each include: `engine::match_all` returns all rules whose
+      four layers pass and whose suppression doesn't cover the
+      include's line.
+    - For each matched rule, `action::evaluate` produces an `Outcome`
+      (`Keep` / `Rewrite` / `Error` / `TrailingCommentError` /
+      `EvaluationFailure`).
+    - **Conflict resolution** — `IncludeOutcome` is built by:
+      - Any `Error` wins → `IncludeOutcome::Error`.
+      - Any `TrailingCommentError` → `IncludeOutcome::TrailingCommentError`.
+      - Any `EvaluationFailure` → `IncludeOutcome::EvaluationFailure`.
+      - All `Keep` (or `Rewrite` resolved to no-op) → `IncludeOutcome::Keep`.
+      - All `Rewrite` with identical `(edit_range, new_text)` →
+        `IncludeOutcome::Rewritten`.
+      - Otherwise → `IncludeOutcome::Conflict { rule_outputs,
+        differing_aspects }`, where `differing_aspects` is computed by
+        parsing each rule's candidate final-line text and noting which
+        parts disagree (`IncludePath` / `OutputForm` / `TrailingComment`).
+11. **Aggregate unfixable.** Errors / TrailingCommentErrors /
+    EvaluationFailures / Conflicts are lifted out of `include_results`
+    into the top-level `Summary.unfixable` for the apply / diff reports.
+12. **Apply edits.** Per file, edits are applied in reverse byte order
+    so earlier ranges stay valid. Files that contain any unfixable
+    outcome are skipped entirely (no partial writes per file).
 
 ## Concurrency
 
@@ -90,9 +114,19 @@ The walker is single-threaded by `ignore::WalkBuilder`'s design.
 Per-file work is pure CPU and runs on `rayon::par_iter` against the
 pre-sorted candidate list. Output ordering is preserved by rayon's
 `collect()` — no separate output thread is needed for in-process
-consumers. The channel + heap-cache design described in
-[refactor.md §"并行与输出保序"](../refactor.md) is reserved for a future
-streaming-progress hook.
+consumers.
+
+The `(idx, result)` channel + `BinaryHeap` cache design in
+[refactor.md §"并行与输出保序"](../refactor.md) is **functionally
+equivalent** to the current implementation: both produce a
+declaration-ordered file list. We chose `par_iter` for code-size
+reasons; the channel-and-heap shape can drop in cleanly when a
+streaming-progress UI needs it.
+
+`-j N` is honored via `rayon::ThreadPoolBuilder::new().num_threads(n).build_global()`.
+The global pool is set-once; a second call with a different `n` is a
+no-op. Callers that need different sizes per invocation would need to
+move off of the global pool.
 
 ## Key data types
 
@@ -100,15 +134,25 @@ All exported from [src/pipeline/run.rs](../src/pipeline/run.rs):
 
 - **`CheckMode { Config, Run }`** — Config skips source scan; Run goes
   full pipeline.
-- **`Summary { mode, project_root, files, conflicts, skipped }`**.
-- **`FileResult { relpath, original, rewritten, include_results, had_bom }`** —
+- **`Summary { mode, project_root, files, conflicts, skipped, unfixable, warnings }`**.
+- **`FileResult { relpath, original, rewritten, include_results, had_bom, lex_warnings }`** —
   `rewritten` is `Some(_)` only when at least one edit applied.
   `had_bom` carries forward to the write-back so `apply` restores it.
+  `lex_warnings` is lifted into `Summary.warnings` post-walk.
 - **`IncludeResult { include, outcome }`**.
 - **`IncludeOutcome`** variants — see [Conflict resolution](#conflict-resolution-summary) below.
-- **`Conflict { file_relpath, include_line, include_text, rule_outputs }`** —
+- **`DiffAspect { IncludePath, OutputForm, TrailingComment }`** —
+  attached to `IncludeOutcome::Conflict` and to `Conflict` /
+  `UnfixableDetail` to point at *which* part of the final-line text
+  diverged.
+- **`Conflict { file_relpath, include_line, include_text, rule_outputs, differing_aspects }`** —
   one per conflicting include, each entry of `rule_outputs` is
   `(rule_name, final_line_text)`.
+- **`UnfixableKind { Error, EvaluationFailure, Conflict, TrailingCommentError }`** —
+  categorises an unfixable include for the apply / diff report.
+- **`UnfixableDetail { file_relpath, line, original_line, kind, rules, differing_aspects, message }`** —
+  one per unfixable include. `rules` is `Vec<(rule_name, Option<final_text>)>`
+  (final-text populated only for `Conflict`).
 - **`SkippedFile { relpath, reason }`** — files that couldn't be
   parsed; do not contribute to the exit code.
 
@@ -119,9 +163,10 @@ All exported from [src/pipeline/run.rs](../src/pipeline/run.rs):
 | `NoMatch` | no rule matched | 0 |
 | `Keep { rules }` | all matched rules produced no-op edit | 0 |
 | `Rewritten { rules, edit_range, new_text }` | all matched rules produced same rewrite | 0 |
-| `Error { rule, message }` | a rule's `action.type = "error"` matched (or trailing transform error) | 2 |
+| `Error { rule, message }` | a rule's `action.type = "error"` matched | 2 |
+| `TrailingCommentError { rule, message }` | `trailing_comment.transform.action = "error"` matched | 3 |
 | `EvaluationFailure { rule, message }` | runtime action failure (e.g. `resolve` ambiguity) | 3 |
-| `Conflict { rule_outputs }` | matched rules disagreed on final text | 3 |
+| `Conflict { rule_outputs, differing_aspects }` | matched rules disagreed on final text | 3 |
 
 `summary_exit_code` returns the maximum across all files + conflicts.
 

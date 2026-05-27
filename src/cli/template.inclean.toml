@@ -8,18 +8,29 @@
 #   inclean diff                        # show what apply would change
 #   inclean apply                       # write the rewrites
 #
+# =============================================================================
+# IMPORTANT — GLOB ANCHORING
+# Every glob in this file (file_paths, include_match) is FULL-STRING
+# ANCHORED. "foo.h" matches ONLY the literal "foo.h" — NOT "a/foo.h",
+# NOT "any/dir/foo.h". To match a name at any depth, write "**/foo.h".
+# "*" never crosses "/"; "**" does.
+# =============================================================================
+#
 # Schema (v0.3) cheat-sheet
 # -------------------------
 # Each rule has up to 4 matching layers (all must pass):
 #   1. file_paths   — globset patterns relative to the project root
-#                     (default ["**/*"]; "*" never crosses "/", "**" does)
+#                     (default ["**/*"]; see GLOB ANCHORING above)
 #   2. file_suffixes — literal extensions like ".c" (default covers C+C++);
 #                     skipped when file_paths is an exact literal path
 #   3. match_forms  — set of "quote" / "angle" / "macro" (default ["quote"])
 #                     "macro" matches but evaluation always errors out (v1)
 #   4. include_match — globset patterns over the stripped include argument
-#                     (default ["**"]). NOTE: "foo.h" matches ONLY the
-#                     literal "foo.h"; use "**/foo.h" to match at any depth.
+#                     (default ["**"]; see GLOB ANCHORING above)
+#
+# include_directories is NOT a glob — it's a list of literal directory
+# paths under the project root. The `resolve` action probes each path
+# in declaration order to find the include's actual header file.
 #
 # suppression_comments_regex (optional) marks off-limits source regions:
 #   { block_start, block_end, line }  — regexes over each line's comment
@@ -57,6 +68,13 @@
 #   field to pull the parent's value explicitly.
 # - Use ${copied} as an array element to splat the parent's whole list
 #   at that position.
+# - Use the whole-field form `field = "${copied}"` (as a string) to inherit
+#   the parent's entire object verbatim. Valid only for `action`,
+#   `suppression_comments_regex`, and `trailing_comment`.
+#
+# Default action when neither child nor any ancestor specifies one:
+#   { type = "keep", output_form = "preserve" }
+# i.e. do nothing. A rule with no `action = ...` is harmless.
 #
 # Built-in @std.* constants (used inside string lists, or in regex/
 # template strings via the same @name syntax):

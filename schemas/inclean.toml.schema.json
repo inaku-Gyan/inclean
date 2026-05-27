@@ -77,6 +77,7 @@
           }
         },
         "suppression_comments_regex": {
+          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved value verbatim (object-context `${copied}`).",
           "anyOf": [
             {
               "$ref": "#/$defs/RawSuppression"
@@ -105,7 +106,7 @@
           }
         },
         "include_directories": {
-          "description": "Literal directory paths under the project root that the `resolve`\naction probes when resolving an include's text to a physical file.",
+          "description": "Literal directory paths under the project root (relative to it) that\nthe `resolve` action probes to locate the include's actual header.\nNOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.",
           "type": [
             "array",
             "null"
@@ -115,6 +116,7 @@
           }
         },
         "action": {
+          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved action verbatim (object-context `${copied}`).",
           "anyOf": [
             {
               "$ref": "#/$defs/RawAction"
@@ -125,6 +127,7 @@
           ]
         },
         "trailing_comment": {
+          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved value verbatim (object-context `${copied}`).",
           "anyOf": [
             {
               "$ref": "#/$defs/RawTrailingComment"
@@ -438,7 +441,7 @@
       "additionalProperties": false
     },
     "RawTrailingTransform": {
-      "description": "Trailing-comment transform: matches an existing comment, then runs an\naction over it.",
+      "description": "Trailing-comment transform: matches an existing comment, then runs an\naction over it. `action` is required — per refactor.md §\"Config File\"\nthe schema lists it without a `?`, and silent defaulting to `Keep`\nhides config bugs.",
       "type": "object",
       "properties": {
         "match_styles": {
@@ -457,17 +460,13 @@
           ]
         },
         "action": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RawTrailingAction"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/RawTrailingAction"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "action"
+      ]
     },
     "RawTrailingAction": {
       "description": "The action a trailing-comment transform runs on its match.",

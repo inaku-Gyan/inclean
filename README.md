@@ -90,7 +90,10 @@ inclean diff                # see the rewrites as a unified diff
 inclean apply               # write the rewrites in place
 ```
 
-Each command takes an optional `[DIR]` / `[PATH]` argument. Default is `.`.
+`check` / `diff` / `apply` optionally take `[PATHS...]` to restrict
+which files are processed; with no paths they consider every source
+file under the project root. `-c PATH` overrides the upward `inclean.toml`
+walk; `-j N` sets the worker thread count.
 
 ### Example
 
@@ -114,16 +117,18 @@ See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
 ## Commands
 
-| Command                                       | Purpose                                                                                      |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `inclean init [PATH]`                         | Generate a documented starter `inclean.toml`. Alias of `inclean config new`.                 |
-| `inclean check [DIR] [-l config\|full]`       | Read-only check. `config` validates `inclean.toml` alone; `full` (default) runs the pipeline.|
-| `inclean diff [DIR]`                          | Print a unified diff of every proposed rewrite.                                              |
-| `inclean apply [DIR]`                         | Apply rewrites in place. Refuses if any conflict is present.                                 |
-| `inclean config check [DIR]`                  | Alias of `inclean check --level config`.                                                     |
-| `inclean config new [PATH]`                   | Alias of `inclean init`.                                                                     |
-| `inclean config schema [-o PATH] [--check]`   | Emit / validate the JSON Schema for `inclean.toml`.                                          |
-| `inclean schema [-o PATH] [--check]`          | Top-level shortcut for `config schema`.                                                      |
+| Command                                                              | Purpose                                                                                                                                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inclean init [PATH]`                                                | Generate a documented starter `inclean.toml`. Alias of `inclean config new`.                                                                                  |
+| `inclean check [config\|unfixable\|all] [-c PATH] [-j N] [PATHS...]` | Read-only check. `config` validates the file alone; `unfixable` reports only unfixable violations; `all` (default) reports every per-include outcome.         |
+| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]`                 | Print a unified diff of every proposed rewrite. Optional `-o` writes to a file instead of stdout.                                                             |
+| `inclean apply [-c PATH] [-j N] [PATHS...]`                          | Apply rewrites in place. Files free of unfixable violations are written; files with errors / conflicts / evaluation failures are skipped and reported at end. |
+| `inclean config check [-c PATH]`                                     | Alias of `inclean check config`.                                                                                                                              |
+| `inclean config new [PATH]`                                          | Alias of `inclean init`.                                                                                                                                      |
+| `inclean config schema [-o PATH] [--check]`                          | Emit / validate the JSON Schema for `inclean.toml`. `--check` requires `-o` and exits non-zero if the file drifts.                                            |
+
+The default action when no rule specifies one is `keep` with
+`output_form = preserve` — a rule that omits `action` is a no-op.
 
 ## Editor support
 
@@ -174,12 +179,18 @@ inclean schema --output inclean.toml.schema.json
 
 ## Status
 
-`0.2.0` — current. Introduces JSON Schema generation, editor
-`#:schema` support, and a required `[project].version` field that
-the CLI uses as a hard version gate. inclean is pre-1.0 / beta and
-does not provide migration shims between breaking schema changes;
-see [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy) for the
-project policy.
+`0.3.0` — current. Reshapes the configuration around `copied_from` (a
+single-level transitive copy that replaces `extends` AND-merge),
+4-layer matching (`file_paths` / `file_suffixes` / `match_forms` /
+`include_match`), six action variants (`resolve` / `replace` /
+`keep` / `remove` / `comment_out` / `error`), `suppression_comments_regex`
+off-limits regions, a new `trailing_comment.transform` model, and
+conflict-detection by final-line text rather than rule-tree invariants.
+The CLI gains `check unfixable`, `check all`, `[PATHS...]` filtering,
+and a unified-diff output via `inclean diff -o`. inclean is pre-1.0 /
+beta and does not provide migration shims between breaking schema
+changes; see [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy)
+for the project policy.
 
 ## License
 
