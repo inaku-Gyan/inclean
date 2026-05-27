@@ -43,11 +43,37 @@ pub struct Include {
     /// closes on the same line. `None` for no trailing comment or for
     /// any text after the argument that isn't a recognized comment.
     pub trailing_comment_style: Option<CommentStyle>,
+    /// `true` when the text after the include argument opens a block
+    /// comment (`/*`) that does NOT close on the same physical line.
+    /// Per refactor.md §"Trailing comment 的定义": such cross-line block
+    /// comments are not trailing comments; the trailing_comment.transform
+    /// AND the trailing_comment.append_if_absent paths both no-op for
+    /// this include.
+    pub has_cross_line_block_trailing: bool,
 }
 
-/// Scan `src` for `#include` directives.
+/// Per-line lex notes that downstream callers can surface as warnings.
+/// Each entry is `(1-based line, reason)`.
+#[derive(Debug, Default, Clone)]
+pub struct ScanReport {
+    pub skipped_lines: Vec<(usize, String)>,
+}
+
+/// Scan `src` for `#include` directives. Quiet variant: any per-line
+/// parse anomalies (unterminated quote / angle, `#includefoo` token,
+/// etc.) are dropped silently. Prefer [`scan_with_report`] when callers
+/// want those surfaced.
 pub fn scan(src: &str) -> Vec<Include> {
-    Lexer::new(src.as_bytes()).run()
+    scan_with_report(src).0
+}
+
+/// Scan `src` and also return a [`ScanReport`] describing per-line
+/// anomalies the lex chose to skip. Callers (e.g. the pipeline) can
+/// surface these as warnings without aborting the run.
+pub fn scan_with_report(src: &str) -> (Vec<Include>, ScanReport) {
+    let mut lexer = Lexer::new(src.as_bytes());
+    let includes = lexer.run();
+    (includes, lexer.report)
 }
 
 /// Compute a byte-range-per-physical-line table for `src`. Each entry is
@@ -85,6 +111,7 @@ struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
     line: usize,
+    report: ScanReport,
 }
 
 impl<'a> Lexer<'a> {
@@ -93,10 +120,11 @@ impl<'a> Lexer<'a> {
             src,
             pos: 0,
             line: 1,
+            report: ScanReport::default(),
         }
     }
 
-    fn run(mut self) -> Vec<Include> {
+    fn run(&mut self) -> Vec<Include> {
         let mut out = Vec::new();
 
         // We track `at_line_start` so that `#` is only treated as the start
@@ -236,7 +264,8 @@ impl<'a> Lexer<'a> {
         const KEY: &[u8] = b"include";
         if !self.src[p..].starts_with(KEY) {
             // Not an include directive — skip the rest of the line so we
-            // don't re-trigger on the same `#`.
+            // don't re-trigger on the same `#`. Not flagged: `#define`,
+            // `#pragma`, etc. are normal directives, not lex errors.
             self.skip_to_end_of_line();
             return None;
         }
@@ -247,6 +276,10 @@ impl<'a> Lexer<'a> {
         match self.src.get(p) {
             Some(&b' ' | &b'\t' | &b'\r' | &b'\n') => {}
             _ => {
+                self.report.skipped_lines.push((
+                    directive_start_line,
+                    "looks like `#include<identifier>` (missing whitespace after `include`) — skipped".to_string(),
+                ));
                 self.skip_to_end_of_line();
                 return None;
             }
@@ -271,7 +304,10 @@ impl<'a> Lexer<'a> {
                         end + 1,
                     ),
                     None => {
-                        // Unterminated. Skip line and bail.
+                        self.report.skipped_lines.push((
+                            directive_start_line,
+                            "unterminated quote `\"` in `#include` argument".to_string(),
+                        ));
                         self.skip_to_end_of_line();
                         return None;
                     }
@@ -288,6 +324,10 @@ impl<'a> Lexer<'a> {
                         end + 1,
                     ),
                     None => {
+                        self.report.skipped_lines.push((
+                            directive_start_line,
+                            "unterminated angle `<` in `#include` argument".to_string(),
+                        ));
                         self.skip_to_end_of_line();
                         return None;
                     }
@@ -323,7 +363,7 @@ impl<'a> Lexer<'a> {
             eol_end -= 1;
         }
 
-        let (trailing_range, trailing_comment_style) =
+        let (trailing_range, trailing_comment_style, has_cross_line_block_trailing) =
             classify_trailing(self.src, arg_end, eol_end);
 
         Some(Include {
@@ -333,6 +373,7 @@ impl<'a> Lexer<'a> {
             argument_range: arg_start..arg_end,
             trailing_range,
             trailing_comment_style,
+            has_cross_line_block_trailing,
         })
     }
 
@@ -391,9 +432,9 @@ fn classify_trailing(
     src: &[u8],
     arg_end: usize,
     eol_end: usize,
-) -> (Range<usize>, Option<CommentStyle>) {
+) -> (Range<usize>, Option<CommentStyle>, bool) {
     if eol_end <= arg_end {
-        return (arg_end..arg_end, None);
+        return (arg_end..arg_end, None, false);
     }
     let slice = &src[arg_end..eol_end];
     // Find the first non-whitespace byte within the trailing slice.
@@ -402,24 +443,25 @@ fn classify_trailing(
         i += 1;
     }
     if i == slice.len() {
-        return (arg_end..arg_end, None);
+        return (arg_end..arg_end, None, false);
     }
     if slice[i] == b'/' && slice.get(i + 1) == Some(&b'/') {
-        return (arg_end..eol_end, Some(CommentStyle::Line));
+        return (arg_end..eol_end, Some(CommentStyle::Line), false);
     }
     if slice[i] == b'/' && slice.get(i + 1) == Some(&b'*') {
         // Look for `*/` strictly within the remaining bytes of this line.
         let mut j = i + 2;
         while j + 1 < slice.len() {
             if slice[j] == b'*' && slice[j + 1] == b'/' {
-                return (arg_end..eol_end, Some(CommentStyle::Block));
+                return (arg_end..eol_end, Some(CommentStyle::Block), false);
             }
             j += 1;
         }
-        // Cross-line block comment — drop the trailing range entirely.
-        return (arg_end..arg_end, None);
+        // Cross-line block comment — drop the trailing range entirely and
+        // flag it so trailing-comment processing can short-circuit.
+        return (arg_end..arg_end, None, true);
     }
-    (arg_end..eol_end, None)
+    (arg_end..eol_end, None, false)
 }
 
 #[cfg(test)]
@@ -659,6 +701,49 @@ mod tests {
     fn unterminated_angle_is_skipped() {
         let src = "#include <foo.h\n";
         assert!(scan(src).is_empty());
+    }
+
+    #[test]
+    fn unterminated_quote_emits_skip_warning() {
+        let (incs, report) = scan_with_report("#include \"foo.h\n");
+        assert!(incs.is_empty());
+        assert_eq!(report.skipped_lines.len(), 1);
+        assert_eq!(report.skipped_lines[0].0, 1);
+        assert!(report.skipped_lines[0].1.contains("unterminated"));
+    }
+
+    #[test]
+    fn unterminated_angle_emits_skip_warning() {
+        let (incs, report) = scan_with_report("#include <foo.h\n");
+        assert!(incs.is_empty());
+        assert_eq!(report.skipped_lines.len(), 1);
+        assert!(report.skipped_lines[0].1.contains("unterminated"));
+    }
+
+    #[test]
+    fn includefoo_token_emits_skip_warning() {
+        let (incs, report) = scan_with_report("#includefoo\n");
+        assert!(incs.is_empty());
+        assert_eq!(report.skipped_lines.len(), 1);
+        assert!(report.skipped_lines[0].1.contains("missing whitespace"));
+    }
+
+    #[test]
+    fn cross_line_block_trailing_flag_is_set() {
+        let src = "#include \"foo.h\" /* opens\nbut never closes\n";
+        let (incs, _) = scan_with_report(src);
+        assert_eq!(incs.len(), 1);
+        assert!(incs[0].has_cross_line_block_trailing);
+        let t = &incs[0].trailing_range;
+        assert_eq!(t.start, t.end);
+    }
+
+    #[test]
+    fn same_line_block_does_not_set_cross_line_flag() {
+        let src = "#include \"foo.h\" /* same line */\n";
+        let (incs, _) = scan_with_report(src);
+        assert_eq!(incs.len(), 1);
+        assert!(!incs[0].has_cross_line_block_trailing);
     }
 
     #[test]

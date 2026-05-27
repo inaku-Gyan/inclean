@@ -600,6 +600,13 @@ fn build_trailing(
         "trailing_comment.append_if_absent",
         has_parent,
     )?;
+    if let Some(s) = append_if_absent.as_deref() {
+        if s.contains('\n') || s.contains('\r') {
+            bail!(
+                "{ctx}: `trailing_comment.append_if_absent` must not contain line terminators (\\n / \\r); it is appended onto the same line as the include"
+            );
+        }
+    }
     Ok(ResolvedTrailingComment {
         transform,
         append_if_absent,
@@ -1077,6 +1084,17 @@ mod tests {
         let t = tc.transform.as_ref().unwrap();
         assert_eq!(t.content_regex, "^TODO.*$");
         assert!(matches!(t.action, ResolvedTrailingAction::Remove { .. }));
+    }
+
+    #[test]
+    fn append_if_absent_with_newline_is_rejected() {
+        let cfg = load(
+            "/p/inclean.toml",
+            "[[rule]]\nname = \"r\"\ntrailing_comment = { append_if_absent = \"x\\ny\" }\n",
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("must not contain line terminators"));
     }
 
     #[test]

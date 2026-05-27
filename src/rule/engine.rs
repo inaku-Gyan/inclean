@@ -278,6 +278,7 @@ mod tests {
             argument_range: 0..0,
             trailing_range: 0..0,
             trailing_comment_style: None,
+            has_cross_line_block_trailing: false,
         }
     }
 

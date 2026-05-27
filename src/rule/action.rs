@@ -246,31 +246,34 @@ fn apply_resolve(
             ),
         };
     }
-    // Probe each include_directory literally; collect matches.
-    let mut hits: Vec<PathBuf> = Vec::new();
+    // Probe each include_directory literally; collect matches alongside
+    // the directory that produced them (for the diagnostic).
+    let mut hits: Vec<(String, PathBuf)> = Vec::new();
     for dir in dirs {
         let candidate = project_root.join(dir).join(&include.content);
         if candidate.is_file() {
-            hits.push(project_root.join(dir).join(&include.content));
+            hits.push((dir.clone(), candidate));
         }
     }
     if hits.is_empty() {
         return Outcome::EvaluationFailure {
             message: format!(
-                "rule `{}`: resolve found no include_directories entry containing `{}` (searched {:?})",
-                rule.rule.name, include.content, dirs,
+                "no include_directories entry contains '{}'",
+                include.content
             ),
         };
     }
     if hits.len() > 1 {
+        let dirs_list = hits
+            .iter()
+            .map(|(d, _)| d.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         return Outcome::EvaluationFailure {
-            message: format!(
-                "rule `{}`: resolve found `{}` in multiple include_directories ({:?})",
-                rule.rule.name, include.content, dirs,
-            ),
+            message: format!("include resolves under multiple include_directories: {dirs_list}"),
         };
     }
-    let resolved_abs = hits.into_iter().next().unwrap();
+    let resolved_abs = hits.into_iter().next().unwrap().1;
     let resolved_rel = resolved_abs
         .strip_prefix(project_root)
         .map(|p| p.to_path_buf())
@@ -394,6 +397,15 @@ fn process_trailing(
     source: &str,
     ctx: &TemplateCtx,
 ) -> std::result::Result<String, Outcome> {
+    // Cross-line block comment: per refactor.md §"Trailing comment 的
+    // 定义", such constructs do NOT count as trailing comments. Skip
+    // both `transform` AND `append_if_absent` entirely; the source
+    // bytes between the argument and EOL are empty, and downstream
+    // code preserves whatever follows on the next line.
+    if include.has_cross_line_block_trailing {
+        return Ok(String::new());
+    }
+
     let tc: &ResolvedTrailingComment = &rule.rule.trailing_comment;
     let original_trailing = &source[include.trailing_range.clone()];
 
@@ -638,6 +650,34 @@ mod tests {
     }
 
     #[test]
+    fn resolve_no_match_emits_spec_wording() {
+        let rules = cfg(r#"
+            [[rule]]
+            name = "base"
+            include_directories = ["nonexistent"]
+            action = { type = "resolve", relative_to = "${current_file}" }
+            "#);
+        let (src, inc) = first_include("#include \"foo.h\"\n");
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj-does-not-exist"),
+        );
+        match out {
+            Outcome::EvaluationFailure { message } => {
+                assert!(
+                    message.starts_with("no include_directories entry contains '"),
+                    "unexpected wording: {message}"
+                );
+                assert!(message.contains("foo.h"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
     fn macro_form_always_errors() {
         let rules = cfg(r#"
             [[rule]]
@@ -652,6 +692,7 @@ mod tests {
             argument_range: 0..0,
             trailing_range: 0..0,
             trailing_comment_style: None,
+            has_cross_line_block_trailing: false,
         };
         let out = evaluate(
             &rules[0],
@@ -838,6 +879,32 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn cross_line_block_trailing_skips_append_if_absent() {
+        // Per refactor.md §"Trailing comment 的定义": cross-line block
+        // comments are NOT trailing comments. append_if_absent must NOT
+        // fire even though `original_trailing` is empty.
+        let rules = cfg(r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                append_if_absent = " // IWYU pragma: export",
+            }
+            "#);
+        let (src, inc) = first_include("#include \"foo.h\" /* opens\nnever closes */\n");
+        assert!(inc.has_cross_line_block_trailing);
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
+        // Nothing must change on the include line.
+        assert_eq!(out, Outcome::Keep);
     }
 
     #[test]

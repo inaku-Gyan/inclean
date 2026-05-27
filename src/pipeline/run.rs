@@ -86,6 +86,10 @@ pub struct FileResult {
     /// is stripped from `original` and `rewritten`; the apply step writes
     /// it back.
     pub had_bom: bool,
+    /// Per-line lex warnings (unterminated quote/angle, `#include<id>`
+    /// token, etc.) produced while scanning this file. Lifted into
+    /// `Summary.warnings` after the parallel walk.
+    pub lex_warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -343,6 +347,12 @@ pub fn run(
         }
     }
 
+    // Lift per-file lex warnings into the top-level warnings vec.
+    let mut warnings = duplicate_warnings;
+    for f in &files {
+        warnings.extend(f.lex_warnings.iter().cloned());
+    }
+
     Ok(Summary {
         mode,
         project_root: project_root_abs,
@@ -350,7 +360,7 @@ pub fn run(
         conflicts,
         skipped,
         unfixable,
-        warnings: duplicate_warnings,
+        warnings,
     })
 }
 
@@ -605,6 +615,7 @@ fn process_file_outer(
         rewritten: processed.rewritten,
         include_results: processed.include_results,
         had_bom,
+        lex_warnings: processed.lex_warnings,
     })
 }
 
@@ -619,6 +630,7 @@ fn strip_bom(bytes: &[u8]) -> (bool, &[u8]) {
 struct FileProcessing {
     rewritten: Option<String>,
     include_results: Vec<IncludeResult>,
+    lex_warnings: Vec<String>,
 }
 
 fn process_file(
@@ -627,7 +639,15 @@ fn process_file(
     original: &str,
     project_root: &Path,
 ) -> FileProcessing {
-    let includes = include_line::scan(original);
+    let (includes, report) = include_line::scan_with_report(original);
+    let mut lex_warnings: Vec<String> = Vec::new();
+    for (line, reason) in &report.skipped_lines {
+        lex_warnings.push(format!(
+            "{}:{}: {reason}",
+            relpath.display(),
+            line
+        ));
+    }
     let line_table = include_line::line_table(original);
     let suppressed = engine::compute_all_suppressed(rules, original, &line_table);
 
@@ -679,6 +699,7 @@ fn process_file(
     FileProcessing {
         rewritten,
         include_results,
+        lex_warnings,
     }
 }
 
