@@ -50,6 +50,8 @@ pub mod fs {
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    type PathedFiles<'a> = [(&'a dyn AsRef<Path>, &'a dyn AsRef<[u8]>)];
+
     pub struct TmpDir {
         path: PathBuf,
     }
@@ -58,10 +60,10 @@ pub mod fs {
         fn temp_dir() -> PathBuf {
             // std::env::temp_dir()
             let manifest = env!("CARGO_MANIFEST_DIR");
-            Path::new(manifest).join("tempdir")
+            Path::new(manifest).join("tempdir/testspace")
         }
 
-        pub fn create_by_label(label: Option<&str>) -> Self {
+        pub fn create_by_label(label: &str) -> Self {
             let pid = std::process::id();
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -70,10 +72,8 @@ pub mod fs {
             let n = COUNTER.fetch_add(1, Ordering::SeqCst);
 
             let mut path = Self::temp_dir();
-            if let Some(l) = label
-                && !l.is_empty()
-            {
-                path = path.join(l);
+            if !label.is_empty() {
+                path = path.join(label);
             }
             path = path.join(format!("{pid}-{ts}-{n}"));
 
@@ -82,14 +82,14 @@ pub mod fs {
         }
 
         pub fn new() -> Self {
-            Self::create_by_label(None)
+            Self::create_by_label("")
         }
 
         pub fn path(&self) -> &Path {
             &self.path
         }
 
-        pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(&self, relpath: P, contents: C) {
+        pub fn write(&self, relpath: impl AsRef<Path>, contents: impl AsRef<[u8]>) {
             let full = self.path.join(relpath);
             if let Some(parent) = full.parent() {
                 std::fs::create_dir_all(parent).expect("mkdirs");
@@ -97,20 +97,24 @@ pub mod fs {
             std::fs::write(full, contents).expect("write");
         }
 
-        pub fn create_with_files<P: AsRef<Path>, C: AsRef<[u8]>>(files: &[(P, C)]) -> Self {
+        pub fn create_with_files(files: &PathedFiles) -> Self {
             let tmpdir = Self::new();
             tmpdir.write_files(files);
             tmpdir
         }
 
-        pub fn write_files<P: AsRef<Path>, C: AsRef<[u8]>>(&self, files: &[(P, C)]) {
+        pub fn write_files(&self, files: &PathedFiles) {
             for (path, contents) in files {
                 self.write(path, contents);
             }
         }
 
-        pub fn read(&self, relpath: impl AsRef<Path>) -> String {
+        pub fn read_to_string(&self, relpath: impl AsRef<Path>) -> String {
             std::fs::read_to_string(self.path.join(relpath)).expect("read")
+        }
+
+        pub fn read(&self, relpath: impl AsRef<Path>) -> Vec<u8> {
+            std::fs::read(self.path.join(relpath)).expect("read")
         }
     }
 
@@ -121,6 +125,7 @@ pub mod fs {
     }
 
     pub fn copy_dir(src: &Path, dst: &Path) {
+        fs::create_dir_all(dst).unwrap();
         for entry in fs::read_dir(src).unwrap() {
             let entry = entry.unwrap();
             let from = entry.path();
@@ -128,7 +133,11 @@ pub mod fs {
             if entry.file_type().unwrap().is_dir() {
                 copy_dir(&from, &to);
             } else {
-                fs::copy(&from, &to).unwrap();
+                fs::copy(&from, &to).expect(&format!(
+                    "failed to copy file from\n\t{}\nto\n\t{}\n",
+                    from.display(),
+                    to.display()
+                ));
             }
         }
     }
@@ -140,7 +149,7 @@ pub mod fs {
     }
 
     impl TmpProject {
-        pub fn new<P: AsRef<Path>, C: AsRef<[u8]>>(cfg_relpath: P, cfg_content: C) -> Self {
+        pub fn new(cfg_relpath: impl AsRef<Path>, cfg_content: impl AsRef<[u8]>) -> Self {
             let dir = TmpDir::new();
             dir.write(&cfg_relpath, cfg_content);
             Self {
@@ -177,13 +186,17 @@ pub mod fs {
             Self::create_with_config(&*MIN_PROJECT_BLOCK)
         }
 
-        pub fn create_with_files<P: AsRef<Path>, C: AsRef<[u8]>>(files: &[(P, C)]) -> Self {
+        pub fn create_with_files(files: &PathedFiles) -> Self {
             let project = Self::create_with_min_config();
             project.write_files(files);
             project
         }
 
-        pub fn write_files<P: AsRef<Path>, C: AsRef<[u8]>>(&self, files: &[(P, C)]) {
+        pub fn write(&self, relpath: impl AsRef<Path>, contents: impl AsRef<[u8]>) {
+            self.dir.write(relpath, contents);
+        }
+
+        pub fn write_files(&self, files: &PathedFiles) {
             self.dir.write_files(files);
         }
 
@@ -191,7 +204,11 @@ pub mod fs {
             Self::create_with_config(format!("{}{}", &*MIN_PROJECT_BLOCK, rules))
         }
 
-        pub fn read(&self, relpath: impl AsRef<Path>) -> String {
+        pub fn read_to_string(&self, relpath: impl AsRef<Path>) -> String {
+            self.dir.read_to_string(relpath)
+        }
+
+        pub fn read(&self, relpath: impl AsRef<Path>) -> Vec<u8> {
             self.dir.read(relpath)
         }
 
@@ -213,17 +230,31 @@ mod tests {
     fn test_tmpproject_lifecycle() {
         let project_path = {
             let project = fs::TmpProject::create_with_files(&[
-                ("file1.txt", "Hello, world!"),
-                ("subdir/file2.txt", "Goodbye, world!"),
+                (&"file1.txt", &"Hello, world!"),
+                (&"subdir/file2.txt", &"Goodbye, world!"),
             ]);
 
             assert!(project.path().exists());
-            assert_eq!(project.read("file1.txt"), "Hello, world!");
-            assert_eq!(project.read("subdir/file2.txt"), "Goodbye, world!");
+            assert_eq!(project.read_to_string("file1.txt"), "Hello, world!");
+            assert_eq!(
+                project.read_to_string("subdir/file2.txt"),
+                "Goodbye, world!"
+            );
 
             project.path().to_path_buf()
         };
         // After the project goes out of scope, the temp directory should be deleted.
         assert!(!project_path.exists());
+    }
+
+    #[test]
+    fn create_with_duplicate_files() {
+        let project = fs::TmpProject::create_with_files(&[
+            (&"file.txt", &"First content"),
+            (&"file.txt", &"Second content"),
+        ]);
+
+        // The second entry should overwrite the first one.
+        assert_eq!(project.read_to_string("file.txt"), "Second content");
     }
 }

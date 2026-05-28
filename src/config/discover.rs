@@ -141,71 +141,56 @@ pub fn resolve_project_root(config_path: &Path, project: &RawProject) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        profile::{CFG_VERSION, MIN_COMPAT_CLI_VERSION},
-        utils::testing::config::{MIN_PROJECT_BLOCK, project_block},
-    };
+    use crate::profile::{CFG_VERSION, MIN_COMPAT_CLI_VERSION};
+    use crate::utils::testing::config::project_block;
+    use crate::utils::testing::fs::{TmpDir, TmpProject};
 
     use super::*;
 
-    fn build_tree(files: &[(&str, &str)]) -> tempdir::Project {
-        let project = tempdir::Project::new();
-        for (rel, body) in files {
-            project.write(rel, body);
-        }
-        project
-    }
-
     #[test]
     fn find_root_config_walks_up_from_nested_dir() {
-        let proj = build_tree(&[("inclean.toml", &*MIN_PROJECT_BLOCK), ("src/foo/bar.c", "")]);
+        let proj = TmpProject::create_with_files(&[(&"src/foo/bar.c", &"")]);
         let cfg = find_root_config(&proj.path().join("src/foo")).unwrap();
-        assert_eq!(cfg, proj.path().join("inclean.toml"));
+        assert_eq!(cfg, proj.config_path());
     }
 
     #[test]
     fn find_root_config_accepts_file_path_as_start() {
-        let proj = build_tree(&[("inclean.toml", &*MIN_PROJECT_BLOCK), ("src/foo/bar.c", "")]);
+        let proj = TmpProject::create_with_files(&[(&"src/foo/bar.c", &"")]);
         let cfg = find_root_config(&proj.path().join("src/foo/bar.c")).unwrap();
-        assert_eq!(cfg, proj.path().join("inclean.toml"));
+        assert_eq!(cfg, proj.config_path());
     }
 
     #[test]
     fn find_root_config_errors_when_no_config() {
-        let proj = build_tree(&[("src/foo.c", "")]);
+        let proj = TmpDir::create_with_files(&[(&"src/foo.c", &"")]);
         let err = find_root_config(&proj.path().join("src")).unwrap_err();
         assert!(format!("{err:#}").contains(CONFIG_FILENAME));
     }
 
     #[test]
     fn config_project_block_missing_fields() {
-        let proj = build_tree(&[(
-            "inclean.toml",
-            &format!(
-                r#"
+        let proj = TmpProject::create_with_config(&format!(
+            r#"
             [project]
             root = "."
             min_inclean_version = "{MIN_COMPAT_CLI_VERSION}"
             "#
-            ),
-        )]);
-        let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        let err = load_root_config(&proj.config_path()).unwrap_err();
         assert!(
             format!("{err:#}").contains("`version`"),
             "Should require [project].version"
         );
 
-        let proj = build_tree(&[(
-            "inclean.toml",
-            &format!(
-                r#"
+        let proj = TmpProject::create_with_config(&format!(
+            r#"
             [project]
             root = "."
             version = "{CFG_VERSION}"
             "#
-            ),
-        )]);
-        let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        let err = load_root_config(&proj.config_path()).unwrap_err();
         assert!(
             format!("{err:#}").contains("`min_inclean_version`"),
             "Should require [project].min_inclean_version"
@@ -214,13 +199,13 @@ mod tests {
 
     #[test]
     fn config_project_block_default_root() {
-        let proj = build_tree(&[("inclean.toml", &project_block(None))]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let proj = TmpProject::create_with_min_config();
+        let cfg = load_root_config(&proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
 
-        let proj = build_tree(&[("inclean.toml", &project_block(Some(".")))]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let proj = TmpProject::create_with_config(&project_block(Some(".")));
+        let cfg = load_root_config(&proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
     }
@@ -228,50 +213,46 @@ mod tests {
     #[test]
     fn config_project_block_incompatible_versions() {
         // --------- Broken config ----------
-        let proj = build_tree(&[(
-            "inclean.toml",
+        let proj = TmpProject::create_with_config(&format!(
             r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.6"
             "#,
-        )]);
-        load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        load_root_config(&proj.config_path()).unwrap_err();
 
         // --------- Outdated config ----------
-        let proj = build_tree(&[(
-            "inclean.toml",
+        let proj = TmpProject::create_with_config(&format!(
             r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.0"
             "#,
-        )]);
-        load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        load_root_config(&proj.config_path()).unwrap_err();
 
         // --------- Outdated CLI ----------
-        let proj = build_tree(&[(
-            "inclean.toml",
+        let proj = TmpProject::create_with_config(&format!(
             r#"
             [project]
             version = "999.2.3"
             min_inclean_version = "999.0.0"
             "#,
-        )]);
-        load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        load_root_config(&proj.config_path()).unwrap_err();
     }
 
     #[test]
     fn load_root_config_rejects_malformed_version() {
-        let proj = build_tree(&[(
-            "inclean.toml",
+        let proj = TmpProject::create_with_config(&format!(
             r#"
             [project]
             version = "not-semver"
             min_inclean_version = "0.3.0"
             "#,
-        )]);
-        let err = load_root_config(&proj.path().join("inclean.toml")).unwrap_err();
+        ));
+        let err = load_root_config(&proj.config_path()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("not valid semver") && msg.contains("not-semver"),
@@ -281,11 +262,11 @@ mod tests {
 
     #[test]
     fn resolve_project_root_joins_relative_subdir() {
-        let proj = build_tree(&[
-            ("inclean.toml", &project_block(Some("lib"))),
-            ("lib/keep", ""),
+        let proj = TmpProject::create_with_files(&[
+            (&"inclean.toml", &project_block(Some("lib"))), // overwrite the default config
+            (&"lib/keep", &""),
         ]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let cfg = load_root_config(&proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(
             resolved,
@@ -295,56 +276,17 @@ mod tests {
 
     #[test]
     fn resolve_project_root_rejects_empty_string() {
-        let proj = build_tree(&[("inclean.toml", &project_block(Some("")))]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let proj = TmpProject::create_with_config(&project_block(Some("")));
+        let cfg = load_root_config(&proj.config_path()).unwrap();
         let err = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap_err();
         assert!(format!("{err:#}").contains("[project].root"));
     }
 
     #[test]
     fn resolve_project_root_errors_when_target_missing() {
-        let proj = build_tree(&[("inclean.toml", &project_block(Some("nowhere/to/land")))]);
-        let cfg = load_root_config(&proj.path().join("inclean.toml")).unwrap();
+        let proj = TmpProject::create_with_config(&project_block(Some("nowhere/to/land")));
+        let cfg = load_root_config(&proj.config_path()).unwrap();
         let err = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap_err();
         assert!(format!("{err:#}").contains("nowhere"));
-    }
-
-    mod tempdir {
-        use std::path::{Path, PathBuf};
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        pub struct Project {
-            path: PathBuf,
-        }
-
-        impl Project {
-            pub fn new() -> Self {
-                let pid = std::process::id();
-                let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-                let path = std::env::temp_dir().join(format!("inclean-test-{pid}-{n}"));
-                std::fs::create_dir_all(&path).expect("create tempdir");
-                Project { path }
-            }
-
-            pub fn path(&self) -> &Path {
-                &self.path
-            }
-
-            pub fn write(&self, rel: &str, body: &str) {
-                let full = self.path.join(rel);
-                if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).expect("mkdirs");
-                }
-                std::fs::write(full, body).expect("write");
-            }
-        }
-
-        impl Drop for Project {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.path);
-            }
-        }
     }
 }

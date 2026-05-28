@@ -127,7 +127,7 @@ pub enum ConfigSub {
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Init(args) => init::run(args.path),
+        Command::Init(args) => init::run(args.path.as_deref()),
         Command::Check(args) => match args.command {
             Some(CheckSub::Config(c)) => check::run_config(c.config),
             Some(CheckSub::Unfixable(r)) => check::run_full(r, check::ReportFilter::UnfixableOnly),
@@ -138,7 +138,7 @@ pub fn run() -> ExitCode {
         Command::Diff(args) => diff::run(args),
         Command::Config(args) => match args.command {
             ConfigSub::Check(c) => check::run_config(c.config),
-            ConfigSub::New(args) => init::run(args.path),
+            ConfigSub::New(args) => init::run(args.path.as_deref()),
             ConfigSub::Schema(args) => schema::run(args),
         },
     };

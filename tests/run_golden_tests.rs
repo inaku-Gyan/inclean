@@ -76,14 +76,15 @@ fn discover_cases(root: &Path) -> Vec<Case> {
 }
 
 fn run_case(case: &Case) -> Result<(), Failed> {
-    let workdir = support::new_workdir(&case.name);
-    support::copy_dir(&case.input, &workdir);
+    let workdir = support::fs::TmpDir::create_by_label(&case.name);
+    let dirpath = workdir.path();
+    support::fs::copy_dir(&case.input, &dirpath);
 
-    let summary = pipe::run(None, &workdir, &[], None, CheckMode::Run)
+    let summary = pipe::run(None, &dirpath, &[], None, CheckMode::Run)
         .map_err(|e| format!("pipe::run: {e:#}"))?;
     pipe::apply(&summary).map_err(|e| format!("pipe::apply: {e:#}"))?;
 
-    compare_trees(&workdir, &case.expected).map_err(Failed::from)?;
+    compare_trees(&dirpath, &case.expected).map_err(Failed::from)?;
     Ok(())
 }
 

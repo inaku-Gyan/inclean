@@ -973,82 +973,54 @@ fn apply_edits(original: &str, edits: &[(Range<usize>, String)]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::testing::config::MIN_PROJECT_BLOCK;
+    use crate::utils::testing::fs::TmpProject;
 
     use super::*;
     use std::fs;
 
-    fn tmp() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "inclean-pipe-{}-{}",
-            std::process::id(),
-            inc_counter()
-        ));
-        fs::create_dir_all(&p).unwrap();
-        p
-    }
-    fn inc_counter() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        N.fetch_add(1, Ordering::SeqCst)
-    }
-    fn touch(root: &Path, rel: &str, body: &str) {
-        let p = root.join(rel);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, body).unwrap();
-    }
-
     #[test]
     fn config_mode_skips_source_scan() {
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"x.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!("{}\n[[rule]]\nname = \"base\"\n", &*MIN_PROJECT_BLOCK),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Config).unwrap();
+        let proj = TmpProject::create_with_rules("[[rule]]\nname = \"base\"");
+        proj.write("src/main.c", "#include \"x.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
         assert!(summary.conflicts.is_empty());
         assert_eq!(summary_exit_code(&summary), 0);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn keep_action_produces_no_edits() {
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
         assert!(matches!(
             f.include_results[0].outcome,
             IncludeOutcome::Keep { .. }
         ));
         assert!(f.rewritten.is_none());
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn replace_action_writes_back() {
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
         assert!(matches!(
             f.include_results[0].outcome,
@@ -1056,46 +1028,47 @@ mod tests {
         ));
         let written = apply(&summary).unwrap();
         assert_eq!(written, 1);
-        let new = fs::read_to_string(root.join("src/main.c")).unwrap();
+        let new = fs::read_to_string(proj.path().join("src/main.c")).unwrap();
         assert!(new.contains("\"lib/foo.h\""));
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn error_action_produces_error_outcome_and_exit_2() {
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"old.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\ninclude_match = [\"old.h\"]\naction = {{ type = \"error\", message = \"deprecated\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_match = ["old.h"]
+            action = { type = "error", message = "deprecated" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"old.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         assert!(matches!(
             summary.files[0].include_results[0].outcome,
             IncludeOutcome::Error { .. }
         ));
         assert_eq!(summary_exit_code(&summary), 2);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn conflicting_rules_produce_conflict_and_exit_3() {
         // Two rules that both match but rewrite to different texts.
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"A/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"B/foo.h\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let rules = r#"
+            [[rule]]
+            name = "a"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "A/foo.h" }
+            [[rule]]
+            name = "b"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "B/foo.h" }
+        "#;
+        let proj = TmpProject::create_with_rules(rules);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         assert_eq!(summary.conflicts.len(), 1);
         assert_eq!(summary_exit_code(&summary), 3);
         assert_eq!(summary.unfixable.len(), 1);
@@ -1104,25 +1077,28 @@ mod tests {
         let written = apply(&summary).unwrap();
         assert_eq!(written, 0);
         // Existing source was not overwritten.
-        let body = fs::read_to_string(root.join("src/main.c")).unwrap();
+        let body = fs::read_to_string(proj.path().join("src/main.c")).unwrap();
         assert_eq!(body, "#include \"foo.h\"\n");
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn agreeing_rules_collapse_to_a_single_rewrite() {
         // Two rules that both rewrite to the same text: no conflict.
-        let root = tmp();
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"a\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n\n[[rule]]\nname = \"b\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"new/foo.h\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let rules = r#"
+            [[rule]]
+            name = "a"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "new/foo.h" }
+
+            [[rule]]
+            name = "b"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "new/foo.h" }
+        "#;
+        let proj = TmpProject::create_with_rules(rules);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         assert!(summary.conflicts.is_empty());
         match &summary.files[0].include_results[0].outcome {
             IncludeOutcome::Rewritten {
@@ -1133,12 +1109,17 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn bom_is_preserved_across_apply() {
-        let root = tmp();
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
         // \u{FEFF} is the BOM in source. We write raw bytes to ensure the
         // BOM is at the very start.
         let bom = [0xEF, 0xBB, 0xBFu8];
@@ -1146,47 +1127,32 @@ mod tests {
         let mut payload = Vec::new();
         payload.extend_from_slice(&bom);
         payload.extend_from_slice(body);
-        let main_path = root.join("src/main.c");
-        fs::create_dir_all(main_path.parent().unwrap()).unwrap();
-        fs::write(&main_path, &payload).unwrap();
+        proj.write("src/main.c", &payload);
 
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"replace\", with = \"lib/${{original}}\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         assert!(summary.files[0].had_bom);
         apply(&summary).unwrap();
-        let read_back = fs::read(&main_path).unwrap();
+        let read_back = proj.read("src/main.c");
         assert!(read_back.starts_with(&bom));
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn parse_failure_is_skipped_not_a_hard_error() {
-        let root = tmp();
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
         // Invalid UTF-8 byte sequence.
         let payload: &[u8] = &[0xFF, 0xFF, 0xFE, b'\n'];
-        let p = root.join("src/bad.c");
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(&p, payload).unwrap();
-        touch(&root, "src/main.c", "#include \"foo.h\"\n");
-        touch(
-            &root,
-            "inclean.toml",
-            &format!(
-                "{}\n[[rule]]\nname = \"base\"\nfile_paths = [\"src/**/*\"]\naction = {{ type = \"keep\" }}\n",
-                &*MIN_PROJECT_BLOCK
-            ),
-        );
-        let summary = run(None, &root, &[], None, CheckMode::Run).unwrap();
+        proj.write("src/bad.c", payload);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         assert_eq!(summary.skipped.len(), 1);
         assert_eq!(summary.skipped[0].relpath, PathBuf::from("src/bad.c"));
         assert_eq!(summary_exit_code(&summary), 0);
-        fs::remove_dir_all(&root).ok();
     }
 }

@@ -18,9 +18,9 @@ use crate::profile::{CFG_VERSION, CLI_VERSION, CONFIG_FILENAME, MIN_COMPAT_CLI_V
 
 const TEMPLATE: &str = include_str!("template.inclean.toml");
 
-pub fn run(path: Option<PathBuf>) -> Result<u8> {
-    let path = path.unwrap_or_else(|| PathBuf::from("."));
-    let target = resolve_target(&path);
+pub fn run(path: Option<&Path>) -> Result<u8> {
+    let path = path.unwrap_or_else(|| Path::new("."));
+    let target = resolve_target(path);
     if target.exists() {
         anyhow::bail!(
             "{} already exists; remove it first or pick a different path",
@@ -85,54 +85,38 @@ fn construct_inclean_toml_template() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use crate::utils::testing::fs::{TmpDir, TmpProject};
 
-    fn scratch_dir() -> PathBuf {
-        static N: AtomicU64 = AtomicU64::new(0);
-        let p = std::env::temp_dir().join(format!(
-            "inclean-init-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst),
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
+    use super::*;
 
     #[test]
     fn writes_into_existing_dir() {
-        let dir = scratch_dir();
-        run(Some(dir.clone())).unwrap();
-        let target = dir.join(CONFIG_FILENAME);
+        let dir = TmpDir::new();
+        run(Some(&dir.path())).unwrap();
+        let target = dir.path().join(CONFIG_FILENAME);
         assert!(target.exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn refuses_to_overwrite_existing_file() {
-        let dir = scratch_dir();
-        let target = dir.join(CONFIG_FILENAME);
-        std::fs::write(&target, "pre-existing").unwrap();
-        let err = run(Some(dir.clone())).unwrap_err();
+        let dir = TmpProject::create_with_min_config();
+        let err = run(Some(&dir.path())).unwrap_err();
         assert!(format!("{err:#}").contains("already exists"));
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn nonexistent_directory_like_path_creates_dir_and_file() {
-        let dir = scratch_dir();
-        let new_subdir = dir.join("new-sub-dir");
-        run(Some(new_subdir.clone())).unwrap();
+        let dir = TmpDir::new();
+        let new_subdir = dir.path().join("new-sub-dir");
+        run(Some(&new_subdir)).unwrap();
         assert!(new_subdir.join(CONFIG_FILENAME).exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn nonexistent_file_like_path_creates_file_at_path() {
-        let dir = scratch_dir();
-        let target = dir.join("custom.toml");
-        run(Some(target.clone())).unwrap();
+        let dir = TmpDir::new();
+        let target = dir.path().join("custom.toml");
+        run(Some(&target)).unwrap();
         assert!(target.exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
