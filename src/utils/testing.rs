@@ -3,7 +3,17 @@
 pub mod config {
     use std::{path::PathBuf, sync::LazyLock};
 
-    use crate::config::schema::LoadedConfig;
+    use crate::config::schema::{LoadedConfig, RawProject};
+
+    impl RawProject {
+        pub fn to_cfg_str(self) -> String {
+            let s = format!(
+                "[project]\nroot = \"{}\"\nversion = \"{}\"\nmin_inclean_version = \"{}\"\n",
+                self.root, self.version, self.min_inclean_version
+            );
+            s
+        }
+    }
 
     /// Minimum `[project]` section for testing.
     pub static MIN_PROJECT_BLOCK: LazyLock<String> = LazyLock::new(|| {
@@ -139,6 +149,26 @@ pub mod fs {
             }
         }
 
+        /// Create a project with the given config content in `./inclean.toml`.
+        /// ```rust
+        /// use inclean::utils::testing::fs::TmpProject;
+        /// TmpProject::create_with_config(r#"
+        ///     [project]
+        ///     version = "0.1.0"
+        ///     min_inclean_version = "0.1.0"
+        /// "#);
+        /// ```
+        /// Or, with a `RawProject`:
+        /// ```rust
+        /// use inclean::config::schema::RawProject;
+        /// use inclean::utils::testing::{fs::TmpProject, config};
+        /// let cfg = RawProject {
+        ///     root: "src".to_string(),
+        ///     version: "0.1.0".to_string(),
+        ///     min_inclean_version: "0.1.0".to_string(),
+        /// };
+        /// TmpProject::create_with_config(cfg.to_cfg_str());
+        /// ```
         pub fn create_with_config<C: AsRef<[u8]>>(cfg_content: C) -> Self {
             Self::new("inclean.toml", cfg_content)
         }
@@ -172,5 +202,28 @@ pub mod fs {
         pub fn config_path(&self) -> &Path {
             &self.cfg_abspath
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tmpproject_lifecycle() {
+        let project_path = {
+            let project = fs::TmpProject::create_with_files(&[
+                ("file1.txt", "Hello, world!"),
+                ("subdir/file2.txt", "Goodbye, world!"),
+            ]);
+
+            assert!(project.path().exists());
+            assert_eq!(project.read("file1.txt"), "Hello, world!");
+            assert_eq!(project.read("subdir/file2.txt"), "Goodbye, world!");
+
+            project.path().to_path_buf()
+        };
+        // After the project goes out of scope, the temp directory should be deleted.
+        assert!(!project_path.exists());
     }
 }
