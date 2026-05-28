@@ -213,37 +213,45 @@ mod tests {
     #[test]
     fn config_project_block_incompatible_versions() {
         // --------- Broken config ----------
-        let proj = TmpProject::create_with_config(r#"
+        let proj = TmpProject::create_with_config(
+            r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.6"
-            "#);
+            "#,
+        );
         load_root_config(proj.config_path()).unwrap_err();
 
         // --------- Outdated config ----------
-        let proj = TmpProject::create_with_config(r#"
+        let proj = TmpProject::create_with_config(
+            r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.0"
-            "#);
+            "#,
+        );
         load_root_config(proj.config_path()).unwrap_err();
 
         // --------- Outdated CLI ----------
-        let proj = TmpProject::create_with_config(r#"
+        let proj = TmpProject::create_with_config(
+            r#"
             [project]
             version = "999.2.3"
             min_inclean_version = "999.0.0"
-            "#);
+            "#,
+        );
         load_root_config(proj.config_path()).unwrap_err();
     }
 
     #[test]
     fn load_root_config_rejects_malformed_version() {
-        let proj = TmpProject::create_with_config(r#"
+        let proj = TmpProject::create_with_config(
+            r#"
             [project]
             version = "not-semver"
             min_inclean_version = "0.3.0"
-            "#);
+            "#,
+        );
         let err = load_root_config(proj.config_path()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(

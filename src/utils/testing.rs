@@ -139,9 +139,13 @@ pub mod fs {
             if entry.file_type().unwrap().is_dir() {
                 copy_dir(&from, &to);
             } else {
-                fs::copy(&from, &to).unwrap_or_else(|_| panic!("failed to copy file from\n\t{}\nto\n\t{}\n",
-                    from.display(),
-                    to.display()));
+                fs::copy(&from, &to).unwrap_or_else(|_| {
+                    panic!(
+                        "failed to copy file from\n\t{}\nto\n\t{}\n",
+                        from.display(),
+                        to.display()
+                    )
+                });
             }
         }
     }
