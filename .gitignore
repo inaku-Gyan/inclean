@@ -10,5 +10,4 @@ Thumbs.db
 
 ### Build artifacts
 /target
-/tests/.workdir
 /tempdir
