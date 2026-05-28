@@ -15,7 +15,7 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
     let start_dir = super::check::start_dir_for(args.config.as_deref(), &args.paths);
     // Pre-flight config-only check so failures surface with a friendly
     // prefix rather than mid-pipeline.
-    let _ = run::run(
+    run::run(
         args.config.as_deref(),
         &start_dir,
         &[],
