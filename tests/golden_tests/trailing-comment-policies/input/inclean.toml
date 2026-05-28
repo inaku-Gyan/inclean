@@ -1,7 +1,7 @@
 [project]
 root = "."
-version = "0.3.0"
-min_inclean_version = "0.3.0"
+version = "0.3.0-alpha.1"
+min_inclean_version = "0.3.0-alpha.1"
 
 # Exercise the trailing-comment policies:
 # - transform.replace : substitute the body of matching trailing comments

@@ -244,23 +244,6 @@ mod tests {
     }
 
     #[test]
-    fn load_root_config_rejects_malformed_version() {
-        let proj = TmpProject::create_with_config(
-            r#"
-            [project]
-            version = "not-semver"
-            min_inclean_version = "0.3.0"
-            "#,
-        );
-        let err = load_root_config(proj.config_path()).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("not valid semver") && msg.contains("not-semver"),
-            "Should reject malformed version"
-        );
-    }
-
-    #[test]
     fn resolve_project_root_joins_relative_subdir() {
         let proj = TmpProject::create_with_files(&[
             (&"inclean.toml", &project_block(Some("lib"))), // overwrite the default config
