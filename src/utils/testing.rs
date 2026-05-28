@@ -36,6 +36,8 @@ pub mod fs {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::utils::testing::config::MIN_PROJECT_BLOCK;
+
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     pub struct TmpDir {
@@ -77,20 +79,28 @@ pub mod fs {
             &self.path
         }
 
-        pub fn write(&self, relpath: &str, body: &str) {
+        pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(&self, relpath: P, contents: C) {
             let full = self.path.join(relpath);
             if let Some(parent) = full.parent() {
                 std::fs::create_dir_all(parent).expect("mkdirs");
             }
-            std::fs::write(full, body).expect("write");
+            std::fs::write(full, contents).expect("write");
         }
 
-        pub fn create_tree(files: &[(&str, &str)]) -> Self {
+        pub fn create_with_files<P: AsRef<Path>, C: AsRef<[u8]>>(files: &[(P, C)]) -> Self {
             let tmpdir = Self::new();
-            for (path, body) in files {
-                tmpdir.write(path, body);
-            }
+            tmpdir.write_files(files);
             tmpdir
+        }
+
+        pub fn write_files<P: AsRef<Path>, C: AsRef<[u8]>>(&self, files: &[(P, C)]) {
+            for (path, contents) in files {
+                self.write(path, contents);
+            }
+        }
+
+        pub fn read(&self, relpath: impl AsRef<Path>) -> String {
+            std::fs::read_to_string(self.path.join(relpath)).expect("read")
         }
     }
 
@@ -110,6 +120,57 @@ pub mod fs {
             } else {
                 fs::copy(&from, &to).unwrap();
             }
+        }
+    }
+
+    pub struct TmpProject {
+        dir: TmpDir,
+        /// Absolute path to the config file within the project dir.
+        cfg_abspath: PathBuf,
+    }
+
+    impl TmpProject {
+        pub fn new<P: AsRef<Path>, C: AsRef<[u8]>>(cfg_relpath: P, cfg_content: C) -> Self {
+            let dir = TmpDir::new();
+            dir.write(&cfg_relpath, cfg_content);
+            Self {
+                cfg_abspath: dir.path().join(&cfg_relpath),
+                dir,
+            }
+        }
+
+        pub fn create_with_config<C: AsRef<[u8]>>(cfg_content: C) -> Self {
+            Self::new("inclean.toml", cfg_content)
+        }
+
+        pub fn create_with_min_config() -> Self {
+            Self::create_with_config(&*MIN_PROJECT_BLOCK)
+        }
+
+        pub fn create_with_files<P: AsRef<Path>, C: AsRef<[u8]>>(files: &[(P, C)]) -> Self {
+            let project = Self::create_with_min_config();
+            project.write_files(files);
+            project
+        }
+
+        pub fn write_files<P: AsRef<Path>, C: AsRef<[u8]>>(&self, files: &[(P, C)]) {
+            self.dir.write_files(files);
+        }
+
+        pub fn create_with_rules(rules: &str) -> Self {
+            Self::create_with_config(format!("{}{}", &*MIN_PROJECT_BLOCK, rules))
+        }
+
+        pub fn read(&self, relpath: impl AsRef<Path>) -> String {
+            self.dir.read(relpath)
+        }
+
+        pub fn path(&self) -> &Path {
+            self.dir.path()
+        }
+
+        pub fn config_path(&self) -> &Path {
+            &self.cfg_abspath
         }
     }
 }
