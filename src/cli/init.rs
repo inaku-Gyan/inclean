@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn writes_into_existing_dir() {
         let dir = TmpDir::new();
-        run(Some(&dir.path())).unwrap();
+        run(Some(dir.path())).unwrap();
         let target = dir.path().join(CONFIG_FILENAME);
         assert!(target.exists());
     }
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn refuses_to_overwrite_existing_file() {
         let dir = TmpProject::create_with_min_config();
-        let err = run(Some(&dir.path())).unwrap_err();
+        let err = run(Some(dir.path())).unwrap_err();
         assert!(format!("{err:#}").contains("already exists"));
     }
 

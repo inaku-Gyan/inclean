@@ -56,6 +56,12 @@ pub mod fs {
         path: PathBuf,
     }
 
+    impl Default for TmpDir {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl TmpDir {
         fn temp_dir() -> PathBuf {
             // std::env::temp_dir()
@@ -133,11 +139,9 @@ pub mod fs {
             if entry.file_type().unwrap().is_dir() {
                 copy_dir(&from, &to);
             } else {
-                fs::copy(&from, &to).expect(&format!(
-                    "failed to copy file from\n\t{}\nto\n\t{}\n",
+                fs::copy(&from, &to).unwrap_or_else(|_| panic!("failed to copy file from\n\t{}\nto\n\t{}\n",
                     from.display(),
-                    to.display()
-                ));
+                    to.display()));
             }
         }
     }

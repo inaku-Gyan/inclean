@@ -170,27 +170,27 @@ mod tests {
 
     #[test]
     fn config_project_block_missing_fields() {
-        let proj = TmpProject::create_with_config(&format!(
+        let proj = TmpProject::create_with_config(format!(
             r#"
             [project]
             root = "."
             min_inclean_version = "{MIN_COMPAT_CLI_VERSION}"
             "#
         ));
-        let err = load_root_config(&proj.config_path()).unwrap_err();
+        let err = load_root_config(proj.config_path()).unwrap_err();
         assert!(
             format!("{err:#}").contains("`version`"),
             "Should require [project].version"
         );
 
-        let proj = TmpProject::create_with_config(&format!(
+        let proj = TmpProject::create_with_config(format!(
             r#"
             [project]
             root = "."
             version = "{CFG_VERSION}"
             "#
         ));
-        let err = load_root_config(&proj.config_path()).unwrap_err();
+        let err = load_root_config(proj.config_path()).unwrap_err();
         assert!(
             format!("{err:#}").contains("`min_inclean_version`"),
             "Should require [project].min_inclean_version"
@@ -200,12 +200,12 @@ mod tests {
     #[test]
     fn config_project_block_default_root() {
         let proj = TmpProject::create_with_min_config();
-        let cfg = load_root_config(&proj.config_path()).unwrap();
+        let cfg = load_root_config(proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
 
-        let proj = TmpProject::create_with_config(&project_block(Some(".")));
-        let cfg = load_root_config(&proj.config_path()).unwrap();
+        let proj = TmpProject::create_with_config(project_block(Some(".")));
+        let cfg = load_root_config(proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(resolved, std::fs::canonicalize(proj.path()).unwrap());
     }
@@ -213,46 +213,38 @@ mod tests {
     #[test]
     fn config_project_block_incompatible_versions() {
         // --------- Broken config ----------
-        let proj = TmpProject::create_with_config(&format!(
-            r#"
+        let proj = TmpProject::create_with_config(r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.6"
-            "#,
-        ));
-        load_root_config(&proj.config_path()).unwrap_err();
+            "#);
+        load_root_config(proj.config_path()).unwrap_err();
 
         // --------- Outdated config ----------
-        let proj = TmpProject::create_with_config(&format!(
-            r#"
+        let proj = TmpProject::create_with_config(r#"
             [project]
             version = "0.2.5"
             min_inclean_version = "0.2.0"
-            "#,
-        ));
-        load_root_config(&proj.config_path()).unwrap_err();
+            "#);
+        load_root_config(proj.config_path()).unwrap_err();
 
         // --------- Outdated CLI ----------
-        let proj = TmpProject::create_with_config(&format!(
-            r#"
+        let proj = TmpProject::create_with_config(r#"
             [project]
             version = "999.2.3"
             min_inclean_version = "999.0.0"
-            "#,
-        ));
-        load_root_config(&proj.config_path()).unwrap_err();
+            "#);
+        load_root_config(proj.config_path()).unwrap_err();
     }
 
     #[test]
     fn load_root_config_rejects_malformed_version() {
-        let proj = TmpProject::create_with_config(&format!(
-            r#"
+        let proj = TmpProject::create_with_config(r#"
             [project]
             version = "not-semver"
             min_inclean_version = "0.3.0"
-            "#,
-        ));
-        let err = load_root_config(&proj.config_path()).unwrap_err();
+            "#);
+        let err = load_root_config(proj.config_path()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("not valid semver") && msg.contains("not-semver"),
@@ -266,7 +258,7 @@ mod tests {
             (&"inclean.toml", &project_block(Some("lib"))), // overwrite the default config
             (&"lib/keep", &""),
         ]);
-        let cfg = load_root_config(&proj.config_path()).unwrap();
+        let cfg = load_root_config(proj.config_path()).unwrap();
         let resolved = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap();
         assert_eq!(
             resolved,
@@ -276,16 +268,16 @@ mod tests {
 
     #[test]
     fn resolve_project_root_rejects_empty_string() {
-        let proj = TmpProject::create_with_config(&project_block(Some("")));
-        let cfg = load_root_config(&proj.config_path()).unwrap();
+        let proj = TmpProject::create_with_config(project_block(Some("")));
+        let cfg = load_root_config(proj.config_path()).unwrap();
         let err = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap_err();
         assert!(format!("{err:#}").contains("[project].root"));
     }
 
     #[test]
     fn resolve_project_root_errors_when_target_missing() {
-        let proj = TmpProject::create_with_config(&project_block(Some("nowhere/to/land")));
-        let cfg = load_root_config(&proj.config_path()).unwrap();
+        let proj = TmpProject::create_with_config(project_block(Some("nowhere/to/land")));
+        let cfg = load_root_config(proj.config_path()).unwrap();
         let err = resolve_project_root(&cfg.path, &cfg.raw.project).unwrap_err();
         assert!(format!("{err:#}").contains("nowhere"));
     }
