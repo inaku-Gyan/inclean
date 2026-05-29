@@ -220,6 +220,7 @@ pub fn run(
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
 
     let duplicate_warnings = collect_duplicate_literal_warnings(&cfg);
+    let compiled = compile_rules(&resolved)?;
 
     if mode == CheckMode::Config {
         return Ok(Summary {
@@ -235,7 +236,6 @@ pub fn run(
 
     install_thread_pool(jobs);
 
-    let compiled = compile_rules(&resolved)?;
     let path_filter = build_path_filter(&project_root_abs, paths)?;
 
     // Walk + filter + sort candidate files.
@@ -980,13 +980,85 @@ mod tests {
 
     #[test]
     fn config_mode_skips_source_scan() {
-        let proj = TmpProject::create_with_rules("[[rule]]\nname = \"base\"");
-        proj.write("src/main.c", "#include \"x.h\"\n");
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", &[0xFF, 0xFF, 0xFE, b'\n']);
 
         let summary = run(None, proj.path(), &[], None, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
         assert!(summary.conflicts.is_empty());
+        assert!(summary.skipped.is_empty());
         assert_eq!(summary_exit_code(&summary), 0);
+    }
+
+    fn config_compile_error(rule: &str) -> String {
+        let proj = TmpProject::create_with_rules(rule);
+        let err = run(None, proj.path(), &[], None, CheckMode::Config).unwrap_err();
+        format!("{err:#}")
+    }
+
+    #[test]
+    fn config_mode_compiles_file_path_globs() {
+        let err = config_compile_error(
+            r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["["]
+            "#,
+        );
+        assert!(err.contains("file_paths/file_suffixes compile"), "{err}");
+    }
+
+    #[test]
+    fn config_mode_compiles_include_match_globs() {
+        let err = config_compile_error(
+            r#"
+            [[rule]]
+            name = "base"
+            include_match = ["["]
+            "#,
+        );
+        assert!(err.contains("include_match glob"), "{err}");
+    }
+
+    #[test]
+    fn config_mode_compiles_suppression_regexes() {
+        let err = config_compile_error(
+            r#"
+            [[rule]]
+            name = "base"
+            suppression_comments_regex = { line = "(" }
+            "#,
+        );
+        assert!(
+            err.contains("suppression_comments_regex.line compile"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn config_mode_compiles_trailing_comment_regexes() {
+        let err = config_compile_error(
+            r#"
+            [[rule]]
+            name = "base"
+            trailing_comment = {
+                transform = {
+                    content_regex = "(",
+                    action = { type = "keep" },
+                },
+            }
+            "#,
+        );
+        assert!(
+            err.contains("trailing_comment.transform.content_regex compile"),
+            "{err}"
+        );
     }
 
     #[test]
