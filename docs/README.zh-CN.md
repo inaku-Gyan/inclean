@@ -111,15 +111,15 @@ action = { type = "replace", with = "lib/${original}" }
 
 ## 命令
 
-| 命令                                                                  | 用途                                                                                                                                              |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inclean init [PATH]`                                                 | 生成带注释的 `inclean.toml` 模板。`inclean config new` 的别名。                                                                                   |
-| `inclean check [config\|unfixable\|all] [-c PATH] [-j N] [PATHS...]`  | 只读检查。`config` 仅校验配置文件；`unfixable` 只报告无法自动修复的违规；`all`（默认）报告每一处 per-include 结果。                               |
-| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]`                  | 以 unified diff 形式打印每一处拟改写。`-o` 写入文件而非 stdout。                                                                                  |
-| `inclean apply [-c PATH] [-j N] [PATHS...]`                           | 就地应用改写。无 unfixable 违规的文件被写入；存在违规（error / conflict / evaluation_failure）的文件整体跳过，最后打印一份违规详情报告。          |
-| `inclean config check [-c PATH]`                                      | `inclean check config` 的别名。                                                                                                                   |
-| `inclean config new [PATH]`                                           | `inclean init` 的别名。                                                                                                                           |
-| `inclean config schema [-o PATH] [--check]`                           | 输出 / 校验 `inclean.toml` 的 JSON Schema。`--check` 模式要求 `-o`，若 schema 偏移则以非零状态码退出。                                            |
+| 命令                                                                 | 用途                                                                                                                                     |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `inclean init [PATH]`                                                | 生成带注释的 `inclean.toml` 模板。`inclean config new` 的别名。                                                                          |
+| `inclean check [config\|unfixable\|all] [-c PATH] [-j N] [PATHS...]` | 只读检查。`config` 仅校验配置文件；`unfixable` 只报告无法自动修复的违规；`all`（默认）报告每一处 per-include 结果。                      |
+| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]`                 | 以 unified diff 形式打印每一处拟改写。`-o` 写入文件而非 stdout。                                                                         |
+| `inclean apply [-c PATH] [-j N] [PATHS...]`                          | 就地应用改写。无 unfixable 违规的文件被写入；存在违规（error / conflict / evaluation_failure）的文件整体跳过，最后打印一份违规详情报告。 |
+| `inclean config check [-c PATH]`                                     | `inclean check config` 的别名。                                                                                                          |
+| `inclean config new [PATH]`                                          | `inclean init` 的别名。                                                                                                                  |
+| `inclean config schema [-o PATH] [--check]`                          | 输出 / 校验 `inclean.toml` 的 JSON Schema。`--check` 模式要求 `-o`，若 schema 偏移则以非零状态码退出。                                   |
 
 未指定 action 的规则默认采用 `{ type = "keep", output_form = "preserve" }`
 （即不动作）。
