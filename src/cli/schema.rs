@@ -94,7 +94,7 @@ fn render() -> Result<String> {
     obj.insert(
         "description".into(),
         "Configuration schema for inclean. \
-         See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md"
+         Generate a documented starter config with `inclean init`."
             .into(),
     );
 

@@ -95,6 +95,11 @@ which files are processed; with no paths they consider every source
 file under the project root. `-c PATH` overrides the upward `inclean.toml`
 walk; `-j N` sets the worker thread count.
 
+Rule matching has four layers, all of which must pass: `file_paths`,
+`file_suffixes`, `match_forms`, and `include_match`. Globs are anchored
+and use literal separators: `foo.h` only matches `foo.h`, while
+`**/foo.h` matches at any depth.
+
 ### Example
 
 A simple `replace`-action config that rewrites `#include "foo.h"` to
@@ -103,8 +108,8 @@ A simple `replace`-action config that rewrites `#include "foo.h"` to
 ```toml
 [project]
 root = "."
-version = "0.3.0"
-min_inclean_version = "0.3.0"
+version = "0.3.0-alpha.2"
+min_inclean_version = "0.3.0-alpha.1"
 
 [[rule]]
 name = "lib-prefix"
@@ -129,6 +134,9 @@ See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
 The default action when no rule specifies one is `keep` with
 `output_form = preserve` — a rule that omits `action` is a no-op.
+`resolve` probes each configured `include_directories` entry literally
+under the project root and fails if the include is found in zero or
+multiple directories.
 
 ## Editor support
 
@@ -138,19 +146,18 @@ with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tama
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.3.0"
-min_inclean_version = "0.3.0"
+version = "0.3.0-alpha.2"
+min_inclean_version = "0.3.0-alpha.1"
 ```
 
 `inclean init` writes both the `#:schema` line (for the editor) and the
 `[project].version` + `[project].min_inclean_version` fields, each
 pinned to the CLI version that generated the file. To upgrade schema
-validation, edit the `v0.3.0` segment in the URL to a newer release
-tag.
+validation, edit the version segment in the URL to a newer release tag.
 
 **`#:schema` and the `[project]` version fields are independent.** The
 `#:schema` URL is purely for editor tooling; the CLI runs its own
@@ -162,35 +169,32 @@ not ship migration shims for breaking schema changes — see
 You can also dump a local copy:
 
 ```sh
-inclean schema --output inclean.toml.schema.json
+inclean config schema --output inclean.toml.schema.json
 ```
 
 ## Documentation
 
-- **[docs/configuration.md](docs/configuration.md)** — full
-  `inclean.toml` schema: the four-layer matching model, `copied_from`
-  copy semantics, `@std.*` constants, six action variants, `${copied}`
-  and other placeholders, exit codes.
-- **[docs/architecture.md](docs/architecture.md)** — code-level
-  architecture: module map, pipeline phases, key invariants.
+- `inclean init` writes the most complete user-facing configuration
+  reference into the generated `inclean.toml`.
+- **[schemas/inclean.toml.schema.json](schemas/inclean.toml.schema.json)** —
+  editor schema generated from the Rust config structs.
+- **[tests/golden_tests/](tests/golden_tests/)** — runnable examples for
+  replacement, resolution, copy semantics, suppression, trailing comments,
+  conflicts, and encoding preservation.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — toolchain, dev workflow,
   conventions, scope.
-- **[CHANGELOG.md](CHANGELOG.md)** — release history.
 
 ## Status
 
-`0.3.0` — current. Reshapes the configuration around `copied_from` (a
-single-level transitive copy that replaces `extends` AND-merge),
-4-layer matching (`file_paths` / `file_suffixes` / `match_forms` /
-`include_match`), six action variants (`resolve` / `replace` /
-`keep` / `remove` / `comment_out` / `error`), `suppression_comments_regex`
-off-limits regions, a new `trailing_comment.transform` model, and
-conflict-detection by final-line text rather than rule-tree invariants.
-The CLI gains `check unfixable`, `check all`, `[PATHS...]` filtering,
-and a unified-diff output via `inclean diff -o`. inclean is pre-1.0 /
-beta and does not provide migration shims between breaking schema
-changes; see [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy)
-for the project policy.
+`0.3.0-alpha.2` — current code version. The configuration uses
+`copied_from` inheritance, four matching layers, six action variants,
+`suppression_comments_regex`, `trailing_comment.transform`, and
+conflict detection by final output text. The CLI supports `check
+config`, `check unfixable`, `check all`, `[PATHS...]` filtering, and
+unified diff output via `inclean diff -o`. inclean is pre-1.0 / beta and
+does not provide migration shims between breaking schema changes; see
+[CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy) for the project
+policy.
 
 ## License
 

@@ -89,6 +89,11 @@ inclean apply               # 就地写入改写
 未传时考虑项目根下所有源文件。`-c PATH` 覆盖向上查找 `inclean.toml`
 的行为；`-j N` 指定工作线程数。
 
+规则匹配共有四层，必须全部通过：`file_paths`、`file_suffixes`、
+`match_forms` 和 `include_match`。glob 是全字符串锚定的，并使用
+literal separator 语义：`foo.h` 只匹配 `foo.h`，`**/foo.h` 才匹配
+任意深度下的同名文件。
+
 ### 示例
 
 用 `replace` 动作把 `#include "foo.h"` 改写为
@@ -97,8 +102,8 @@ inclean apply               # 就地写入改写
 ```toml
 [project]
 root = "."
-version = "0.3.0"
-min_inclean_version = "0.3.0"
+version = "0.3.0-alpha.2"
+min_inclean_version = "0.3.0-alpha.1"
 
 [[rule]]
 name = "lib-prefix"
@@ -122,33 +127,53 @@ action = { type = "replace", with = "lib/${original}" }
 | `inclean config schema [-o PATH] [--check]`                          | 输出 / 校验 `inclean.toml` 的 JSON Schema。`--check` 模式要求 `-o`，若 schema 偏移则以非零状态码退出。                                   |
 
 未指定 action 的规则默认采用 `{ type = "keep", output_form = "preserve" }`
-（即不动作）。
+（即不动作）。`resolve` 会按字面路径探测项目根下的
+`include_directories`；若找不到，或多个目录同时命中，都会报
+evaluation failure。
+
+## 编辑器支持
+
+`inclean.toml` 带 JSON Schema，可用于编辑器补全和校验。`inclean init`
+会写入 `#:schema` 行，并写入 `[project].version` 与
+`[project].min_inclean_version`。`#:schema` 只服务编辑器；CLI 会独立执行
+双向兼容性检查。
+
+```toml
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
+
+[project]
+root = "."
+version = "0.3.0-alpha.2"
+min_inclean_version = "0.3.0-alpha.1"
+```
+
+也可以导出一份本地 schema：
+
+```sh
+inclean config schema --output inclean.toml.schema.json
+```
 
 ## 文档
 
-- **[docs/configuration.md](docs/configuration.md)** —— 完整的
-  `inclean.toml` schema：四层匹配模型、`copied_from` 复制语义、
-  `@std.*` 常量、6 种动作、占位符、退出码。
-- **[docs/architecture.md](docs/architecture.md)** —— 代码层面的
-  架构：模块图、流水线阶段、关键不变量。
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 工具链、开发流程、
+- `inclean init` 生成的 `inclean.toml` 模板是当前最完整的用户侧配置参考。
+- **[schemas/inclean.toml.schema.json](../schemas/inclean.toml.schema.json)** ——
+  由 Rust 配置结构生成的编辑器 schema。
+- **[tests/golden_tests/](../tests/golden_tests/)** —— 可运行的端到端示例，
+  覆盖 replace、resolve、copy、suppression、trailing comment、conflict
+  和编码保留。
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** —— 工具链、开发流程、
   约定、范围、发布流程。
-- **[CHANGELOG.md](CHANGELOG.md)** —— 发布历史。
 
 ## 状态
 
-`0.3.0` —— 当前版本。围绕 `copied_from`（单层、可传递的复制语义，
-替代原来的 `extends` AND 合并）、4 层匹配（`file_paths` /
-`file_suffixes` / `match_forms` / `include_match`）、六种动作
-（`resolve` / `replace` / `keep` / `remove` / `comment_out` /
-`error`）、`suppression_comments_regex` 屏蔽区域、新的
-`trailing_comment.transform` 模型，以及"按最终行文本判定冲突"
-（而非依赖规则树不变量）等设计做了大规模重构。CLI 新增
-`check unfixable` / `check all`、`[PATHS...]` 过滤、以及通过
-`inclean diff -o` 将统一 diff 写入文件。inclean 处于 pre-1.0
+`0.3.0-alpha.2` —— 当前代码版本。配置使用 `copied_from` 继承、
+四层匹配、六种动作、`suppression_comments_regex`、
+`trailing_comment.transform`，并按最终输出文本检测冲突。CLI 支持
+`check config` / `check unfixable` / `check all`、`[PATHS...]` 过滤，
+以及通过 `inclean diff -o` 写出 unified diff。inclean 处于 pre-1.0
 beta，breaking schema 变更不提供迁移 shim；详见
-[CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy)。
+[CLAUDE.md](../CLAUDE.md#pre-10-backward-compat-policy)。
 
 ## 许可证
 
-[BSD 3-Clause](LICENSE)。
+[BSD 3-Clause](../LICENSE)。
