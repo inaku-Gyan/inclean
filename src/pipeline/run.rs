@@ -987,7 +987,7 @@ mod tests {
             action = { type = "keep" }
         "#;
         let proj = TmpProject::create_with_rules(rule);
-        proj.write("src/main.c", &[0xFF, 0xFF, 0xFE, b'\n']);
+        proj.write("src/main.c", [0xFF, 0xFF, 0xFE, b'\n']);
 
         let summary = run(None, proj.path(), &[], None, CheckMode::Config).unwrap();
         assert!(summary.files.is_empty());
