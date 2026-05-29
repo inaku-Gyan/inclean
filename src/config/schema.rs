@@ -45,7 +45,7 @@ fn default_project_root() -> String {
 
 /// Sentinel emitted when a user wrote a top-level object field as the
 /// literal string `"${copied}"` (e.g. `action = "${copied}"`). Resolution
-/// at [`copy::resolve`] time substitutes the parent's resolved object.
+/// at [`crate::config::copy::resolve`] time substitutes the parent's resolved object.
 #[derive(Debug, Clone, Copy)]
 pub enum MaybeCopiedObject<T> {
     Copied,
