@@ -8,6 +8,8 @@ Thumbs.db
 .vscode/
 .claude/
 .codex/
+.agents/
+.cursor/
 
 ### Build artifacts
 /target
