@@ -1,129 +1,109 @@
-# CLAUDE.md — Notes for Claude Code working in this repo
+# CLAUDE.md - repo notes for coding agents
 
-## What this project is
+## Project
 
-inclean is a Rust CLI that rewrites `#include` directives in C/C++ source
-trees so the library can be consumed with a clean, minimal `-I` list. The
-canonical use case: take an old library whose internal source uses
-`#include "bar.h"` (resolving via `-Isrc/internal`) and rewrite every
-such line so the consumer only needs `-Ipath/to/lib/include`.
+`inclean` is a Rust CLI for normalizing C/C++ `#include` paths so consumers can
+use a smaller, cleaner `-I` list. It reads one `inclean.toml`, scans source
+files, matches include directives against rules, then reports, diffs, or applies
+rewrites.
 
-For the module map and pipeline narrative, see
-[docs/architecture.md](docs/architecture.md); for the full `inclean.toml`
-schema (layers, actions, placeholders, `@std.*` constants), see
-[docs/configuration.md](docs/configuration.md). This file keeps only
-Claude-facing guidance.
+Crate version: `Cargo.toml`. Config/CLI compatibility constants:
+`src/profile.rs`.
 
-## Design source of truth
+## Main Pipeline
 
-The original design plan lives in
-`/home/inaku/.claude/plans/c-c-inclean-iterative-tome.md` (local to the
-maintainer's machine, not committed). Read it before making non-trivial
-changes. Key design choices that drive the code shape:
+The real entry point is `pipeline::run::run()` in `src/pipeline/run.rs`.
+CLI modules should stay thin and call it.
 
-- **Configuration**: TOML, single file. Exactly one `inclean.toml` per
-  project; extra copies anywhere under the project root are a hard
-  error. The config **must** declare a `[project]` block. `[project].root`
-  (default `"."`) is interpreted relative to the config file's
-  directory and resolves to the actual project root — so the config may
-  sit above the project root (e.g. `inclean.toml` at a repo top with
-  `root = "lib"`). All paths in rules are relative to the **resolved**
-  project root, not to the config file's directory.
-- **Rule model**: pure rule tree with single inheritance via `extends`. Rule
-  `name` is globally unique within the config. There is **no `[defaults]`
-  block** — users write a `base` rule and others extend it.
-- **`[project]` block is minimal**: only `root`. Everything else
-  (`allowed_include_dirs`, `original_include_dirs`) lives on rules.
-- **Five-layer matching** (each layer has a default if unspecified):
-  1. `paths` — gitignore-style file globs
-  2. `extensions` — file extension filter (skipped if layer 1 is an exact path)
-  3. `forms` — set of `"quote"` / `"angle"` / `"macro"`; `"macro"` always errors in v1
-  4. `match` — regex on the stripped include content (no quotes/angles)
-  5. `match_resolved` — only runs when the rule sets it. Resolves the
-     include via `original_include_dirs` (must be unique — duplicate hits
-     surface as `Layer5Ambiguous` per-include, exit 3); then enforces
-     optional `under` (path-prefix) and `match` (path regex) constraints.
-     When layer 5 runs, the action gets `${resolved.path}` /
-     `${resolved.dir}` / `${resolved.basename}` placeholders.
-- **Inheritance semantics**: runtime AND-combination merges fields; the
-  rule-tree invariants ("child's match set ⊆ parent's" + "cross-chain
-  disjoint") are enforced at source-scan time by
-  `tree::check_chain(match_all(...))`. There is no static lint module —
-  the source-level check supersedes it (also covers layer-4 regex).
-- **Mode-dependent winner**: under `CheckMode::Full`, the action runs on
-  the deepest rule in the matched chain (the leaf), not the first-by-
-  declaration. This makes apply behavior independent of rule declaration
-  order.
-- **Action default**: `{ type = "auto", relative_to = "allowed", form = "quote" }`.
-- **`@std.*` built-in constants** (e.g. `@std.cpp.extensions`, `@std.cpp17.system_headers`)
-  spread in any string-list field via `@name` syntax.
+Flow:
 
-## Module layout & pipeline data flow
+1. `discover::{find_root_config, load_root_config, resolve_project_root}` loads
+   config and resolves `[project].root`.
+2. `copy::resolve()` converts raw rules into declaration-ordered
+   `ResolvedRule`s.
+3. `compile_rules()` builds `CompiledRule`s.
+4. `source_files()` walks the project root, applies CLI path filters, skips
+   `inclean.toml`, prefilters with `any_rule_eligible()`, sorts, then uses rayon.
+5. `process_file_outer()` reads bytes, preserves UTF-8 BOM state, and skips
+   non-UTF-8 files.
+6. `process_file()` scans `Include`s, computes suppression, runs
+   `engine::match_all()`, evaluates every match with `action::evaluate()`, and
+   calls `collapse_outcomes()`.
+7. `run()` aggregates `Summary`, `FileResult`, `Conflict`, `UnfixableDetail`,
+   skipped files, and warnings.
 
-Moved to [docs/architecture.md](docs/architecture.md). Read that doc
-for the per-module responsibilities, the six-step pipeline walkthrough
-inside `pipeline::run::run`, and the full list of `IncludeOutcome`
-variants and exit-code semantics.
+Key structs/enums:
 
-## Dev workflow
+- `schema`: `RawConfig`, `RawProject`, `RawRule`
+- `copy`: `ResolvedRule`, `ResolvedAction`, `ResolvedSuppression`
+- `engine`: `CompiledRule`, `CandidateMatch`, `MatchAllOutcome`
+- `include_line`: `Include`, `ScanReport`
+- `action`: `Outcome`
+- `pipeline::run`: `Summary`, `FileResult`, `IncludeResult`, `IncludeOutcome`,
+  `Conflict`, `UnfixableDetail`
+
+Conflict handling is final-text based: every matched rule is evaluated. If all
+rules produce the same final `(edit_range, new_text)` or the same kept text,
+there is no conflict. Any divergence is `IncludeOutcome::Conflict`.
+
+## Config Model
+
+- One root `inclean.toml`; `[project].root` is config-relative and defaults to
+  `"."`.
+- Required version fields: `version`, `min_inclean_version`. Gate:
+  `MIN_COMPAT_CFG_VERSION <= version` and `min_inclean_version <= CLI_VERSION`.
+- Rule names are globally unique. `copied_from` references only earlier rules
+  and is transitive.
+- Omitted top-level child fields inherit. Written object fields reset inner
+  fields unless `${copied}` is used.
+- Match layers: `file_paths`, `file_suffixes`, `match_forms`, `include_match`.
+  Macro includes may match, but action evaluation returns an error.
+- Actions: `resolve`, `replace`, `keep`, `remove`, `comment_out`, `error`.
+  Default: `keep` with `output_form = preserve`.
+- `trailing_comment` only applies to `resolve`, `replace`, and `keep`.
+
+## Commands
+
+Useful checks:
 
 ```sh
-cargo check     # fast type-check
-cargo test      # unit + integration tests
-cargo clippy    # lints
-cargo fmt       # format
+cargo fmt --check
+cargo clippy
+cargo test
+cargo build
 ```
 
-Integration fixtures live under `tests/fixtures/` (small fake libraries).
-Add a new fixture for any non-trivial behavior change.
+After config-shape changes, regenerate the checked-in schema:
 
-## Releasing
+```sh
+cargo run -- config schema -o schemas/inclean.toml.schema.json
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md#releasing). In short: bump
-`CHANGELOG.md` and `Cargo.toml` in one commit on `main`, then push a
-`vX.Y.Z` SemVer tag — that triggers `.github/workflows/release.yml`,
-which validates the tag, builds, and publishes to crates.io / PyPI /
-GitHub Releases. The workflow's `check-tag` job will fail the release
-if the tag doesn't equal `Cargo.toml`'s `version`.
+Golden tests: `tests/golden_tests/<case>/{input,expected}`. Fixture tests:
+`tests/fixture_tests`.
 
 ## Conventions
 
-- Use `anyhow::Result` for high-level error returns; `thiserror` for typed
-  errors at module boundaries.
-- Rule-set / config errors should pinpoint the offending `inclean.toml`
-  path and rule name in the message.
-- Keep `cli/*` files thin — they parse flags and call into `pipeline::run`.
-- The `auto` action requires the resolved file to live under one of the
-  matched rule's `allowed_include_dirs`; failure is a hard error and aborts
-  the file's apply.
+- Respect module boundaries: `cli` parses/prints, `pipeline` orchestrates,
+  `rule` matches/evaluates, `config` parses/resolves, `lex` finds includes.
+- Use `anyhow::Result` for high-level fallible APIs. Include config path and
+  rule name in config errors where possible.
+- Preserve BOM and line endings. Do not normalize source text while rewriting.
+- Keep output deterministic; candidate files are sorted before parallel work.
+- Config semantic changes need `src/profile.rs`, schema, tests, and README
+  updates as needed.
 
-## Pre-1.0 backward-compat policy
+## Pre-1.0 Compatibility Policy
 
-Before v1.0.0, **do not introduce any forward-compat or backward-compat
-shim code.** `MIN_SUPPORTED_INCLEAN_TOML_VERSION` (in
-`src/config/discover.rs`) is the single version gate: bump it whenever
-the on-disk schema gets a breaking change, and let
-`discover::validate_loaded` hard-reject older configs. Concretely, do
-not write:
+Do not add migration shims before v1.0. Breaking schema changes should bump
+`MIN_COMPAT_CFG_VERSION` / `MIN_COMPAT_CLI_VERSION` as appropriate and hard
+reject stale configs. Avoid field aliases, old-format probes, auto-upgrades, or
+per-version parsing branches.
 
-- schema migration logic ("if version < X, transform like ..."),
-- field-rename fallbacks or deprecated-alias support,
-- per-version branching in parse/resolve code,
-- "old format" probes or auto-upgrades on read,
-- any other code whose only job is making old configs work.
+## Avoid
 
-The fix for a user with a stale config is to update their `inclean.toml`,
-not to maintain compatibility code. Code clarity beats migration ergonomics
-in pre-1.0. Revisit this rule when the project reaches v1.0.0.
-
-## Things to avoid
-
-- Don't introduce a `[defaults]` block or any project-level fallback for
-  `allowed_include_dirs` / `original_include_dirs`. The deliberate design
-  is "rule tree with explicit `base`".
-- Don't widen the rule subset invariant — child rules should never match
-  more than the parent.
-- Don't attempt to formally check regex containment for layer 4. Runtime
-  AND-combination is the enforcement; static lint covers layers 1/2/3 only.
-- Don't add file-moving, umbrella-header generation, or `extern "C"`
-  wrapping. Out of scope for v1.
+- Reintroducing `extends`, `allowed_include_dirs`, `match_resolved`, or
+  `original_include_dirs`.
+- Adding file-moving, umbrella-header generation, or `extern "C"` wrapping.
+- Turning rule matching back into "pick one best rule"; the current model is
+  "evaluate all matches, then compare final text."

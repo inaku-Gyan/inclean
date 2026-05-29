@@ -7,7 +7,10 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/
+.codex/
+.agents/
+.cursor/
 
 ### Build artifacts
 /target
-/tests/.workdir
+/tempdir

@@ -15,7 +15,7 @@
 
 use std::sync::LazyLock;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Marker for whether a constant is naturally list-shaped or scalar.
 #[derive(Debug, Clone)]
@@ -33,15 +33,15 @@ pub fn lookup(name: &str) -> Option<Value> {
     if let Some(list) = lookup_list(name) {
         return Some(Value::List(list));
     }
-    if let Some(base) = name.strip_suffix("_or") {
-        if let Some(list) = lookup_list(base) {
-            let joined = list
-                .iter()
-                .map(|item| regex::escape(item))
-                .collect::<Vec<_>>()
-                .join("|");
-            return Some(Value::String(format!("(?:{joined})")));
-        }
+    if let Some(base) = name.strip_suffix("_or")
+        && let Some(list) = lookup_list(base)
+    {
+        let joined = list
+            .iter()
+            .map(|item| regex::escape(item))
+            .collect::<Vec<_>>()
+            .join("|");
+        return Some(Value::String(format!("(?:{joined})")));
     }
     None
 }
@@ -137,12 +137,12 @@ fn is_ident_cont(b: u8) -> bool {
 fn lookup_list(name: &str) -> Option<Vec<&'static str>> {
     let v = match name {
         // ---- file extensions ----
-        "std.c_header_extensions" => C_HEADER_EXTENSIONS.to_vec(),
-        "std.c_source_extensions" => C_SOURCE_EXTENSIONS.to_vec(),
-        "std.c_extensions" => C_EXTENSIONS.clone(),
-        "std.cpp_header_extensions" => CPP_HEADER_EXTENSIONS.to_vec(),
-        "std.cpp_source_extensions" => CPP_SOURCE_EXTENSIONS.to_vec(),
-        "std.cpp_extensions" => CPP_EXTENSIONS.clone(),
+        "std.c.header_extensions" => C_HEADER_EXTENSIONS.to_vec(),
+        "std.c.source_extensions" => C_SOURCE_EXTENSIONS.to_vec(),
+        "std.c.extensions" => C_EXTENSIONS.clone(),
+        "std.cpp.header_extensions" => CPP_HEADER_EXTENSIONS.to_vec(),
+        "std.cpp.source_extensions" => CPP_SOURCE_EXTENSIONS.to_vec(),
+        "std.cpp.extensions" => CPP_EXTENSIONS.clone(),
 
         // ---- C system headers (cumulative per version) ----
         "std.c89.system_headers" => C89_HEADERS.to_vec(),
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn list_constant_lookup_returns_list() {
-        let v = lookup("std.c_extensions").expect("found");
+        let v = lookup("std.c.extensions").expect("found");
         match v {
             Value::List(list) => assert!(list.contains(&".c") && list.contains(&".h")),
             _ => panic!("expected list"),
@@ -415,11 +415,11 @@ mod tests {
 
     #[test]
     fn c_and_cpp_extensions_are_disjoint_pairs_with_h_in_c() {
-        let c = match lookup("std.c_extensions").unwrap() {
+        let c = match lookup("std.c.extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
-        let cpp = match lookup("std.cpp_extensions").unwrap() {
+        let cpp = match lookup("std.cpp.extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
@@ -433,19 +433,19 @@ mod tests {
 
     #[test]
     fn separate_header_and_source_lists_exist() {
-        let ch = match lookup("std.c_header_extensions").unwrap() {
+        let ch = match lookup("std.c.header_extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
-        let cs = match lookup("std.c_source_extensions").unwrap() {
+        let cs = match lookup("std.c.source_extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
-        let ph = match lookup("std.cpp_header_extensions").unwrap() {
+        let ph = match lookup("std.cpp.header_extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
-        let ps = match lookup("std.cpp_source_extensions").unwrap() {
+        let ps = match lookup("std.cpp.source_extensions").unwrap() {
             Value::List(l) => l,
             _ => panic!(),
         };
@@ -456,9 +456,11 @@ mod tests {
     }
 
     #[test]
-    fn removed_all_extensions_no_longer_exists() {
+    fn old_underscore_names_no_longer_exist() {
+        // v0.3 renamed `std.c_extensions` → `std.c.extensions` etc.
+        assert!(lookup("std.c_extensions").is_none());
+        assert!(lookup("std.cpp_extensions").is_none());
         assert!(lookup("std.all_extensions").is_none());
-        assert!(lookup("std.c.extensions").is_none()); // old dot-style names
     }
 
     #[test]
@@ -481,7 +483,7 @@ mod tests {
 
     #[test]
     fn expand_list_spreads_known_constant_and_keeps_literals() {
-        let out = expand_list(&["@std.c_extensions".to_string(), ".inl".to_string()]).unwrap();
+        let out = expand_list(&["@std.c.extensions".to_string(), ".inl".to_string()]).unwrap();
         assert!(out.contains(&".c".to_string()));
         assert!(out.contains(&".h".to_string()));
         assert!(out.contains(&".inl".to_string()));
@@ -511,7 +513,7 @@ mod tests {
     fn substitute_replaces_list_constant_as_alternation() {
         // A list constant used in a string field is materialized as a
         // regex alternation, just like _or would do.
-        let s = substitute_in_string("@std.c_extensions").unwrap();
+        let s = substitute_in_string("@std.c.extensions").unwrap();
         assert_eq!(s, r"(?:\.h|\.c)");
     }
 
