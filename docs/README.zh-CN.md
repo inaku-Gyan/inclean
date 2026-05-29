@@ -164,16 +164,6 @@ inclean config schema --output inclean.toml.schema.json
 - **[CONTRIBUTING.md](../CONTRIBUTING.md)** —— 工具链、开发流程、
   约定、范围、发布流程。
 
-## 状态
-
-`0.3.0-alpha.2` —— 当前代码版本。配置使用 `copied_from` 继承、
-四层匹配、六种动作、`suppression_comments_regex`、
-`trailing_comment.transform`，并按最终输出文本检测冲突。CLI 支持
-`check config` / `check unfixable` / `check all`、`[PATHS...]` 过滤，
-以及通过 `inclean diff -o` 写出 unified diff。inclean 处于 pre-1.0
-beta，breaking schema 变更不提供迁移 shim；详见
-[CLAUDE.md](../CLAUDE.md#pre-10-backward-compat-policy)。
-
 ## 许可证
 
 [BSD 3-Clause](../LICENSE)。

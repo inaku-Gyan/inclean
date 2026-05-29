@@ -184,18 +184,6 @@ inclean config schema --output inclean.toml.schema.json
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — toolchain, dev workflow,
   conventions, scope.
 
-## Status
-
-`0.3.0-alpha.2` — current code version. The configuration uses
-`copied_from` inheritance, four matching layers, six action variants,
-`suppression_comments_regex`, `trailing_comment.transform`, and
-conflict detection by final output text. The CLI supports `check
-config`, `check unfixable`, `check all`, `[PATHS...]` filtering, and
-unified diff output via `inclean diff -o`. inclean is pre-1.0 / beta and
-does not provide migration shims between breaking schema changes; see
-[CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy) for the project
-policy.
-
 ## License
 
 [BSD 3-Clause](LICENSE).
