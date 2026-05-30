@@ -144,7 +144,7 @@
           ]
         },
         "action": {
-          "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is\n`{ type = \"keep\", output_form = \"preserve\" }`. The whole field can also\nbe the string `\"${copied}\"` to reuse the parent's resolved action, or\n`\"skip\"` to avoid contributing an action candidate.",
+          "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is `\"skip\"`. The\nwhole field can also be the string `\"${copied}\"` to reuse the parent's\nresolved action, or `\"skip\"` to avoid contributing an action candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawAction"
@@ -155,7 +155,7 @@
           ]
         },
         "trailing_comment": {
-          "description": "Optional trailing-comment transform and/or append rule for\n`resolve`/`replace`/`keep` actions. The whole field can also be the\nstring `\"${copied}\"` to reuse the parent's resolved value verbatim,\nor `\"skip\"` to avoid contributing a trailing-comment candidate.",
+          "description": "Optional trailing-comment transform and/or append rule. If neither this\nrule nor any copied ancestor sets one, the effective value is `\"skip\"`.\nThe whole field can also be the string `\"${copied}\"` to reuse the\nparent's resolved value verbatim, or `\"skip\"` to avoid contributing a\ntrailing-comment candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawTrailingComment"

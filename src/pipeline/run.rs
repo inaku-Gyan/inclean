@@ -1247,6 +1247,46 @@ mod tests {
     }
 
     #[test]
+    fn omitted_action_and_trailing_comment_default_to_skip() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        let f = &summary.files[0];
+        assert!(matches!(
+            f.include_results[0].outcome,
+            IncludeOutcome::Keep { .. }
+        ));
+        assert!(summary.conflicts.is_empty());
+        assert!(f.rewritten.is_none());
+    }
+
+    #[test]
+    fn trailing_comment_can_run_without_explicit_action() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            trailing_comment = { append_if_absent = "  // IWYU: keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  // IWYU: keep");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
     fn replace_action_writes_back() {
         let rule = r#"
             [[rule]]

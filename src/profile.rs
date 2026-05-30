@@ -7,7 +7,7 @@ pub const CFG_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Minimum version of the config format that this version of Inclean CLI can read.
-pub const MIN_COMPAT_CFG_VERSION: &str = "0.3.0-alpha.2";
+pub const MIN_COMPAT_CFG_VERSION: &str = "0.3.0-alpha.3";
 
 /// Minimum version of the Inclean CLI that can read this version of the config format.
 pub const MIN_COMPAT_CLI_VERSION: &str = "0.3.0-alpha.3";

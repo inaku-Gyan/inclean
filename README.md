@@ -101,7 +101,8 @@ directories and applies `include_on_unresolved` (`error` / `skip` /
 For rules that are meant to affect only one side of a rewrite, the whole
 field values `action = "skip"` and `trailing_comment = "skip"` make that
 side opt out of conflict detection. `keep` still participates in conflict
-checks; `skip` does not.
+checks; `skip` does not. For a rule without `copied_from`, both fields
+default to `skip` when omitted.
 
 ### Example
 

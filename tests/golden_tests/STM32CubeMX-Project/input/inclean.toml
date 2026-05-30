@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.3/schemas/inclean.toml.schema.json
 
 [project]
 version = "0.3.0-alpha.3"

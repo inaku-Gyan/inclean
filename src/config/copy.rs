@@ -157,9 +157,12 @@ fn default_include_match() -> Vec<String> {
     vec!["**".to_string()]
 }
 fn default_action() -> ResolvedAction {
-    ResolvedAction::Keep {
-        output_form: OutputForm::Preserve,
-        message: String::new(),
+    ResolvedAction::Skip
+}
+fn default_trailing_comment() -> ResolvedTrailingComment {
+    ResolvedTrailingComment {
+        skip: true,
+        ..ResolvedTrailingComment::default()
     }
 }
 
@@ -351,7 +354,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         }
         None => parent
             .map(|p| p.trailing_comment.clone())
-            .unwrap_or_default(),
+            .unwrap_or_else(default_trailing_comment),
     };
 
     Ok(ResolvedRule {
@@ -816,7 +819,8 @@ mod tests {
             IncludeOnUnresolved::Error
         ));
         assert!(matches!(r.include_on_ambiguous, IncludeOnAmbiguous::Error));
-        assert!(matches!(r.action, ResolvedAction::Keep { .. }));
+        assert!(matches!(r.action, ResolvedAction::Skip));
+        assert!(r.trailing_comment.skip);
     }
 
     #[test]

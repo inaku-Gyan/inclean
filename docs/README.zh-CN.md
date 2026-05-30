@@ -90,7 +90,8 @@ inclean apply               # 就地写入改写
 `include_on_ambiguous`（`error` / `skip` / `first`）。
 如果一条规则只想参与某一侧的改写，可以把整个字段写成
 `action = "skip"` 或 `trailing_comment = "skip"`，让这一侧不参与
-冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。
+冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。没有
+`copied_from` 的规则如果省略这两个字段，默认值都是 `skip`。
 
 ### 示例
 

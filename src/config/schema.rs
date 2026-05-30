@@ -268,16 +268,16 @@ pub struct RawRule {
     pub include_on_ambiguous: Option<IncludeOnAmbiguous>,
 
     /// Action to run when all match layers pass. If neither this rule nor any
-    /// copied ancestor sets an action, the effective action is
-    /// `{ type = "keep", output_form = "preserve" }`. The whole field can also
-    /// be the string `"${copied}"` to reuse the parent's resolved action, or
-    /// `"skip"` to avoid contributing an action candidate.
+    /// copied ancestor sets an action, the effective action is `"skip"`. The
+    /// whole field can also be the string `"${copied}"` to reuse the parent's
+    /// resolved action, or `"skip"` to avoid contributing an action candidate.
     pub action: Option<MaybeCopiedOrSkipObject<RawAction>>,
 
-    /// Optional trailing-comment transform and/or append rule for
-    /// `resolve`/`replace`/`keep` actions. The whole field can also be the
-    /// string `"${copied}"` to reuse the parent's resolved value verbatim,
-    /// or `"skip"` to avoid contributing a trailing-comment candidate.
+    /// Optional trailing-comment transform and/or append rule. If neither this
+    /// rule nor any copied ancestor sets one, the effective value is `"skip"`.
+    /// The whole field can also be the string `"${copied}"` to reuse the
+    /// parent's resolved value verbatim, or `"skip"` to avoid contributing a
+    /// trailing-comment candidate.
     pub trailing_comment: Option<MaybeCopiedOrSkipObject<RawTrailingComment>>,
 }
 

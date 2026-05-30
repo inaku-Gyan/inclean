@@ -107,9 +107,12 @@
 # - Use `action = "skip"` or `trailing_comment = "skip"` to leave that
 #   side out of conflict detection for the child rule.
 #
-# Default action when neither child nor any ancestor specifies one:
-#   { type = "keep", output_form = "preserve" }
-# i.e. do nothing. A rule with no `action = ...` is harmless.
+# Default action and trailing_comment when neither child nor any ancestor
+# specifies them:
+#   action = "skip"
+#   trailing_comment = "skip"
+# i.e. the rule may match, but it contributes no edit/conflict candidate
+# until one side is configured explicitly.
 #
 # Built-in @std.* constants (used inside string lists, or in regex/
 # template strings via the same @name syntax):

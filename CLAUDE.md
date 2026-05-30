@@ -60,10 +60,11 @@ there is no conflict. Any divergence is `IncludeOutcome::Conflict`.
   Macro includes may match, but action evaluation returns an error.
 - Actions: `resolve`, `replace`, `keep`, `remove`, `comment_out`, `error`.
   The whole field can also be `action = "skip"` to opt out of action
-  conflict detection. Default: `keep` with `output_form = preserve`.
+  conflict detection. Default without `copied_from`: `skip`.
 - `trailing_comment` only applies to `resolve`, `replace`, `keep`, and
   `action = "skip"`. The whole field can be `trailing_comment = "skip"`
-  to opt out of trailing-comment conflict detection.
+  to opt out of trailing-comment conflict detection. Default without
+  `copied_from`: `skip`.
 
 ## Commands
 
