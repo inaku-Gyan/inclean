@@ -55,13 +55,6 @@ cargo install inclean        # 从 crates.io 拉源码本地编译
 
 到 [最新 GitHub Release](https://github.com/inaku-Gyan/inclean/releases/latest)
 下载你平台对应的归档，把 `inclean`（或 `inclean.exe`）放进 `PATH`。
-已发布的目标三元组：
-
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-pc-windows-msvc`
 
 ### 从仓库源码
 
@@ -114,23 +107,6 @@ action = { type = "replace", with = "lib/${original}" }
 
 完整端到端示例见 [tests/golden_tests/](tests/golden_tests/)。
 
-## 命令
-
-| 命令                                                                 | 用途                                                                                                                                     |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `inclean init [PATH]`                                                | 生成带注释的 `inclean.toml` 模板。`inclean config new` 的别名。                                                                          |
-| `inclean check [config\|unfixable\|all] [-c PATH] [-j N] [PATHS...]` | 只读检查。`config` 仅校验配置文件；`unfixable` 只报告无法自动修复的违规；`all`（默认）报告每一处 per-include 结果。                      |
-| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]`                 | 以 unified diff 形式打印每一处拟改写。`-o` 写入文件而非 stdout。                                                                         |
-| `inclean apply [-c PATH] [-j N] [PATHS...]`                          | 就地应用改写。无 unfixable 违规的文件被写入；存在违规（error / conflict / evaluation_failure）的文件整体跳过，最后打印一份违规详情报告。 |
-| `inclean config check [-c PATH]`                                     | `inclean check config` 的别名。                                                                                                          |
-| `inclean config new [PATH]`                                          | `inclean init` 的别名。                                                                                                                  |
-| `inclean config schema [-o PATH] [--check]`                          | 输出 / 校验 `inclean.toml` 的 JSON Schema。`--check` 模式要求 `-o`，若 schema 偏移则以非零状态码退出。                                   |
-
-未指定 action 的规则默认采用 `{ type = "keep", output_form = "preserve" }`
-（即不动作）。`resolve` 会按字面路径探测项目根下的
-`include_directories`；若找不到，或多个目录同时命中，都会报
-evaluation failure。
-
 ## 编辑器支持
 
 `inclean.toml` 带 JSON Schema，可用于编辑器补全和校验。`inclean init`
@@ -139,13 +115,15 @@ evaluation failure。
 双向兼容性检查。
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.1"
+version = "1.2.3"
+min_inclean_version = "1.1.0"
 ```
+
+（以上版本号仅作示例）
 
 也可以导出一份本地 schema：
 

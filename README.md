@@ -59,13 +59,7 @@ if you don't already have it.
 
 Download a tarball for your platform from the
 [latest GitHub Release](https://github.com/inaku-Gyan/inclean/releases/latest)
-and put `inclean` (or `inclean.exe`) on your `PATH`. Released targets:
-
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-pc-windows-msvc`
+and put `inclean` (or `inclean.exe`) on your `PATH`.
 
 ### From repo source
 
@@ -120,24 +114,6 @@ action = { type = "replace", with = "lib/${original}" }
 
 See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
-## Commands
-
-| Command                                              | Purpose                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `inclean init [PATH]`                                | Generate a documented starter `inclean.toml`. Alias of `inclean config new`.                                                                                                                                                                                                                                                               |
-| `inclean check [SUBCOMMAND]`                         | Read-only check. Subcommands: `config` validates the file alone (`-c PATH`); `unfixable` runs the full pipeline and reports only unfixable violations; `all` runs the full pipeline and reports every per-include outcome. Bare `inclean check` is equivalent to `inclean check all`. The full forms accept `[-c PATH] [-j N] [PATHS...]`. |
-| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]` | Print a unified diff of every proposed rewrite. Optional `-o` writes to a file instead of stdout.                                                                                                                                                                                                                                          |
-| `inclean apply [-c PATH] [-j N] [PATHS...]`          | Apply rewrites in place. Files free of unfixable violations are written; files with errors / conflicts / evaluation failures are skipped and reported at end.                                                                                                                                                                              |
-| `inclean config check [-c PATH]`                     | Alias of `inclean check config`.                                                                                                                                                                                                                                                                                                           |
-| `inclean config new [PATH]`                          | Alias of `inclean init`.                                                                                                                                                                                                                                                                                                                   |
-| `inclean config schema [-o PATH] [--check]`          | Emit / validate the JSON Schema for `inclean.toml`. `--check` requires `-o` and exits non-zero if the file drifts.                                                                                                                                                                                                                         |
-
-The default action when no rule specifies one is `keep` with
-`output_form = preserve` — a rule that omits `action` is a no-op.
-`resolve` probes each configured `include_directories` entry literally
-under the project root and fails if the include is found in zero or
-multiple directories.
-
 ## Editor support
 
 `inclean.toml` ships with a JSON Schema for editor completion and
@@ -146,13 +122,15 @@ with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tama
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.1"
+version = "1.2.3"
+min_inclean_version = "1.1.0"
 ```
+
+(The above version numbers are just examples.)
 
 `inclean init` writes both the `#:schema` line (for the editor) and the
 `[project].version` + `[project].min_inclean_version` fields, each
