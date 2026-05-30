@@ -780,8 +780,16 @@ mod tests {
         assert!(r.file_suffixes.contains(&".c".to_string()));
         assert!(r.file_suffixes.contains(&".h".to_string()));
         assert!(r.file_suffixes.contains(&".cpp".to_string()));
-        assert_eq!(r.match_forms, vec![IncludeForm::Quote]);
+        assert_eq!(r.include_forms, vec![IncludeForm::Quote]);
         assert_eq!(r.include_match, vec!["**"]);
+        assert!(matches!(
+            r.include_on_unresolved,
+            IncludeOnUnresolved::Error
+        ));
+        assert!(matches!(
+            r.include_on_ambiguous,
+            IncludeOnAmbiguous::Error
+        ));
         assert!(matches!(r.action, ResolvedAction::Keep { .. }));
     }
 
@@ -792,7 +800,10 @@ mod tests {
             [[rule]]
             name = "base"
             file_paths = ["src/**"]
+            include_forms = ["quote", "angle"]
             include_directories = ["src", "src/internal"]
+            include_on_unresolved = "skip"
+            include_on_ambiguous = "first"
 
             [[rule]]
             name = "child"
@@ -803,7 +814,19 @@ mod tests {
         let resolved = resolve(&[cfg]).unwrap();
         let child = get(&resolved, "child");
         assert_eq!(child.file_paths, vec!["src/**"]);
+        assert_eq!(
+            child.include_forms,
+            vec![IncludeForm::Quote, IncludeForm::Angle]
+        );
         assert_eq!(child.include_directories, vec!["src", "src/internal"]);
+        assert!(matches!(
+            child.include_on_unresolved,
+            IncludeOnUnresolved::Skip
+        ));
+        assert!(matches!(
+            child.include_on_ambiguous,
+            IncludeOnAmbiguous::First
+        ));
         assert!(matches!(child.action, ResolvedAction::Replace { .. }));
     }
 
@@ -814,15 +837,50 @@ mod tests {
             [[rule]]
             name = "base"
             file_paths = ["src/**"]
+            include_forms = ["quote", "angle"]
+            include_on_unresolved = "allow"
+            include_on_ambiguous = "first"
 
             [[rule]]
             name = "narrow"
             copied_from = "base"
             file_paths = ["src/foo/**"]
+            include_forms = ["macro"]
+            include_on_unresolved = "skip"
+            include_on_ambiguous = "skip"
             "#,
         );
         let resolved = resolve(&[cfg]).unwrap();
-        assert_eq!(get(&resolved, "narrow").file_paths, vec!["src/foo/**"]);
+        let narrow = get(&resolved, "narrow");
+        assert_eq!(narrow.file_paths, vec!["src/foo/**"]);
+        assert_eq!(narrow.include_forms, vec![IncludeForm::Macro]);
+        assert!(matches!(
+            narrow.include_on_unresolved,
+            IncludeOnUnresolved::Skip
+        ));
+        assert!(matches!(
+            narrow.include_on_ambiguous,
+            IncludeOnAmbiguous::Skip
+        ));
+    }
+
+    #[test]
+    fn allow_unresolved_with_resolve_action_is_rejected() {
+        let cfg = load_rules(
+            r#"
+            [[rule]]
+            name = "bad"
+            include_directories = ["include"]
+            include_on_unresolved = "allow"
+            action = { type = "resolve", relative_to = "include" }
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("include_on_unresolved = \"allow\"") && msg.contains("resolve"),
+            "{msg}"
+        );
     }
 
     #[test]

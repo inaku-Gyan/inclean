@@ -1125,6 +1125,168 @@ mod tests {
     }
 
     #[test]
+    fn include_forms_replaces_match_forms_for_form_matching() {
+        let rule = r#"
+            [[rule]]
+            name = "angle-only"
+            file_paths = ["src/**/*"]
+            include_forms = ["angle"]
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n#include <bar.h>\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(matches!(
+            summary.files[0].include_results[0].outcome,
+            IncludeOutcome::NoMatch
+        ));
+        assert!(matches!(
+            summary.files[0].include_results[1].outcome,
+            IncludeOutcome::Rewritten { .. }
+        ));
+    }
+
+    #[test]
+    fn unresolved_include_defaults_to_error_when_directories_are_configured() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["include"]
+            action = { type = "keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"missing.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::EvaluationFailure { rule, message } => {
+                assert_eq!(rule, "base");
+                assert!(message.contains("no include_directories entry contains"));
+                assert!(message.contains("missing.h"));
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unresolved_include_can_skip_rule() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["include"]
+            include_on_unresolved = "skip"
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"missing.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(matches!(
+            summary.files[0].include_results[0].outcome,
+            IncludeOutcome::NoMatch
+        ));
+        assert!(summary.files[0].rewritten.is_none());
+    }
+
+    #[test]
+    fn unresolved_include_can_allow_non_resolve_action() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["include"]
+            include_on_unresolved = "allow"
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"missing.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"lib/missing.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ambiguous_include_defaults_to_error_when_directories_are_configured() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["first", "second"]
+            action = { type = "keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("first/foo.h", "");
+        proj.write("second/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::EvaluationFailure { rule, message } => {
+                assert_eq!(rule, "base");
+                assert!(message.contains("multiple include_directories"));
+                assert!(message.contains("first"));
+                assert!(message.contains("second"));
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ambiguous_include_can_skip_rule() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["first", "second"]
+            include_on_ambiguous = "skip"
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("first/foo.h", "");
+        proj.write("second/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(matches!(
+            summary.files[0].include_results[0].outcome,
+            IncludeOutcome::NoMatch
+        ));
+        assert!(summary.files[0].rewritten.is_none());
+    }
+
+    #[test]
+    fn ambiguous_include_can_use_first_directory_for_resolve() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["first", "second"]
+            include_on_ambiguous = "first"
+            action = { type = "resolve", relative_to = "." }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("first/foo.h", "");
+        proj.write("second/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"first/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
     fn conflicting_rules_produce_conflict_and_exit_3() {
         // Two rules that both match but rewrite to different texts.
         let rules = r#"

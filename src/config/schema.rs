@@ -436,20 +436,27 @@ mod tests {
             name = "base"
             file_paths = ["src/**", "include/**"]
             file_suffixes = ["@std.c.extensions"]
-            match_forms = ["quote"]
+            include_forms = ["quote"]
             include_match = ["**/foo.h"]
             include_directories = ["src/internal"]
+            include_on_unresolved = "skip"
+            include_on_ambiguous = "first"
             action = { type = "resolve", relative_to = "include" }
             "#,
         )
         .raw;
         let r = &cfg.rules[0];
         assert_eq!(r.file_paths.as_ref().unwrap().len(), 2);
-        assert_eq!(r.match_forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
+        assert_eq!(r.include_forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
         assert_eq!(
             r.include_match.as_ref().unwrap(),
             &vec!["**/foo.h".to_string()]
         );
+        assert_eq!(
+            r.include_on_unresolved,
+            Some(IncludeOnUnresolved::Skip)
+        );
+        assert_eq!(r.include_on_ambiguous, Some(IncludeOnAmbiguous::First));
         match raw_action_of(r) {
             RawAction::Resolve {
                 relative_to,
@@ -461,6 +468,25 @@ mod tests {
             }
             _ => panic!("expected resolve action"),
         }
+    }
+
+    #[test]
+    fn old_match_forms_field_is_rejected() {
+        let err = parse(
+            &format!(
+                "{}{}",
+                &*crate::utils::testing::config::MIN_PROJECT_BLOCK,
+                r#"
+                [[rule]]
+                name = "base"
+                match_forms = ["quote"]
+                "#,
+            ),
+            Path::new("inclean.toml"),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unknown field `match_forms`"), "{msg}");
     }
 
     #[test]
