@@ -1,4 +1,4 @@
-//! Raw serde structures for `inclean.toml` (v0.3.0 schema).
+//! Raw serde structures for `inclean.toml`.
 //!
 //! These types deserialize directly from TOML. Defaults, `@std.*` constant
 //! expansion, `copied_from` resolution, and `${copied}` placeholder
@@ -45,7 +45,7 @@ fn default_project_root() -> String {
 
 /// Sentinel emitted when a user wrote a top-level object field as the
 /// literal string `"${copied}"` (e.g. `action = "${copied}"`). Resolution
-/// at [`copy::resolve`] time substitutes the parent's resolved object.
+/// at [`crate::config::copy::resolve`] time substitutes the parent's resolved object.
 #[derive(Debug, Clone, Copy)]
 pub enum MaybeCopiedObject<T> {
     Copied,
@@ -94,50 +94,79 @@ where
     }
 }
 
-// For schemars: emit T's own schema. The `"${copied}"` string sentinel is
-// documented in docs/configuration.md and the template; we don't currently
-// teach the JSON Schema about it (a future M-G pass can switch to a
-// proper oneOf when/if editor tooling needs it).
+// For schemars: object-valued fields also accept the whole-field
+// `"${copied}"` sentinel when `copied_from` is set. Keep this in the JSON
+// Schema so editors do not reject valid inheriting configs.
 impl<T: JsonSchema> JsonSchema for MaybeCopiedObject<T> {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         T::schema_name()
     }
     fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        T::json_schema(g)
+        let object_schema: serde_json::Value = T::json_schema(g).into();
+        let copied_schema = serde_json::json!({
+            "type": "string",
+            "const": "${copied}",
+            "description": "Copy this whole object from the resolved parent rule named by copied_from."
+        });
+        let mut schema = serde_json::Map::new();
+        schema.insert(
+            "anyOf".into(),
+            serde_json::json!([object_schema, copied_schema]),
+        );
+        schema.into()
     }
 }
 
-/// A single `[[rule]]` entry, before defaulting / copy / constant expansion.
-/// `Option<_>` distinguishes "user did not specify" from "user wrote empty".
+/// A single `[[rule]]` entry. Raw rules deserialize exactly as written;
+/// inheritance from `copied_from`, `@std.*` constants, `${copied}`, and
+/// effective defaults are resolved later.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
-    /// Globally unique across the config.
+    /// Globally unique rule name. Rules are evaluated in declaration order,
+    /// and diagnostics refer to this name.
     pub name: String,
 
-    /// Name of a previously declared rule whose resolved fields are copied
-    /// (transitively) into this one. Top-level fields the child sets are
-    /// kept; top-level fields the child omits inherit from the parent's
-    /// resolved value. Inner fields of an object the child rewrites default
-    /// to null/disabled — use `${copied}` to pull each inner field from the
-    /// parent explicitly.
+    /// Name of a previously declared rule to copy from. The child starts from
+    /// the parent's already resolved value, so copy chains are transitive, but
+    /// references are forward-only. Omitted top-level fields inherit from the
+    /// parent; written top-level fields replace the parent's field. Inside a
+    /// written object, omitted inner fields reset to their defaults unless the
+    /// child writes `${copied}` for that inner field.
     pub copied_from: Option<String>,
 
-    // ---- Layer 1: file paths (gitignore-style globs) ---------------------
+    // ---- Layer 1: file paths (globset globs) -----------------------------
+    /// Globset patterns matched against paths relative to `[project].root`.
+    /// `*` does not cross `/`; `**` does. Effective default for a rule with no
+    /// parent is `["**/*"]`. If a matching pattern contains wildcard
+    /// characters, `file_suffixes` must also match; exact literal paths skip
+    /// the suffix check.
     pub file_paths: Option<Vec<String>>,
 
     // ---- Layer 2: file suffixes (literal extensions like ".c") -----------
+    /// Literal extensions, including the leading dot, used after a wildcard
+    /// `file_paths` match. Effective default for a rule with no parent is
+    /// `["@std.c.extensions", "@std.cpp.extensions"]`, expanded to the built-in
+    /// C and C++ extension lists.
     pub file_suffixes: Option<Vec<String>>,
 
     // ---- Off-limits regions inside source files --------------------------
-    /// The whole field can also be the string `"${copied}"` to reuse the
-    /// parent rule's resolved value verbatim (object-context `${copied}`).
+    /// Optional per-rule suppression markers. Regexes are matched against each
+    /// line after stripping `//` or same-line `/* */` delimiters when present
+    /// and trimming whitespace. The whole field can also be the string
+    /// `"${copied}"` to reuse the parent's resolved value verbatim.
     pub suppression_comments_regex: Option<MaybeCopiedObject<RawSuppression>>,
 
     // ---- Layer 3: include forms ------------------------------------------
+    /// Include delimiter forms this rule matches. Effective default for a rule
+    /// with no parent is `["quote"]`. `macro` can match `#include FOO`, but
+    /// evaluating any action against a macro include is currently an error.
     pub include_forms: Option<Vec<IncludeForm>>,
 
     // ---- Layer 4: glob on the stripped include argument ------------------
+    /// Globset patterns matched against the include argument with quotes or
+    /// angle brackets stripped, for example `mylib/foo.h`. `*` does not cross
+    /// `/`; `**` does. Effective default for a rule with no parent is `["**"]`.
     pub include_match: Option<Vec<String>>,
 
     // ---- Layer 5: optional include directory resolution -------------------
@@ -148,21 +177,30 @@ pub struct RawRule {
     pub include_on_unresolved: Option<IncludeOnUnresolved>,
     pub include_on_ambiguous: Option<IncludeOnAmbiguous>,
 
-    /// The whole field can also be the string `"${copied}"` to reuse the
-    /// parent rule's resolved action verbatim (object-context `${copied}`).
+    /// Action to run when all match layers pass. If neither this rule nor any
+    /// copied ancestor sets an action, the effective action is
+    /// `{ type = "keep", output_form = "preserve" }`. The whole field can also
+    /// be the string `"${copied}"` to reuse the parent's resolved action.
     pub action: Option<MaybeCopiedObject<RawAction>>,
 
-    /// The whole field can also be the string `"${copied}"` to reuse the
-    /// parent rule's resolved value verbatim (object-context `${copied}`).
+    /// Optional trailing-comment transform and/or append rule for
+    /// `resolve`/`replace`/`keep` actions. The whole field can also be the
+    /// string `"${copied}"` to reuse the parent's resolved value verbatim.
     pub trailing_comment: Option<MaybeCopiedObject<RawTrailingComment>>,
 }
 
-/// Suppression markers: regex patterns matched line-by-line.
+/// Suppression markers: regex patterns matched line-by-line. `line` suppresses
+/// only matching lines. `block_start` suppresses from its matching line until a
+/// later `block_end` match, inclusive. If `block_end` is omitted, suppression
+/// continues to the end of the file after `block_start` matches.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawSuppression {
+    /// Regex that starts an off-limits block.
     pub block_start: Option<String>,
+    /// Regex that ends an off-limits block.
     pub block_end: Option<String>,
+    /// Regex that suppresses a single line.
     pub line: Option<String>,
 }
 
@@ -238,78 +276,114 @@ pub enum OutputCommentStyle {
     Preserve,
 }
 
-/// The action a rule executes on a matched `#include`. Tagged by `type`.
+/// The action a rule executes on a matched `#include`. This is a tagged object
+/// using `type = "resolve"`, `"replace"`, `"keep"`, `"remove"`,
+/// `"comment_out"`, or `"error"`.
 #[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RawAction {
     /// Resolve the include against the rule's `include_directories`, then
-    /// rewrite the path to be relative to `relative_to`.
+    /// rewrite the path to be relative to `relative_to`. `${current_file}`
+    /// means the directory of the file being edited. Default `output_form` is
+    /// `preserve`; default `message` is empty.
     Resolve {
+        /// Base path for the rewritten include. Use `${current_file}` for the
+        /// current source file's directory.
         relative_to: String,
+        /// Output delimiter form. Defaults to `preserve`.
         #[serde(default)]
         output_form: Option<OutputForm>,
+        /// Optional diagnostic message string. `${current_file}` and
+        /// `${original}` placeholders are supported where messages are emitted.
         #[serde(default)]
         message: Option<String>,
     },
-    /// Replace the include text with `with`, supporting `${...}` placeholders.
+    /// Replace the include argument with `with`. Default `output_form` is
+    /// `preserve`; default `message` is empty.
     Replace {
+        /// Replacement include argument. Supports `${original}` and
+        /// `${current_file}` placeholders.
         with: String,
+        /// Output delimiter form. Defaults to `preserve`.
         #[serde(default)]
         output_form: Option<OutputForm>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
     /// Leave the include's argument alone (the form may still change via
-    /// `output_form`).
+    /// `output_form`). Default `output_form` is `preserve`; default `message`
+    /// is empty.
     Keep {
+        /// Output delimiter form. Defaults to `preserve`.
         #[serde(default)]
         output_form: Option<OutputForm>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
-    /// Delete the entire `#include` line.
+    /// Delete the entire `#include` line. By default no blank line is kept and
+    /// a same-line trailing comment is kept on its own line.
     Remove {
+        /// Keep the line terminator as a blank line. Defaults to `false`.
         #[serde(default)]
         keep_blank_line: Option<bool>,
+        /// Preserve a recognized same-line trailing comment on its own line.
+        /// Defaults to `true`.
         #[serde(default)]
         keep_trailing_comment: Option<bool>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
-    /// Wrap the include line in `//` (default) or `/* */` delimiters.
+    /// Wrap the include line in `//` (default) or `/* */` delimiters. Default
+    /// `message` is empty.
     CommentOut {
+        /// Comment delimiter style. Defaults to `//`.
         #[serde(default)]
         style: Option<CommentStyle>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
     /// Report a user-facing error for the matched include. Exit code 2.
     Error {
+        /// Error message. Supports `${original}` and `${current_file}`.
+        /// Defaults to an empty string.
         #[serde(default)]
         message: Option<String>,
     },
 }
 
-/// Trailing-comment configuration.
+/// Trailing-comment configuration for `resolve`, `replace`, and `keep`
+/// actions. Cross-line block comments after an include are not considered
+/// trailing comments and are left alone.
 #[derive(Debug, Default, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawTrailingComment {
+    /// Optional transform to run when an existing same-line trailing comment
+    /// matches.
     pub transform: Option<RawTrailingTransform>,
     /// Literal text to append to the include line when there is no
     /// trailing comment after action evaluation. The user writes the full
-    /// comment text (including delimiters and leading whitespace).
+    /// comment text, including delimiters and leading whitespace. It must not
+    /// contain line terminators.
     pub append_if_absent: Option<String>,
 }
 
 /// Trailing-comment transform: matches an existing comment, then runs an
-/// action over it. `action` is required — per refactor.md §"Config File"
-/// the schema lists it without a `?`, and silent defaulting to `Keep`
-/// hides config bugs.
+/// action over it. `action` is required so a transform cannot silently become
+/// a no-op because of an omitted nested action.
 #[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawTrailingTransform {
+    /// Existing comment styles that can match. Effective default is both
+    /// `//` and `/**/`.
     pub match_styles: Option<Vec<CommentStyle>>,
+    /// Regex matched against the trimmed trailing-comment body. Effective
+    /// default is `.*`.
     pub content_regex: Option<String>,
+    /// Action to run when style and regex both match.
     pub action: RawTrailingAction,
 }
 
@@ -317,28 +391,39 @@ pub struct RawTrailingTransform {
 #[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RawTrailingAction {
-    /// Replace the comment body with `with`.
+    /// Replace the comment body with `with`. Default `output_style` is
+    /// `preserve`; default `message` is empty.
     Replace {
+        /// Replacement comment body. Supports `${original}` and
+        /// `${current_file}` placeholders.
         with: String,
+        /// Output comment delimiter style. Defaults to `preserve`.
         #[serde(default)]
         output_style: Option<OutputCommentStyle>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
-    /// Keep the comment body; only `output_style` may change.
+    /// Keep the comment body; only `output_style` may change. Default
+    /// `output_style` is `preserve`; default `message` is empty.
     Keep {
+        /// Output comment delimiter style. Defaults to `preserve`.
         #[serde(default)]
         output_style: Option<OutputCommentStyle>,
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
-    /// Remove the trailing comment entirely.
+    /// Remove the trailing comment entirely. Default `message` is empty.
     Remove {
+        /// Optional diagnostic message string.
         #[serde(default)]
         message: Option<String>,
     },
     /// Report a user-facing error when the transform matches.
     Error {
+        /// Error message. Supports `${original}` for the original comment body
+        /// and `${current_file}` for the edited source path.
         #[serde(default)]
         message: Option<String>,
     },
