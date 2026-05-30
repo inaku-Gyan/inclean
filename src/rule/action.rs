@@ -7,9 +7,8 @@
 //!
 //! Action variants in v0.3 (one per `RawAction`):
 //!
-//! * `Resolve` — probe `include_directories` literal paths under the
-//!   project root for the include text; rewrite the path relative to
-//!   `relative_to`.
+//! * `Resolve` — consume the header path selected by the matcher from
+//!   `include_directories`; rewrite the path relative to `relative_to`.
 //! * `Replace` — textual substitution of the include argument with `with`.
 //! * `Keep` — leave the argument unchanged; `output_form` may still
 //!   rewrite quote↔angle.
@@ -56,8 +55,8 @@ pub enum Outcome {
     /// separate from `Error` so the unfixable report can label the cause
     /// distinctly per refactor.md §"inclean apply".
     TrailingCommentError { message: String },
-    /// Action evaluation failed at runtime (e.g. `resolve` couldn't
-    /// resolve, multiple include_directories contain the file, ...).
+    /// Action evaluation failed at runtime (e.g. `resolve` had no selected
+    /// header path, a directory-resolution policy failed, ...).
     EvaluationFailure { message: String },
 }
 

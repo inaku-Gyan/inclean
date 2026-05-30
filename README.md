@@ -89,10 +89,12 @@ which files are processed; with no paths they consider every source
 file under the project root. `-c PATH` overrides the upward `inclean.toml`
 walk; `-j N` sets the worker thread count.
 
-Rule matching has four layers, all of which must pass: `file_paths`,
-`file_suffixes`, `match_forms`, and `include_match`. Globs are anchored
-and use literal separators: `foo.h` only matches `foo.h`, while
-`**/foo.h` matches at any depth.
+Rule matching first checks `file_paths`, `file_suffixes`, `include_forms`,
+and `include_match`. Globs are anchored and use literal separators:
+`foo.h` only matches `foo.h`, while `**/foo.h` matches at any depth.
+When `include_directories` is set, inclean then probes those literal
+directories and applies `include_on_unresolved` (`error` / `skip` /
+`allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).
 
 ### Example
 

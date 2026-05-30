@@ -171,10 +171,19 @@ pub struct RawRule {
 
     // ---- Layer 5: optional include directory resolution -------------------
     /// Literal directory paths under the project root (relative to it) that
-    /// the `resolve` action probes to locate the include's actual header.
-    /// NOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.
+    /// are probed after `include_forms` and `include_match` pass. NOT a glob;
+    /// no implicit `/**` suffix; no `.gitignore` semantics. When this list is
+    /// empty, no directory-resolution policy is applied.
     pub include_directories: Option<Vec<String>>,
+    /// Policy for a matched include when `include_directories` is non-empty
+    /// and no directory contains the include argument. Effective default is
+    /// `error`. `allow` keeps the rule matched for non-`resolve` actions; it
+    /// is rejected with action `resolve`.
     pub include_on_unresolved: Option<IncludeOnUnresolved>,
+    /// Policy for a matched include when `include_directories` is non-empty
+    /// and more than one directory contains the include argument. Effective
+    /// default is `error`; `first` selects the first matching directory in
+    /// declaration order.
     pub include_on_ambiguous: Option<IncludeOnAmbiguous>,
 
     /// Action to run when all match layers pass. If neither this rule nor any
@@ -223,8 +232,11 @@ pub enum IncludeForm {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IncludeOnUnresolved {
+    /// Report an evaluation failure.
     Error,
+    /// Treat this rule as not matched for this include.
     Skip,
+    /// Keep this rule matched. Rejected for `resolve` actions.
     Allow,
 }
 
@@ -233,8 +245,11 @@ pub enum IncludeOnUnresolved {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IncludeOnAmbiguous {
+    /// Report an evaluation failure.
     Error,
+    /// Treat this rule as not matched for this include.
     Skip,
+    /// Select the first matching include directory in declaration order.
     First,
 }
 
@@ -282,10 +297,10 @@ pub enum OutputCommentStyle {
 #[derive(Debug, Deserialize, Clone, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RawAction {
-    /// Resolve the include against the rule's `include_directories`, then
-    /// rewrite the path to be relative to `relative_to`. `${current_file}`
-    /// means the directory of the file being edited. Default `output_form` is
-    /// `preserve`; default `message` is empty.
+    /// Rewrite the include using the header path selected by
+    /// `include_directories`, relative to `relative_to`. `${current_file}`
+    /// means the directory of the file being edited. Default `output_form`
+    /// is `preserve`; default `message` is empty.
     Resolve {
         /// Base path for the rewritten include. Use `${current_file}` for the
         /// current source file's directory.

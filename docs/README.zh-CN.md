@@ -82,10 +82,12 @@ inclean apply               # 就地写入改写
 未传时考虑项目根下所有源文件。`-c PATH` 覆盖向上查找 `inclean.toml`
 的行为；`-j N` 指定工作线程数。
 
-规则匹配共有四层，必须全部通过：`file_paths`、`file_suffixes`、
-`match_forms` 和 `include_match`。glob 是全字符串锚定的，并使用
-literal separator 语义：`foo.h` 只匹配 `foo.h`，`**/foo.h` 才匹配
-任意深度下的同名文件。
+规则会先检查 `file_paths`、`file_suffixes`、`include_forms` 和
+`include_match`。glob 是全字符串锚定的，并使用 literal separator
+语义：`foo.h` 只匹配 `foo.h`，`**/foo.h` 才匹配任意深度下的同名文件。
+当设置了 `include_directories`，inclean 会继续探测这些字面目录，并应用
+`include_on_unresolved`（`error` / `skip` / `allow`）和
+`include_on_ambiguous`（`error` / `skip` / `first`）。
 
 ### 示例
 

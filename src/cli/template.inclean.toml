@@ -18,19 +18,27 @@
 #
 # Config cheat-sheet (written by inclean {{CFG_VERSION}})
 # -------------------------
-# Each rule has up to 4 matching layers (all must pass):
+# Each rule has 4 text matching layers (all must pass), plus an optional
+# include-directory resolution layer:
 #   1. file_paths   — globset patterns relative to the project root
 #                     (default ["**/*"]; see GLOB ANCHORING above)
 #   2. file_suffixes — literal extensions like ".c" (default covers C+C++);
 #                     skipped when file_paths is an exact literal path
-#   3. match_forms  — set of "quote" / "angle" / "macro" (default ["quote"])
+#   3. include_forms — set of "quote" / "angle" / "macro" (default ["quote"])
 #                     "macro" matches but action evaluation always errors
 #   4. include_match — globset patterns over the stripped include argument
 #                     (default ["**"]; see GLOB ANCHORING above)
 #
 # include_directories is NOT a glob — it's a list of literal directory
-# paths under the project root. The `resolve` action probes each path
-# in declaration order to find the include's actual header file.
+# paths under the project root. When non-empty, inclean probes each path
+# after include_forms + include_match pass to find the include's actual
+# header file. Resolution policies:
+#   include_on_unresolved = "error" | "skip" | "allow"  (default "error")
+#       error: fail the run; skip: this rule does not match; allow: keep
+#       the rule matched for non-resolve actions. allow + resolve is invalid.
+#   include_on_ambiguous = "error" | "skip" | "first"   (default "error")
+#       error: fail the run; skip: this rule does not match; first: use the
+#       first matching include_directories entry in declaration order.
 #
 # suppression_comments_regex (optional) marks off-limits source regions:
 #   { block_start, block_end, line }  — regexes over each line's comment
@@ -38,10 +46,9 @@
 #
 # Six action types:
 #   { type = "resolve", relative_to = "...", output_form? = "..." }
-#       Probe `include_directories` literal paths for the include text;
-#       rewrite the path relative to `relative_to`. Use ${current_file}
-#       to mean "the directory of the file being edited." Fails if zero
-#       or more than one include_directories entry contains the header.
+#       Rewrite using the header selected by include_directories, relative
+#       to `relative_to`. Use ${current_file} to mean "the directory of
+#       the file being edited."
 #   { type = "replace", with = "...", output_form? = "..." }
 #       Substitute the include argument with `with`.
 #   { type = "keep", output_form? = "..." }
@@ -126,9 +133,11 @@ name = "base"
 
 # file_paths = ["src/**/*", "include/**/*"]
 # file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
-# match_forms = ["quote"]
+# include_forms = ["quote"]
 # include_match = ["**"]
 # include_directories = ["src", "src/internal"]
+# include_on_unresolved = "error"
+# include_on_ambiguous = "error"
 # action = { type = "resolve", relative_to = "include", output_form = "quote" }
 
 
@@ -145,7 +154,7 @@ name = "base"
 # [[rule]]
 # name = "stdlib"
 # copied_from = "base"
-# match_forms = ["angle"]
+# include_forms = ["angle"]
 # include_match = [
 #     "@std.cpp17.system_headers",   # spread the list
 # ]

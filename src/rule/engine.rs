@@ -1,12 +1,15 @@
-//! Four-layer matching engine.
+//! Include matching engine.
 //!
-//! Layers (all must pass for the rule to fire):
+//! Text layers (all must pass before optional directory resolution):
 //! 1. `file_paths` glob + `file_suffixes` literal extension — handled by
 //!    [`PathMatcher`] (see [`crate::rule::glob`]).
 //! 2. *(Folded into layer 1 — the same matcher checks both.)*
 //! 3. `include_forms` — `include.form` must be in the set.
 //! 4. `include_match` — at least one glob must match the stripped include
 //!    text (`include.content`).
+//! 5. If `include_directories` is non-empty, the engine probes those
+//!    directories and applies `include_on_unresolved` /
+//!    `include_on_ambiguous`.
 //!
 //! `suppression_comments_regex` filters includes out *before* layer
 //! checks: if the include's `#`-line falls inside a per-rule "off-limits"
@@ -223,8 +226,9 @@ pub struct MatchAllOutcome<'a> {
     pub failures: Vec<ResolutionFailure<'a>>,
 }
 
-/// Run all four layers + suppression for every rule. Returns every rule
-/// that matched, in declaration order. Conflict detection (final-text
+/// Run all text layers, suppression, and optional directory resolution for
+/// every rule. Returns every rule that matched, in declaration order, plus
+/// pre-action directory-resolution failures. Conflict detection (final-text
 /// equality across all matches) is the pipeline's job.
 pub fn match_all<'a>(
     rules: &'a [CompiledRule<'a>],

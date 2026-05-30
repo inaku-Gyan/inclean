@@ -4,9 +4,9 @@
 //!
 //! * [`CheckMode::Config`] — parse + validate + run copy resolution only.
 //!   No source files are opened.
-//! * [`CheckMode::Run`] — walk source files, lex includes, match every
-//!   rule's four layers, evaluate every matched rule's action, then
-//!   decide per-include conflict-by-final-text.
+//! * [`CheckMode::Run`] — walk source files, lex includes, run each rule's
+//!   text match layers plus optional include-directory resolution, evaluate
+//!   every matched rule's action, then decide per-include conflict-by-final-text.
 //!
 //! Conflict detection (the v0.3 model): for an include matched by N
 //! rules, evaluate the action against each. If all rules produce

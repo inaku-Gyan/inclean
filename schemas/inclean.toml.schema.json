@@ -91,7 +91,7 @@
             }
           ]
         },
-        "match_forms": {
+        "include_forms": {
           "description": "Include delimiter forms this rule matches. Effective default for a rule\nwith no parent is `[\"quote\"]`. `macro` can match `#include FOO`, but\nevaluating any action against a macro include is currently an error.",
           "type": [
             "array",
@@ -112,7 +112,7 @@
           }
         },
         "include_directories": {
-          "description": "Literal directory paths under the project root (relative to it) that\nthe `resolve` action probes to locate the include's actual header.\nNOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.",
+          "description": "Literal directory paths under the project root (relative to it) that\nare probed after `include_forms` and `include_match` pass. NOT a glob;\nno implicit `/**` suffix; no `.gitignore` semantics. When this list is\nempty, no directory-resolution policy is applied.",
           "type": [
             "array",
             "null"
@@ -120,6 +120,28 @@
           "items": {
             "type": "string"
           }
+        },
+        "include_on_unresolved": {
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand no directory contains the include argument. Effective default is\n`error`. `allow` keeps the rule matched for non-`resolve` actions; it\nis rejected with action `resolve`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IncludeOnUnresolved"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "include_on_ambiguous": {
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand more than one directory contains the include argument. Effective\ndefault is `error`; `first` selects the first matching directory in\ndeclaration order.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IncludeOnAmbiguous"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "action": {
           "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is\n`{ type = \"keep\", output_form = \"preserve\" }`. The whole field can also\nbe the string `\"${copied}\"` to reuse the parent's resolved action.",
@@ -206,13 +228,53 @@
         }
       ]
     },
+    "IncludeOnUnresolved": {
+      "description": "Policy when `include_directories` is configured but no directory contains\nthe include argument.",
+      "oneOf": [
+        {
+          "description": "Report an evaluation failure.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Treat this rule as not matched for this include.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Keep this rule matched. Rejected for `resolve` actions.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "IncludeOnAmbiguous": {
+      "description": "Policy when `include_directories` is configured and multiple directories\ncontain the include argument.",
+      "oneOf": [
+        {
+          "description": "Report an evaluation failure.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Treat this rule as not matched for this include.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Select the first matching include directory in declaration order.",
+          "type": "string",
+          "const": "first"
+        }
+      ]
+    },
     "RawAction": {
       "anyOf": [
         {
           "description": "The action a rule executes on a matched `#include`. This is a tagged object\nusing `type = \"resolve\"`, `\"replace\"`, `\"keep\"`, `\"remove\"`,\n`\"comment_out\"`, or `\"error\"`.",
           "oneOf": [
             {
-              "description": "Resolve the include against the rule's `include_directories`, then\nrewrite the path to be relative to `relative_to`. `${current_file}`\nmeans the directory of the file being edited. Default `output_form` is\n`preserve`; default `message` is empty.",
+              "description": "Rewrite the include using the header path selected by\n`include_directories`, relative to `relative_to`. `${current_file}`\nmeans the directory of the file being edited. Default `output_form`\nis `preserve`; default `message` is empty.",
               "type": "object",
               "properties": {
                 "relative_to": {
