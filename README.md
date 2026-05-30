@@ -112,8 +112,8 @@ A simple `replace`-action config that rewrites `#include "foo.h"` to
 ```toml
 [project]
 root = "."
-version = "0.3.0-alpha.3"
-min_inclean_version = "0.3.0-alpha.3"
+version = "0.3.0"
+min_inclean_version = "0.3.0"
 
 [[rule]]
 name = "lib-prefix"

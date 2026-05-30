@@ -101,8 +101,8 @@ inclean apply               # 就地写入改写
 ```toml
 [project]
 root = "."
-version = "0.3.0-alpha.3"
-min_inclean_version = "0.3.0-alpha.3"
+version = "0.3.0"
+min_inclean_version = "0.3.0"
 
 [[rule]]
 name = "lib-prefix"
