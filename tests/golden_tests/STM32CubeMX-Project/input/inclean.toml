@@ -86,10 +86,7 @@ file_paths = [
     "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h",
 ]
 include_match = [
-    "stm32f4xx_hal.h",
-    "stm32f4xx_hal_conf.h",
-    "stm32f4xx_hal_def.h",
-    "stm32f4xx_hal_rcc_ex.h",
+    "stm32f4xx_hal*.h",
     "stm32f4xx.h",
     "stm32f407xx.h",
     "Legacy/stm32_hal_legacy.h",
