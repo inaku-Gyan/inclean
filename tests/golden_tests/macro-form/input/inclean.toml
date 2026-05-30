@@ -1,0 +1,48 @@
+[project]
+root = "."
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
+
+# Mixed macro include fixture:
+# - app sources exercise successful static macro expansion, definition rewrites
+#   in nested config headers, and trailing-comment edits at the use site.
+# - error samples exercise unresolved, unsupported, and ambiguous macro forms.
+#   Those files keep their otherwise-fixable quote includes unchanged because
+#   unfixable outcomes skip the whole file.
+
+[[rule]]
+name = "scan config macro definitions"
+file_paths = ["config/**/*"]
+
+[[rule]]
+name = "resolve source headers"
+file_paths = ["src/**/*"]
+include_forms = ["quote", "angle"]
+include_match = ["**/*.h"]
+include_directories = ["include", "vendor/include"]
+include_on_unresolved = "skip"
+action = { type = "resolve", relative_to = "${current_file}" }
+trailing_comment = "skip"
+
+[[rule]]
+name = "export expanded device macro"
+file_paths = ["src/app/**/*"]
+include_forms = ["quote", "angle"]
+include_match = ["**/stm32f4xx.h"]
+action = "skip"
+trailing_comment = { transform = { action = { type = "replace", with = "IWYU: export" } }, append_if_absent = "  // IWYU: export" }
+
+[[rule]]
+name = "keep expanded vendor macro"
+file_paths = ["src/app/**/*"]
+include_forms = ["quote", "angle"]
+include_match = ["vendor_api.h", "**/vendor_api.h"]
+action = "skip"
+trailing_comment = { transform = { action = { type = "replace", with = "IWYU: keep" } }, append_if_absent = "  // IWYU: keep" }
+
+[[rule]]
+name = "reject unexpanded macros"
+file_paths = ["src/**/*"]
+include_forms = ["macro"]
+include_match = ["**"]
+action = { type = "replace", with = "should-not-expand/${original}" }

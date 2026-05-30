@@ -22,9 +22,9 @@
 //! happens later by comparing the final-line text each rule would
 //! produce (see `pipeline::run`).
 //!
-//! Macro-form includes are matched normally; the rule's action always
-//! produces an error in [`crate::rule::action::evaluate`] (v1 cannot
-//! resolve macro arguments).
+//! Header-like macro-form includes are expanded by the pipeline before this
+//! matcher when a unique simple `#define` is available. Unexpanded macro
+//! includes can still be matched as `IncludeForm::Macro`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;

@@ -35,6 +35,7 @@
 //! `node_modules`. The only built-in filter is to skip `inclean.toml`
 //! files themselves (they're not source).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -43,10 +44,11 @@ use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
-use crate::config::copy::{self, ResolvedRule};
+use crate::config::copy::{self, ResolvedAction, ResolvedRule};
 use crate::config::discover;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
+use crate::lex::macro_define::{self, HeaderMacroDefinition};
 use crate::profile::CONFIG_FILENAME;
 use crate::rule::action::{self, ActionOutcome, TrailingOutcome};
 use crate::rule::engine::{self, CompiledRule};
@@ -115,8 +117,15 @@ pub enum IncludeOutcome {
     /// All matched rules agreed on the same rewrite text.
     Rewritten {
         rules: Vec<String>,
+        /// Primary display edit for the include line. For macro-form
+        /// includes this still describes the include use site, while
+        /// `edits` may point at the macro definition.
         edit_range: Range<usize>,
         new_text: String,
+        /// Actual source edits to apply. Most normal includes have one edit
+        /// in the current file; macro includes may edit another file's
+        /// `#define` value and optionally the use-site trailing comment.
+        edits: Vec<PlannedEdit>,
     },
     /// One of the matched rules produced an `action.error`. Exit code 2.
     Error { rule: String, message: String },
@@ -130,6 +139,13 @@ pub enum IncludeOutcome {
         rule_outputs: Vec<(String, String)>,
         differing_aspects: Vec<DiffAspect>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedEdit {
+    pub relpath: PathBuf,
+    pub edit_range: Range<usize>,
+    pub new_text: String,
 }
 
 /// Which sub-part of the final include line differs across the rules
@@ -239,7 +255,11 @@ pub fn run(
 
     let path_filter = build_path_filter(&project_root_abs, paths)?;
 
-    // Walk + filter + sort candidate files.
+    // Walk once. Source candidates obey the user's path filter; macro
+    // definitions are indexed from all rule-eligible source files so a
+    // filtered run can still report that a needed definition edit is outside
+    // the requested path set.
+    let mut macro_scan_files: Vec<PathBuf> = Vec::new();
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in source_files(&project_root_abs) {
         let entry = entry?;
@@ -247,95 +267,103 @@ pub fn run(
             .strip_prefix(&project_root_abs)
             .unwrap_or(&entry)
             .to_path_buf();
-        if !path_filter.matches(&relpath) {
-            continue;
-        }
         if any_rule_eligible(&compiled, &relpath) {
-            candidates.push(relpath);
+            macro_scan_files.push(relpath.clone());
+            if path_filter.matches(&relpath) {
+                candidates.push(relpath);
+            }
         }
     }
+    macro_scan_files.sort();
     candidates.sort();
+
+    let macro_index = build_macro_index(&project_root_abs, &macro_scan_files);
 
     type PerFile = Result<FileResult, SkippedFile>;
     let per_file: Vec<PerFile> = candidates
         .par_iter()
-        .map(|relpath| process_file_outer(&compiled, &project_root_abs, relpath))
+        .map(|relpath| process_file_outer(&compiled, &project_root_abs, relpath, &macro_index))
         .collect();
 
     let mut files: Vec<FileResult> = Vec::with_capacity(per_file.len());
     let mut skipped: Vec<SkippedFile> = Vec::new();
-    let mut conflicts: Vec<Conflict> = Vec::new();
-    let mut unfixable: Vec<UnfixableDetail> = Vec::new();
     for res in per_file {
         match res {
-            Ok(file_result) => {
-                // Pull conflicts + unfixable details out of include_results.
-                for r in &file_result.include_results {
-                    let original_line = source_line_for(&file_result.original, r.include.line);
-                    match &r.outcome {
-                        IncludeOutcome::Conflict {
-                            rule_outputs,
-                            differing_aspects,
-                        } => {
-                            conflicts.push(Conflict {
-                                file_relpath: file_result.relpath.clone(),
-                                include_line: r.include.line,
-                                include_text: format_include_text(&r.include),
-                                rule_outputs: rule_outputs.clone(),
-                                differing_aspects: differing_aspects.clone(),
-                            });
-                            unfixable.push(UnfixableDetail {
-                                file_relpath: file_result.relpath.clone(),
-                                line: r.include.line,
-                                original_line,
-                                kind: UnfixableKind::Conflict,
-                                rules: rule_outputs
-                                    .iter()
-                                    .map(|(n, t)| (n.clone(), Some(t.clone())))
-                                    .collect(),
-                                differing_aspects: differing_aspects.clone(),
-                                message: None,
-                            });
-                        }
-                        IncludeOutcome::Error { rule, message } => {
-                            unfixable.push(UnfixableDetail {
-                                file_relpath: file_result.relpath.clone(),
-                                line: r.include.line,
-                                original_line,
-                                kind: UnfixableKind::Error,
-                                rules: vec![(rule.clone(), None)],
-                                differing_aspects: vec![],
-                                message: Some(message.clone()),
-                            });
-                        }
-                        IncludeOutcome::TrailingCommentError { rule, message } => {
-                            unfixable.push(UnfixableDetail {
-                                file_relpath: file_result.relpath.clone(),
-                                line: r.include.line,
-                                original_line,
-                                kind: UnfixableKind::TrailingCommentError,
-                                rules: vec![(rule.clone(), None)],
-                                differing_aspects: vec![],
-                                message: Some(message.clone()),
-                            });
-                        }
-                        IncludeOutcome::EvaluationFailure { rule, message } => {
-                            unfixable.push(UnfixableDetail {
-                                file_relpath: file_result.relpath.clone(),
-                                line: r.include.line,
-                                original_line,
-                                kind: UnfixableKind::EvaluationFailure,
-                                rules: vec![(rule.clone(), None)],
-                                differing_aspects: vec![],
-                                message: Some(message.clone()),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                files.push(file_result);
-            }
+            Ok(file_result) => files.push(file_result),
             Err(s) => skipped.push(s),
+        }
+    }
+
+    materialize_missing_edit_targets(&mut files, &project_root_abs)?;
+    validate_planned_edits(&mut files, &path_filter);
+    apply_planned_edits_to_results(&mut files);
+
+    let mut conflicts: Vec<Conflict> = Vec::new();
+    let mut unfixable: Vec<UnfixableDetail> = Vec::new();
+    for file_result in &files {
+        // Pull conflicts + unfixable details out of include_results.
+        for r in &file_result.include_results {
+            let original_line = source_line_for(&file_result.original, r.include.line);
+            match &r.outcome {
+                IncludeOutcome::Conflict {
+                    rule_outputs,
+                    differing_aspects,
+                } => {
+                    conflicts.push(Conflict {
+                        file_relpath: file_result.relpath.clone(),
+                        include_line: r.include.line,
+                        include_text: format_include_text(&r.include),
+                        rule_outputs: rule_outputs.clone(),
+                        differing_aspects: differing_aspects.clone(),
+                    });
+                    unfixable.push(UnfixableDetail {
+                        file_relpath: file_result.relpath.clone(),
+                        line: r.include.line,
+                        original_line,
+                        kind: UnfixableKind::Conflict,
+                        rules: rule_outputs
+                            .iter()
+                            .map(|(n, t)| (n.clone(), Some(t.clone())))
+                            .collect(),
+                        differing_aspects: differing_aspects.clone(),
+                        message: None,
+                    });
+                }
+                IncludeOutcome::Error { rule, message } => {
+                    unfixable.push(UnfixableDetail {
+                        file_relpath: file_result.relpath.clone(),
+                        line: r.include.line,
+                        original_line,
+                        kind: UnfixableKind::Error,
+                        rules: vec![(rule.clone(), None)],
+                        differing_aspects: vec![],
+                        message: Some(message.clone()),
+                    });
+                }
+                IncludeOutcome::TrailingCommentError { rule, message } => {
+                    unfixable.push(UnfixableDetail {
+                        file_relpath: file_result.relpath.clone(),
+                        line: r.include.line,
+                        original_line,
+                        kind: UnfixableKind::TrailingCommentError,
+                        rules: vec![(rule.clone(), None)],
+                        differing_aspects: vec![],
+                        message: Some(message.clone()),
+                    });
+                }
+                IncludeOutcome::EvaluationFailure { rule, message } => {
+                    unfixable.push(UnfixableDetail {
+                        file_relpath: file_result.relpath.clone(),
+                        line: r.include.line,
+                        original_line,
+                        kind: UnfixableKind::EvaluationFailure,
+                        rules: vec![(rule.clone(), None)],
+                        differing_aspects: vec![],
+                        message: Some(message.clone()),
+                    });
+                }
+                _ => {}
+            }
         }
     }
 
@@ -465,6 +493,247 @@ pub fn file_has_errors(f: &FileResult) -> bool {
     })
 }
 
+fn materialize_missing_edit_targets(
+    files: &mut Vec<FileResult>,
+    project_root: &Path,
+) -> Result<()> {
+    let existing: BTreeSet<PathBuf> = files.iter().map(|f| f.relpath.clone()).collect();
+    let mut missing: BTreeSet<PathBuf> = BTreeSet::new();
+    for edit in planned_edits(files) {
+        if !existing.contains(&edit.relpath) {
+            missing.insert(edit.relpath);
+        }
+    }
+
+    for relpath in missing {
+        let abs = project_root.join(&relpath);
+        let bytes = std::fs::read(&abs)
+            .with_context(|| format!("reading macro include edit target {}", relpath.display()))?;
+        let (had_bom, body) = strip_bom(&bytes);
+        let original = std::str::from_utf8(body)
+            .with_context(|| {
+                format!(
+                    "macro include edit target is not UTF-8: {}",
+                    relpath.display()
+                )
+            })?
+            .to_string();
+        files.push(FileResult {
+            relpath,
+            original,
+            rewritten: None,
+            include_results: Vec::new(),
+            had_bom,
+            lex_warnings: Vec::new(),
+        });
+    }
+    files.sort_by(|a, b| a.relpath.cmp(&b.relpath));
+    Ok(())
+}
+
+fn validate_planned_edits(files: &mut [FileResult], path_filter: &PathFilter) {
+    reject_edits_outside_path_filter(files, path_filter);
+    reject_conflicting_planned_edits(files);
+}
+
+fn reject_edits_outside_path_filter(files: &mut [FileResult], path_filter: &PathFilter) {
+    for file in files {
+        for result in &mut file.include_results {
+            let IncludeOutcome::Rewritten { rules, edits, .. } = &result.outcome else {
+                continue;
+            };
+            let Some(offending) = edits
+                .iter()
+                .find(|edit| !path_filter.matches(&edit.relpath))
+                .map(|edit| edit.relpath.clone())
+            else {
+                continue;
+            };
+            result.outcome = IncludeOutcome::EvaluationFailure {
+                rule: rules_label(rules),
+                message: format!(
+                    "macro include rewrite would edit `{}` outside the requested path filter",
+                    offending.display()
+                ),
+            };
+        }
+    }
+}
+
+#[derive(Clone)]
+struct EditEntry {
+    relpath: PathBuf,
+    range: Range<usize>,
+    new_text: String,
+    file_idx: usize,
+    include_idx: usize,
+    label: String,
+}
+
+type EditConflictMap = BTreeMap<(usize, usize), (Vec<(String, String)>, Vec<DiffAspect>)>;
+
+fn reject_conflicting_planned_edits(files: &mut [FileResult]) {
+    let entries = edit_entries(files);
+    let mut conflicts: EditConflictMap = BTreeMap::new();
+
+    let mut by_exact_range: BTreeMap<(PathBuf, usize, usize), Vec<EditEntry>> = BTreeMap::new();
+    for entry in &entries {
+        by_exact_range
+            .entry((entry.relpath.clone(), entry.range.start, entry.range.end))
+            .or_default()
+            .push(entry.clone());
+    }
+    for group in by_exact_range.values() {
+        let distinct: BTreeSet<&str> = group.iter().map(|entry| entry.new_text.as_str()).collect();
+        if distinct.len() > 1 {
+            let outputs = group_outputs(group);
+            let aspects = differing_aspects_or_path(&outputs);
+            for entry in group {
+                conflicts
+                    .entry((entry.file_idx, entry.include_idx))
+                    .or_insert_with(|| (outputs.clone(), aspects.clone()));
+            }
+        }
+    }
+
+    let mut by_file: BTreeMap<PathBuf, Vec<EditEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_file
+            .entry(entry.relpath.clone())
+            .or_default()
+            .push(entry);
+    }
+    for mut file_entries in by_file.into_values() {
+        file_entries.sort_by_key(|entry| (entry.range.start, entry.range.end));
+        for idx in 0..file_entries.len() {
+            for next in (idx + 1)..file_entries.len() {
+                let left = &file_entries[idx];
+                let right = &file_entries[next];
+                if right.range.start >= left.range.end {
+                    break;
+                }
+                if left.range.start == right.range.start && left.range.end == right.range.end {
+                    continue;
+                }
+                let group = vec![left.clone(), right.clone()];
+                let outputs = group_outputs(&group);
+                let aspects = differing_aspects_or_path(&outputs);
+                for entry in &group {
+                    conflicts
+                        .entry((entry.file_idx, entry.include_idx))
+                        .or_insert_with(|| (outputs.clone(), aspects.clone()));
+                }
+            }
+        }
+    }
+
+    for ((file_idx, include_idx), (rule_outputs, differing_aspects)) in conflicts {
+        if let Some(result) = files
+            .get_mut(file_idx)
+            .and_then(|file| file.include_results.get_mut(include_idx))
+        {
+            result.outcome = IncludeOutcome::Conflict {
+                rule_outputs,
+                differing_aspects,
+            };
+        }
+    }
+}
+
+fn apply_planned_edits_to_results(files: &mut [FileResult]) {
+    let mut by_file: BTreeMap<PathBuf, Vec<(Range<usize>, String)>> = BTreeMap::new();
+    let mut seen: BTreeSet<(PathBuf, usize, usize, String)> = BTreeSet::new();
+    for edit in planned_edits(files) {
+        let key = (
+            edit.relpath.clone(),
+            edit.edit_range.start,
+            edit.edit_range.end,
+            edit.new_text.clone(),
+        );
+        if seen.insert(key) {
+            by_file
+                .entry(edit.relpath)
+                .or_default()
+                .push((edit.edit_range, edit.new_text));
+        }
+    }
+
+    for file in files {
+        let Some(edits) = by_file.remove(&file.relpath) else {
+            file.rewritten = None;
+            continue;
+        };
+        if edits.is_empty() {
+            file.rewritten = None;
+        } else {
+            file.rewritten = Some(apply_edits(&file.original, &edits));
+        }
+    }
+}
+
+fn planned_edits(files: &[FileResult]) -> Vec<PlannedEdit> {
+    let mut out = Vec::new();
+    for file in files {
+        for result in &file.include_results {
+            if let IncludeOutcome::Rewritten { edits, .. } = &result.outcome {
+                out.extend(edits.iter().cloned());
+            }
+        }
+    }
+    out
+}
+
+fn edit_entries(files: &[FileResult]) -> Vec<EditEntry> {
+    let mut out = Vec::new();
+    for (file_idx, file) in files.iter().enumerate() {
+        for (include_idx, result) in file.include_results.iter().enumerate() {
+            let IncludeOutcome::Rewritten { rules, edits, .. } = &result.outcome else {
+                continue;
+            };
+            let label = rules_label(rules);
+            for edit in edits {
+                out.push(EditEntry {
+                    relpath: edit.relpath.clone(),
+                    range: edit.edit_range.clone(),
+                    new_text: edit.new_text.clone(),
+                    file_idx,
+                    include_idx,
+                    label: label.clone(),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn group_outputs(group: &[EditEntry]) -> Vec<(String, String)> {
+    group
+        .iter()
+        .map(|entry| (entry.label.clone(), entry.new_text.clone()))
+        .collect()
+}
+
+fn differing_aspects_or_path(outputs: &[(String, String)]) -> Vec<DiffAspect> {
+    let mut aspects = compute_differing_aspects(
+        &outputs
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+    );
+    if aspects.is_empty() {
+        aspects.push(DiffAspect::IncludePath);
+    }
+    aspects
+}
+
+fn rules_label(rules: &[String]) -> String {
+    if rules.is_empty() {
+        "macro include".to_string()
+    } else {
+        rules.join(", ")
+    }
+}
+
 /// Render the unfixable report for human consumption. Each entry
 /// includes file path, line, original `#include` line, violation kind,
 /// triggering rule name(s), and (for conflicts) the differing aspects.
@@ -575,6 +844,7 @@ fn process_file_outer(
     rules: &[CompiledRule<'_>],
     project_root: &Path,
     relpath: &Path,
+    macro_index: &MacroIndex,
 ) -> std::result::Result<FileResult, SkippedFile> {
     let abs = project_root.join(relpath);
     let bytes = match std::fs::read(&abs) {
@@ -596,11 +866,11 @@ fn process_file_outer(
             });
         }
     };
-    let processed = process_file(rules, relpath, &original, project_root);
+    let processed = process_file(rules, relpath, &original, project_root, macro_index);
     Ok(FileResult {
         relpath: relpath.to_path_buf(),
         original,
-        rewritten: processed.rewritten,
+        rewritten: None,
         include_results: processed.include_results,
         had_bom,
         lex_warnings: processed.lex_warnings,
@@ -616,7 +886,6 @@ fn strip_bom(bytes: &[u8]) -> (bool, &[u8]) {
 }
 
 struct FileProcessing {
-    rewritten: Option<String>,
     include_results: Vec<IncludeResult>,
     lex_warnings: Vec<String>,
 }
@@ -626,6 +895,7 @@ fn process_file(
     relpath: &Path,
     original: &str,
     project_root: &Path,
+    macro_index: &MacroIndex,
 ) -> FileProcessing {
     let (includes, report) = include_line::scan_with_report(original);
     let mut lex_warnings: Vec<String> = Vec::new();
@@ -636,10 +906,21 @@ fn process_file(
     let suppressed = engine::compute_all_suppressed(rules, original, &line_table);
 
     let mut include_results: Vec<IncludeResult> = Vec::with_capacity(includes.len());
-    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-
     for include in includes {
-        let matched = engine::match_all(rules, relpath, &include, &suppressed, project_root);
+        let macro_expansion = macro_index.expand(&include);
+        if let MacroExpansion::AmbiguousValues { message } = &macro_expansion {
+            include_results.push(IncludeResult {
+                include,
+                outcome: IncludeOutcome::EvaluationFailure {
+                    rule: "macro definitions".to_string(),
+                    message: message.clone(),
+                },
+            });
+            continue;
+        }
+
+        let match_include = macro_expansion.match_include(&include);
+        let matched = engine::match_all(rules, relpath, &match_include, &suppressed, project_root);
 
         if matched.matched.is_empty() && matched.failures.is_empty() {
             include_results.push(IncludeResult {
@@ -656,7 +937,7 @@ fn process_file(
             .iter()
             .map(|failure| RuleEvaluation {
                 rule_name: failure.rule.rule.name.clone(),
-                action: ActionOutcome::EvaluationFailure {
+                action: EvaluatedAction::EvaluationFailure {
                     message: failure.message.clone(),
                 },
                 trailing: TrailingOutcome::Skip,
@@ -664,9 +945,10 @@ fn process_file(
             .collect();
 
         evaluations.extend(matched.matched.iter().map(|cm| {
-            let action = action::evaluate_action_with_resolution(
+            let action = evaluate_action_for_match(
                 cm.rule,
                 &include,
+                &macro_expansion,
                 original,
                 relpath,
                 project_root,
@@ -680,43 +962,327 @@ fn process_file(
             }
         }));
 
-        let outcome = collapse_outcomes(&include, original, evaluations);
-
-        // Push edit when an unambiguous Rewrite came out.
-        if let IncludeOutcome::Rewritten {
-            edit_range,
-            new_text,
-            ..
-        } = &outcome
-        {
-            edits.push((edit_range.clone(), new_text.clone()));
-        }
+        let outcome = collapse_outcomes(&include, original, relpath, evaluations);
 
         include_results.push(IncludeResult { include, outcome });
     }
 
-    let rewritten = if edits.is_empty() {
-        None
-    } else {
-        Some(apply_edits(original, &edits))
-    };
-
     FileProcessing {
-        rewritten,
         include_results,
         lex_warnings,
     }
 }
 
+#[derive(Debug)]
+struct MacroIndex {
+    by_name: BTreeMap<String, Vec<MacroDefinition>>,
+}
+
+#[derive(Debug, Clone)]
+struct MacroDefinition {
+    name: String,
+    form: IncludeForm,
+    content: String,
+    relpath: PathBuf,
+    line: usize,
+    value_range: Range<usize>,
+    source: String,
+}
+
+enum MacroExpansion<'a> {
+    NotMacro,
+    Unresolved,
+    Unique(&'a MacroDefinition),
+    MultipleSameValue {
+        form: IncludeForm,
+        content: String,
+        definitions: Vec<&'a MacroDefinition>,
+    },
+    AmbiguousValues {
+        message: String,
+    },
+}
+
+impl MacroIndex {
+    fn expand<'a>(&'a self, include: &Include) -> MacroExpansion<'a> {
+        if include.form != IncludeForm::Macro {
+            return MacroExpansion::NotMacro;
+        }
+        let Some(defs) = self.by_name.get(&include.content) else {
+            return MacroExpansion::Unresolved;
+        };
+        if defs.len() == 1 {
+            return MacroExpansion::Unique(&defs[0]);
+        }
+
+        let mut values: BTreeSet<(String, String)> = BTreeSet::new();
+        for def in defs {
+            values.insert((include_form_name(def.form).to_string(), def.content.clone()));
+        }
+        if values.len() == 1 {
+            let first = &defs[0];
+            return MacroExpansion::MultipleSameValue {
+                form: first.form,
+                content: first.content.clone(),
+                definitions: defs.iter().collect(),
+            };
+        }
+
+        let values = values
+            .into_iter()
+            .map(|(form, content)| format!("{form} {content}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        MacroExpansion::AmbiguousValues {
+            message: format!(
+                "macro `{}` has multiple header-like definitions with different values: {values}",
+                include.content
+            ),
+        }
+    }
+}
+
+impl<'a> MacroExpansion<'a> {
+    fn match_include(&self, original: &Include) -> Include {
+        match self {
+            MacroExpansion::Unique(def) => {
+                include_with_expanded_macro(original, def.form, &def.content)
+            }
+            MacroExpansion::MultipleSameValue { form, content, .. } => {
+                include_with_expanded_macro(original, *form, content)
+            }
+            MacroExpansion::NotMacro
+            | MacroExpansion::Unresolved
+            | MacroExpansion::AmbiguousValues { .. } => original.clone(),
+        }
+    }
+
+    fn editable_definition(&self) -> std::result::Result<Option<&'a MacroDefinition>, String> {
+        match self {
+            MacroExpansion::Unique(def) => Ok(Some(def)),
+            MacroExpansion::MultipleSameValue { definitions, .. } => Err(format!(
+                "macro `{}` has multiple header-like definitions; cannot choose which definition to edit",
+                definitions
+                    .first()
+                    .map(|d| d.name.as_str())
+                    .unwrap_or("<unknown>")
+            )),
+            MacroExpansion::NotMacro | MacroExpansion::Unresolved => Ok(None),
+            MacroExpansion::AmbiguousValues { message } => Err(message.clone()),
+        }
+    }
+}
+
+fn include_with_expanded_macro(original: &Include, form: IncludeForm, content: &str) -> Include {
+    Include {
+        form,
+        content: content.to_string(),
+        line: original.line,
+        argument_range: original.argument_range.clone(),
+        trailing_range: original.trailing_range.clone(),
+        trailing_comment_style: original.trailing_comment_style,
+        has_cross_line_block_trailing: original.has_cross_line_block_trailing,
+    }
+}
+
+fn build_macro_index(project_root: &Path, relpaths: &[PathBuf]) -> MacroIndex {
+    let mut by_name: BTreeMap<String, Vec<MacroDefinition>> = BTreeMap::new();
+    for relpath in relpaths {
+        let abs = project_root.join(relpath);
+        let Ok(bytes) = std::fs::read(&abs) else {
+            continue;
+        };
+        let (_, body) = strip_bom(&bytes);
+        let Ok(source) = std::str::from_utf8(body) else {
+            continue;
+        };
+        let source = source.to_string();
+        for raw in macro_define::scan(&source) {
+            by_name
+                .entry(raw.name.clone())
+                .or_default()
+                .push(macro_definition(relpath, &source, raw));
+        }
+    }
+    MacroIndex { by_name }
+}
+
+fn macro_definition(relpath: &Path, source: &str, raw: HeaderMacroDefinition) -> MacroDefinition {
+    MacroDefinition {
+        name: raw.name,
+        form: raw.form,
+        content: raw.content,
+        relpath: relpath.to_path_buf(),
+        line: raw.line,
+        value_range: raw.value_range,
+        source: source.to_string(),
+    }
+}
+
+fn include_form_name(form: IncludeForm) -> &'static str {
+    match form {
+        IncludeForm::Quote => "quote",
+        IncludeForm::Angle => "angle",
+        IncludeForm::Macro => "macro",
+    }
+}
+
+fn evaluate_action_for_match(
+    rule: &CompiledRule<'_>,
+    original_include: &Include,
+    macro_expansion: &MacroExpansion<'_>,
+    source: &str,
+    file_relpath: &Path,
+    project_root: &Path,
+    resolved_header: Option<&Path>,
+) -> EvaluatedAction {
+    if original_include.form == IncludeForm::Macro {
+        return evaluate_macro_action(
+            rule,
+            original_include,
+            macro_expansion,
+            file_relpath,
+            project_root,
+            resolved_header,
+        );
+    }
+
+    let out = action::evaluate_action_with_resolution(
+        rule,
+        original_include,
+        source,
+        file_relpath,
+        project_root,
+        resolved_header,
+    );
+    action_outcome_to_evaluated(out, file_relpath.to_path_buf(), source)
+}
+
+fn evaluate_macro_action(
+    rule: &CompiledRule<'_>,
+    original_include: &Include,
+    macro_expansion: &MacroExpansion<'_>,
+    file_relpath: &Path,
+    project_root: &Path,
+    resolved_header: Option<&Path>,
+) -> EvaluatedAction {
+    if matches!(rule.rule.action, ResolvedAction::Skip) {
+        return EvaluatedAction::Skip;
+    }
+
+    let definition = match macro_expansion.editable_definition() {
+        Ok(Some(definition)) => definition,
+        Ok(None) => {
+            let out = action::evaluate_action_with_resolution(
+                rule,
+                original_include,
+                "",
+                file_relpath,
+                project_root,
+                resolved_header,
+            );
+            return action_outcome_to_evaluated(out, file_relpath.to_path_buf(), "");
+        }
+        Err(message) => {
+            return EvaluatedAction::EvaluationFailure { message };
+        }
+    };
+
+    if matches!(
+        rule.rule.action,
+        ResolvedAction::Remove { .. } | ResolvedAction::CommentOut { .. }
+    ) {
+        return EvaluatedAction::EvaluationFailure {
+            message: format!(
+                "rule `{}`: action is not supported for macro-form include `#include {}`; use resolve, replace, keep, error, or skip",
+                rule.rule.name, original_include.content
+            ),
+        };
+    }
+
+    let virtual_include = Include {
+        form: definition.form,
+        content: definition.content.clone(),
+        line: definition.line,
+        argument_range: definition.value_range.clone(),
+        trailing_range: definition.value_range.end..definition.value_range.end,
+        trailing_comment_style: None,
+        has_cross_line_block_trailing: false,
+    };
+
+    let out = action::evaluate_action_with_resolution(
+        rule,
+        &virtual_include,
+        &definition.source,
+        file_relpath,
+        project_root,
+        resolved_header,
+    );
+    action_outcome_to_evaluated(out, definition.relpath.clone(), &definition.source)
+}
+
+fn action_outcome_to_evaluated(
+    outcome: ActionOutcome,
+    target_relpath: PathBuf,
+    target_source: &str,
+) -> EvaluatedAction {
+    match outcome {
+        ActionOutcome::Skip => EvaluatedAction::Skip,
+        ActionOutcome::Apply {
+            edit_range,
+            new_text,
+        } => {
+            let original_text = target_source
+                .get(edit_range.clone())
+                .unwrap_or("")
+                .to_string();
+            EvaluatedAction::Apply {
+                target: EditTarget::File(target_relpath),
+                edit_range,
+                new_text,
+                original_text,
+            }
+        }
+        ActionOutcome::Error { message } => EvaluatedAction::Error { message },
+        ActionOutcome::EvaluationFailure { message } => {
+            EvaluatedAction::EvaluationFailure { message }
+        }
+    }
+}
+
 struct RuleEvaluation {
     rule_name: String,
-    action: ActionOutcome,
+    action: EvaluatedAction,
     trailing: TrailingOutcome,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum EditTarget {
+    File(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EvaluatedAction {
+    Skip,
+    Apply {
+        target: EditTarget,
+        edit_range: Range<usize>,
+        new_text: String,
+        original_text: String,
+    },
+    Error {
+        message: String,
+    },
+    EvaluationFailure {
+        message: String,
+    },
+}
+
 struct CollapsedAction {
+    target: EditTarget,
     edit_range: Range<usize>,
     new_text: String,
+    original_text: String,
     rules: Vec<String>,
 }
 
@@ -738,10 +1304,11 @@ struct CollapsedTrailing {
 fn collapse_outcomes(
     include: &Include,
     source: &str,
+    relpath: &Path,
     evaluations: Vec<RuleEvaluation>,
 ) -> IncludeOutcome {
     for ev in &evaluations {
-        if let ActionOutcome::Error { message } = &ev.action {
+        if let EvaluatedAction::Error { message } = &ev.action {
             return IncludeOutcome::Error {
                 rule: ev.rule_name.clone(),
                 message: message.clone(),
@@ -757,7 +1324,7 @@ fn collapse_outcomes(
         }
     }
     for ev in &evaluations {
-        if let ActionOutcome::EvaluationFailure { message } = &ev.action {
+        if let EvaluatedAction::EvaluationFailure { message } = &ev.action {
             return IncludeOutcome::EvaluationFailure {
                 rule: ev.rule_name.clone(),
                 message: message.clone(),
@@ -765,19 +1332,25 @@ fn collapse_outcomes(
         }
     }
 
-    let mut action_candidates: Vec<(String, Range<usize>, String)> = Vec::new();
+    let mut action_candidates: Vec<(String, EditTarget, Range<usize>, String, String)> = Vec::new();
     let mut trailing_candidates: Vec<(String, String)> = Vec::new();
     for ev in &evaluations {
         match &ev.action {
-            ActionOutcome::Apply {
+            EvaluatedAction::Apply {
+                target,
                 edit_range,
                 new_text,
-            } => {
-                action_candidates.push((ev.rule_name.clone(), edit_range.clone(), new_text.clone()))
-            }
-            ActionOutcome::Skip
-            | ActionOutcome::Error { .. }
-            | ActionOutcome::EvaluationFailure { .. } => {}
+                original_text,
+            } => action_candidates.push((
+                ev.rule_name.clone(),
+                target.clone(),
+                edit_range.clone(),
+                new_text.clone(),
+                original_text.clone(),
+            )),
+            EvaluatedAction::Skip
+            | EvaluatedAction::Error { .. }
+            | EvaluatedAction::EvaluationFailure { .. } => {}
         }
         match &ev.trailing {
             TrailingOutcome::Apply { new_text } => {
@@ -787,18 +1360,27 @@ fn collapse_outcomes(
         }
     }
 
-    let action = match collapse_action_candidates(include, source, action_candidates) {
-        Ok(action) => action,
-        Err(conflict) => return conflict,
-    };
-    let trailing = match collapse_trailing_candidates(include, source, &action, trailing_candidates)
-    {
+    let current_target = EditTarget::File(relpath.to_path_buf());
+    let action =
+        match collapse_action_candidates(include, source, &current_target, action_candidates) {
+            Ok(action) => action,
+            Err(conflict) => return conflict,
+        };
+    let trailing = match collapse_trailing_candidates(
+        include,
+        source,
+        &current_target,
+        &action,
+        trailing_candidates,
+    ) {
         Ok(trailing) => trailing,
         Err(conflict) => return conflict,
     };
 
     let original_trailing = &source[include.trailing_range.clone()];
-    if action.edit_range != include.argument_range {
+    let action_targets_current_arg =
+        action.target == current_target && action.edit_range == include.argument_range;
+    if action.target == current_target && !action_targets_current_arg {
         if !trailing.rules.is_empty() && trailing.new_text != original_trailing {
             let mut rule_outputs: Vec<(String, String)> = action
                 .rules
@@ -816,52 +1398,108 @@ fn collapse_outcomes(
                 differing_aspects: vec![DiffAspect::TrailingComment],
             };
         }
-        return rewritten_or_keep(source, action.edit_range, action.new_text, action.rules);
+        return rewritten_or_keep(
+            source,
+            relpath,
+            action.edit_range,
+            action.new_text,
+            action.rules,
+        );
+    }
+
+    if action_targets_current_arg {
+        let edit_range = argument_and_trailing_range(include);
+        let new_text = format!("{}{}", action.new_text, trailing.new_text);
+        let rules = merge_rules(action.rules, trailing.rules);
+        return rewritten_or_keep(source, relpath, edit_range, new_text, rules);
+    }
+
+    let mut edits = Vec::new();
+    if action.new_text != action.original_text {
+        let EditTarget::File(target_relpath) = &action.target;
+        edits.push(PlannedEdit {
+            relpath: target_relpath.clone(),
+            edit_range: action.edit_range.clone(),
+            new_text: action.new_text.clone(),
+        });
     }
 
     let edit_range = argument_and_trailing_range(include);
-    let new_text = format!("{}{}", action.new_text, trailing.new_text);
+    let original_arg = &source[include.argument_range.clone()];
+    let new_text = format!("{original_arg}{}", trailing.new_text);
+    if new_text != source[edit_range.clone()] {
+        edits.push(PlannedEdit {
+            relpath: relpath.to_path_buf(),
+            edit_range: edit_range.clone(),
+            new_text: new_text.clone(),
+        });
+    }
+
     let rules = merge_rules(action.rules, trailing.rules);
-    rewritten_or_keep(source, edit_range, new_text, rules)
+    if edits.is_empty() {
+        IncludeOutcome::Keep { rules }
+    } else {
+        IncludeOutcome::Rewritten {
+            rules,
+            edit_range,
+            new_text,
+            edits,
+        }
+    }
 }
 
 fn collapse_action_candidates(
     include: &Include,
     source: &str,
-    candidates: Vec<(String, Range<usize>, String)>,
+    current_target: &EditTarget,
+    candidates: Vec<(String, EditTarget, Range<usize>, String, String)>,
 ) -> std::result::Result<CollapsedAction, IncludeOutcome> {
     if candidates.is_empty() {
+        let original = source[include.argument_range.clone()].to_string();
         return Ok(CollapsedAction {
+            target: current_target.clone(),
             edit_range: include.argument_range.clone(),
-            new_text: source[include.argument_range.clone()].to_string(),
+            new_text: original.clone(),
+            original_text: original,
             rules: Vec::new(),
         });
     }
-    let (first_range, first_text) = (candidates[0].1.clone(), candidates[0].2.clone());
-    let all_same = candidates
-        .iter()
-        .all(|(_, r, t)| *r == first_range && *t == first_text);
+    let (first_target, first_range, first_text, first_original) = (
+        candidates[0].1.clone(),
+        candidates[0].2.clone(),
+        candidates[0].3.clone(),
+        candidates[0].4.clone(),
+    );
+    let all_same = candidates.iter().all(|(_, target, range, text, _)| {
+        *target == first_target && *range == first_range && *text == first_text
+    });
     if all_same {
         return Ok(CollapsedAction {
+            target: first_target,
             edit_range: first_range,
             new_text: first_text,
-            rules: candidates.into_iter().map(|(n, _, _)| n).collect(),
+            original_text: first_original,
+            rules: candidates.into_iter().map(|(n, _, _, _, _)| n).collect(),
         });
     }
 
     let rule_outputs: Vec<(String, String)> = candidates
         .into_iter()
-        .map(|(name, range, text)| {
-            let display = action_candidate_display(include, source, &range, &text);
+        .map(|(name, target, range, text, _)| {
+            let display =
+                action_candidate_display(include, source, current_target, &target, &range, &text);
             (name, display)
         })
         .collect();
-    let differing_aspects = compute_differing_aspects(
+    let mut differing_aspects = compute_differing_aspects(
         &rule_outputs
             .iter()
             .map(|(_, t)| t.as_str())
             .collect::<Vec<_>>(),
     );
+    if differing_aspects.is_empty() {
+        differing_aspects.push(DiffAspect::IncludePath);
+    }
     Err(IncludeOutcome::Conflict {
         rule_outputs,
         differing_aspects,
@@ -871,6 +1509,7 @@ fn collapse_action_candidates(
 fn collapse_trailing_candidates(
     include: &Include,
     source: &str,
+    current_target: &EditTarget,
     action: &CollapsedAction,
     candidates: Vec<(String, String)>,
 ) -> std::result::Result<CollapsedTrailing, IncludeOutcome> {
@@ -888,11 +1527,12 @@ fn collapse_trailing_candidates(
         });
     }
 
-    let action_arg = if action.edit_range == include.argument_range {
-        action.new_text.as_str()
-    } else {
-        &source[include.argument_range.clone()]
-    };
+    let action_arg =
+        if &action.target == current_target && action.edit_range == include.argument_range {
+            action.new_text.as_str()
+        } else {
+            &source[include.argument_range.clone()]
+        };
     let rule_outputs: Vec<(String, String)> = candidates
         .into_iter()
         .map(|(name, trailing)| (name, format!("{action_arg}{trailing}")))
@@ -906,10 +1546,12 @@ fn collapse_trailing_candidates(
 fn action_candidate_display(
     include: &Include,
     source: &str,
+    current_target: &EditTarget,
+    target: &EditTarget,
     range: &Range<usize>,
     text: &str,
 ) -> String {
-    if *range == include.argument_range {
+    if target == current_target && *range == include.argument_range {
         format!("{text}{}", &source[include.trailing_range.clone()])
     } else {
         text.to_string()
@@ -918,6 +1560,7 @@ fn action_candidate_display(
 
 fn rewritten_or_keep(
     source: &str,
+    relpath: &Path,
     edit_range: Range<usize>,
     new_text: String,
     rules: Vec<String>,
@@ -927,8 +1570,13 @@ fn rewritten_or_keep(
     } else {
         IncludeOutcome::Rewritten {
             rules,
-            edit_range,
-            new_text,
+            edit_range: edit_range.clone(),
+            new_text: new_text.clone(),
+            edits: vec![PlannedEdit {
+                relpath: relpath.to_path_buf(),
+                edit_range,
+                new_text,
+            }],
         }
     }
 }
@@ -1142,6 +1790,14 @@ mod tests {
 
     use super::*;
     use std::fs;
+
+    fn file_result<'a>(summary: &'a Summary, relpath: &str) -> &'a FileResult {
+        summary
+            .files
+            .iter()
+            .find(|file| file.relpath == Path::new(relpath))
+            .unwrap_or_else(|| panic!("missing file result for {relpath}"))
+    }
 
     #[test]
     fn config_mode_skips_source_scan() {
@@ -1560,6 +2216,123 @@ mod tests {
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn macro_include_resolve_rewrites_definition_not_use_site() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["**/*"]
+            include_directories = ["include"]
+            action = { type = "resolve", relative_to = "${current_file}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("config.h", "#define DEVICE_HEADER \"foo.h\"\n");
+        proj.write("src/main.c", "#include DEVICE_HEADER\n");
+        proj.write("include/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(summary.conflicts.is_empty());
+        let src = file_result(&summary, "src/main.c");
+        match &src.include_results[0].outcome {
+            IncludeOutcome::Rewritten { edits, .. } => {
+                assert_eq!(edits.len(), 1);
+                assert_eq!(edits[0].relpath, PathBuf::from("config.h"));
+                assert_eq!(edits[0].new_text, "\"../include/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 1);
+        assert_eq!(
+            proj.read_to_string("src/main.c"),
+            "#include DEVICE_HEADER\n"
+        );
+        assert_eq!(
+            proj.read_to_string("config.h"),
+            "#define DEVICE_HEADER \"../include/foo.h\"\n"
+        );
+    }
+
+    #[test]
+    fn macro_include_reuses_identical_definition_edit() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["**/*"]
+            include_directories = ["include"]
+            action = { type = "resolve", relative_to = "${current_file}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("config.h", "#define DEVICE_HEADER \"foo.h\"\n");
+        proj.write("src/a.c", "#include DEVICE_HEADER\n");
+        proj.write("src/b.c", "#include DEVICE_HEADER\n");
+        proj.write("include/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(summary.conflicts.is_empty());
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 1);
+        assert_eq!(
+            proj.read_to_string("config.h"),
+            "#define DEVICE_HEADER \"../include/foo.h\"\n"
+        );
+    }
+
+    #[test]
+    fn macro_include_definition_edit_conflict_is_unfixable() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["**/*"]
+            include_directories = ["include"]
+            action = { type = "resolve", relative_to = "${current_file}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("config.h", "#define DEVICE_HEADER \"foo.h\"\n");
+        proj.write("src/main.c", "#include DEVICE_HEADER\n");
+        proj.write("src/deep/main.c", "#include DEVICE_HEADER\n");
+        proj.write("include/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert_eq!(summary_exit_code(&summary), 3);
+        assert_eq!(summary.conflicts.len(), 2);
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(
+            proj.read_to_string("config.h"),
+            "#define DEVICE_HEADER \"foo.h\"\n"
+        );
+    }
+
+    #[test]
+    fn macro_definition_edit_outside_path_filter_is_unfixable() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["**/*"]
+            include_directories = ["include"]
+            action = { type = "resolve", relative_to = "${current_file}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("config.h", "#define DEVICE_HEADER \"foo.h\"\n");
+        proj.write("src/main.c", "#include DEVICE_HEADER\n");
+        proj.write("include/foo.h", "");
+
+        let filtered = proj.path().join("src/main.c");
+        let summary = run(None, proj.path(), &[filtered], None, CheckMode::Run).unwrap();
+        assert_eq!(summary_exit_code(&summary), 3);
+        let src = file_result(&summary, "src/main.c");
+        match &src.include_results[0].outcome {
+            IncludeOutcome::EvaluationFailure { message, .. } => {
+                assert!(message.contains("outside the requested path filter"));
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        let written = apply(&summary).unwrap();
+        assert_eq!(written, 0);
     }
 
     #[test]

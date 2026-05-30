@@ -88,6 +88,10 @@ inclean apply               # 就地写入改写
 当设置了 `include_directories`，inclean 会继续探测这些字面目录，并应用
 `include_on_unresolved`（`error` / `skip` / `allow`）和
 `include_on_ambiguous`（`error` / `skip` / `first`）。
+对于 `#include MACRO`，inclean 会静态展开简单的 header-like 宏定义，
+例如 `#define MACRO "foo.h"` 或 `#define MACRO <foo.h>`。这类 include
+的路径改写会落到宏定义值上，trailing comment 仍保留在 `#include MACRO`
+使用点。
 如果一条规则只想参与某一侧的改写，可以把整个字段写成
 `action = "skip"` 或 `trailing_comment = "skip"`，让这一侧不参与
 冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。没有

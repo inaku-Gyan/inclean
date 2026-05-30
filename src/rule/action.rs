@@ -274,7 +274,7 @@ pub fn evaluate_with_resolution(
 
 fn macro_form_error(rule: &CompiledRule<'_>, include: &Include, file_relpath: &Path) -> String {
     format!(
-        "macro-form includes are not supported in v1; rule `{}` matched a macro `#include {}` at {}:{}",
+        "macro-form include was not statically expanded; rule `{}` matched `#include {}` at {}:{}",
         rule.rule.name,
         include.content,
         file_relpath.display(),

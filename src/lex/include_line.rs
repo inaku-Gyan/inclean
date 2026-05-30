@@ -490,6 +490,9 @@ impl<'a> Lexer<'a> {
             if b == b'\n' {
                 break;
             }
+            if b == b' ' || b == b'\t' || b == b'\r' {
+                break;
+            }
             // A trailing comment terminates the argument.
             if b == b'/'
                 && (self.src.get(i + 1) == Some(&b'/') || self.src.get(i + 1) == Some(&b'*'))
@@ -757,6 +760,16 @@ mod tests {
         assert_eq!(incs.len(), 1);
         assert_eq!(incs[0].form, IncludeForm::Macro);
         assert_eq!(incs[0].content, "MY_HEADER");
+    }
+
+    #[test]
+    fn macro_form_argument_excludes_trailing_gap_before_comment() {
+        let src = "#include MY_HEADER  // note\n";
+        let incs = scan(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].form, IncludeForm::Macro);
+        assert_eq!(&src[incs[0].argument_range.clone()], "MY_HEADER");
+        assert_eq!(&src[incs[0].trailing_range.clone()], "  // note");
     }
 
     #[test]

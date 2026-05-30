@@ -35,7 +35,8 @@
 #   2. file_suffixes — literal extensions like ".c" (default covers C+C++);
 #                     skipped when file_paths is an exact literal path
 #   3. include_forms — set of "quote" / "angle" / "macro" (default ["quote"])
-#                     "macro" matches but action evaluation always errors
+#                     simple #include MACRO uses are statically expanded when
+#                     their #define value is a unique "foo.h" / <foo.h>
 #   4. include_match — globset patterns over the stripped include argument
 #                     (default ["**"]; see GLOB MATCHING above)
 #
