@@ -117,6 +117,83 @@ impl<T: JsonSchema> JsonSchema for MaybeCopiedObject<T> {
     }
 }
 
+/// Sentinel emitted when a user wrote a top-level object field as either
+/// `"${copied}"` or `"skip"`. `skip` means the rule still matches, but this
+/// field contributes no candidate to its own conflict dimension.
+#[derive(Debug, Clone, Copy)]
+pub enum MaybeCopiedOrSkipObject<T> {
+    Copied,
+    Skip,
+    Object(T),
+}
+
+impl<'de, T> Deserialize<'de> for MaybeCopiedOrSkipObject<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use std::fmt;
+        struct V<T>(PhantomData<T>);
+        impl<'de, T> de::Visitor<'de> for V<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = MaybeCopiedOrSkipObject<T>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("either the string \"${copied}\", the string \"skip\", or an object")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v {
+                    "${copied}" => Ok(MaybeCopiedOrSkipObject::Copied),
+                    "skip" => Ok(MaybeCopiedOrSkipObject::Skip),
+                    _ => Err(E::custom(format!(
+                        "expected \"${{copied}}\", \"skip\", or an object, got string {v:?}"
+                    ))),
+                }
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                self.visit_str(&v)
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let t = T::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(MaybeCopiedOrSkipObject::Object(t))
+            }
+        }
+        de.deserialize_any(V(PhantomData))
+    }
+}
+
+impl<T: JsonSchema> JsonSchema for MaybeCopiedOrSkipObject<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        T::schema_name()
+    }
+    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let object_schema: serde_json::Value = T::json_schema(g).into();
+        let copied_schema = serde_json::json!({
+            "type": "string",
+            "const": "${copied}",
+            "description": "Copy this whole object from the resolved parent rule named by copied_from."
+        });
+        let skip_schema = serde_json::json!({
+            "type": "string",
+            "const": "skip",
+            "description": "Do not contribute this field to conflict detection for this rule."
+        });
+        let mut schema = serde_json::Map::new();
+        schema.insert(
+            "anyOf".into(),
+            serde_json::json!([object_schema, copied_schema, skip_schema]),
+        );
+        schema.into()
+    }
+}
+
 /// A single `[[rule]]` entry. Raw rules deserialize exactly as written;
 /// inheritance from `copied_from`, `@std.*` constants, `${copied}`, and
 /// effective defaults are resolved later.
@@ -193,13 +270,15 @@ pub struct RawRule {
     /// Action to run when all match layers pass. If neither this rule nor any
     /// copied ancestor sets an action, the effective action is
     /// `{ type = "keep", output_form = "preserve" }`. The whole field can also
-    /// be the string `"${copied}"` to reuse the parent's resolved action.
-    pub action: Option<MaybeCopiedObject<RawAction>>,
+    /// be the string `"${copied}"` to reuse the parent's resolved action, or
+    /// `"skip"` to avoid contributing an action candidate.
+    pub action: Option<MaybeCopiedOrSkipObject<RawAction>>,
 
     /// Optional trailing-comment transform and/or append rule for
     /// `resolve`/`replace`/`keep` actions. The whole field can also be the
-    /// string `"${copied}"` to reuse the parent's resolved value verbatim.
-    pub trailing_comment: Option<MaybeCopiedObject<RawTrailingComment>>,
+    /// string `"${copied}"` to reuse the parent's resolved value verbatim,
+    /// or `"skip"` to avoid contributing a trailing-comment candidate.
+    pub trailing_comment: Option<MaybeCopiedOrSkipObject<RawTrailingComment>>,
 }
 
 /// Suppression markers: regex patterns matched line-by-line. `line` suppresses
@@ -529,8 +608,9 @@ mod tests {
     /// Unwrap `MaybeCopiedObject::Object(...)`; panics on the sentinel form.
     fn raw_action_of(rule: &RawRule) -> &RawAction {
         match rule.action.as_ref().expect("action missing") {
-            MaybeCopiedObject::Object(a) => a,
-            MaybeCopiedObject::Copied => panic!("test expects an Object action, got Copied"),
+            MaybeCopiedOrSkipObject::Object(a) => a,
+            MaybeCopiedOrSkipObject::Copied => panic!("test expects an Object action, got Copied"),
+            MaybeCopiedOrSkipObject::Skip => panic!("test expects an Object action, got Skip"),
         }
     }
     fn raw_suppression_of(rule: &RawRule) -> &RawSuppression {
@@ -549,8 +629,11 @@ mod tests {
             .as_ref()
             .expect("trailing_comment missing")
         {
-            MaybeCopiedObject::Object(t) => t,
-            MaybeCopiedObject::Copied => panic!("test expects an Object trailing, got Copied"),
+            MaybeCopiedOrSkipObject::Object(t) => t,
+            MaybeCopiedOrSkipObject::Copied => {
+                panic!("test expects an Object trailing, got Copied")
+            }
+            MaybeCopiedOrSkipObject::Skip => panic!("test expects an Object trailing, got Skip"),
         }
     }
 
@@ -777,7 +860,7 @@ mod tests {
         .raw;
         assert!(matches!(
             cfg.rules[0].action.as_ref().unwrap(),
-            MaybeCopiedObject::Copied
+            MaybeCopiedOrSkipObject::Copied
         ));
     }
 
@@ -799,12 +882,33 @@ mod tests {
         ));
         assert!(matches!(
             cfg.rules[0].trailing_comment.as_ref().unwrap(),
-            MaybeCopiedObject::Copied
+            MaybeCopiedOrSkipObject::Copied
         ));
     }
 
     #[test]
-    fn non_copied_string_for_object_field_is_rejected() {
+    fn skip_sentinel_for_action_and_trailing_comment() {
+        let cfg = load_rules(
+            r#"
+            [[rule]]
+            name = "c"
+            action = "skip"
+            trailing_comment = "skip"
+            "#,
+        )
+        .raw;
+        assert!(matches!(
+            cfg.rules[0].action.as_ref().unwrap(),
+            MaybeCopiedOrSkipObject::Skip
+        ));
+        assert!(matches!(
+            cfg.rules[0].trailing_comment.as_ref().unwrap(),
+            MaybeCopiedOrSkipObject::Skip
+        ));
+    }
+
+    #[test]
+    fn non_copied_or_skip_string_for_object_field_is_rejected() {
         let err = parse(
             r#"
             [[rule]]
@@ -815,6 +919,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("${copied}"));
+        assert!(format!("{err:#}").contains("skip"));
     }
 
     #[test]

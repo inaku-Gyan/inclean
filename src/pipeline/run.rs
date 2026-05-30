@@ -6,13 +6,14 @@
 //!   No source files are opened.
 //! * [`CheckMode::Run`] — walk source files, lex includes, run each rule's
 //!   text match layers plus optional include-directory resolution, evaluate
-//!   every matched rule's action, then decide per-include conflict-by-final-text.
+//!   every matched rule's action and trailing-comment policy, then decide
+//!   per-include conflicts.
 //!
 //! Conflict detection (the v0.3 model): for an include matched by N
-//! rules, evaluate the action against each. If all rules produce
-//! identical `Outcome::Rewrite { new_text }` (or all produce `Keep`,
-//! which is itself identical), there is no conflict. Otherwise the
-//! include is a [`Conflict`].
+//! rules, compare action candidates separately from trailing-comment
+//! candidates. Field-level `"skip"` contributes no candidate for that
+//! dimension; `keep` still contributes its kept text. If either dimension
+//! disagrees, the include is a [`Conflict`].
 //!
 //! Output ordering: candidate source files are pre-sorted by relative
 //! path before the parallel work starts; rayon's `par_iter().collect()`
@@ -47,7 +48,7 @@ use crate::config::discover;
 use crate::config::schema::IncludeForm;
 use crate::lex::include_line::{self, Include};
 use crate::profile::CONFIG_FILENAME;
-use crate::rule::action::{self, Outcome};
+use crate::rule::action::{self, ActionOutcome, TrailingOutcome};
 use crate::rule::engine::{self, CompiledRule};
 
 /// Which slice of the pipeline to run.
@@ -648,22 +649,22 @@ fn process_file(
             continue;
         }
 
-        // Evaluate every matched rule's action; collect outcomes.
-        let mut outcomes: Vec<(String, Outcome)> = matched
+        // Evaluate every matched rule; action and trailing-comment policy
+        // contribute independent conflict candidates.
+        let mut evaluations: Vec<RuleEvaluation> = matched
             .failures
             .iter()
-            .map(|failure| {
-                (
-                    failure.rule.rule.name.clone(),
-                    Outcome::EvaluationFailure {
-                        message: failure.message.clone(),
-                    },
-                )
+            .map(|failure| RuleEvaluation {
+                rule_name: failure.rule.rule.name.clone(),
+                action: ActionOutcome::EvaluationFailure {
+                    message: failure.message.clone(),
+                },
+                trailing: TrailingOutcome::Skip,
             })
             .collect();
 
-        outcomes.extend(matched.matched.iter().map(|cm| {
-            let outcome = action::evaluate_with_resolution(
+        evaluations.extend(matched.matched.iter().map(|cm| {
+            let action = action::evaluate_action_with_resolution(
                 cm.rule,
                 &include,
                 original,
@@ -671,10 +672,15 @@ fn process_file(
                 project_root,
                 cm.resolved_header.as_deref(),
             );
-            (cm.rule.rule.name.clone(), outcome)
+            let trailing = action::evaluate_trailing(cm.rule, &include, original, relpath);
+            RuleEvaluation {
+                rule_name: cm.rule.rule.name.clone(),
+                action,
+                trailing,
+            }
         }));
 
-        let outcome = collapse_outcomes(&include, original, outcomes);
+        let outcome = collapse_outcomes(&include, original, evaluations);
 
         // Push edit when an unambiguous Rewrite came out.
         if let IncludeOutcome::Rewritten {
@@ -702,96 +708,239 @@ fn process_file(
     }
 }
 
-/// Conflict-by-final-text rules:
+struct RuleEvaluation {
+    rule_name: String,
+    action: ActionOutcome,
+    trailing: TrailingOutcome,
+}
+
+struct CollapsedAction {
+    edit_range: Range<usize>,
+    new_text: String,
+    rules: Vec<String>,
+}
+
+struct CollapsedTrailing {
+    new_text: String,
+    rules: Vec<String>,
+}
+
+/// Conflict rules:
 ///
-/// 1. Any `Outcome::Error` (action.error) → `IncludeOutcome::Error`.
-/// 2. Any `Outcome::TrailingCommentError` → `IncludeOutcome::TrailingCommentError`.
-/// 3. Any `Outcome::EvaluationFailure` → propagate.
-/// 4. All rules produced `Keep` → `IncludeOutcome::Keep`.
-/// 5. All rules produced `Rewrite` with identical `(edit_range, new_text)`
-///    → `IncludeOutcome::Rewritten`.
-/// 6. Otherwise → `IncludeOutcome::Conflict { rule_outputs, differing_aspects }`.
+/// 1. Any `action.error` → `IncludeOutcome::Error`.
+/// 2. Any `trailing_comment.transform.action.error` →
+///    `IncludeOutcome::TrailingCommentError`.
+/// 3. Any action evaluation failure → propagate.
+/// 4. Compare action candidates only among non-`skip` action fields.
+/// 5. Compare trailing-comment candidates only among non-`skip`
+///    trailing_comment fields.
+/// 6. Compose the agreed action and trailing-comment pieces into one edit.
 fn collapse_outcomes(
     include: &Include,
     source: &str,
-    outcomes: Vec<(String, Outcome)>,
+    evaluations: Vec<RuleEvaluation>,
 ) -> IncludeOutcome {
-    for (rule_name, o) in &outcomes {
-        if let Outcome::Error { message } = o {
+    for ev in &evaluations {
+        if let ActionOutcome::Error { message } = &ev.action {
             return IncludeOutcome::Error {
-                rule: rule_name.clone(),
+                rule: ev.rule_name.clone(),
                 message: message.clone(),
             };
         }
     }
-    for (rule_name, o) in &outcomes {
-        if let Outcome::TrailingCommentError { message } = o {
+    for ev in &evaluations {
+        if let TrailingOutcome::Error { message } = &ev.trailing {
             return IncludeOutcome::TrailingCommentError {
-                rule: rule_name.clone(),
+                rule: ev.rule_name.clone(),
                 message: message.clone(),
             };
         }
     }
-    for (rule_name, o) in &outcomes {
-        if let Outcome::EvaluationFailure { message } = o {
+    for ev in &evaluations {
+        if let ActionOutcome::EvaluationFailure { message } = &ev.action {
             return IncludeOutcome::EvaluationFailure {
-                rule: rule_name.clone(),
+                rule: ev.rule_name.clone(),
                 message: message.clone(),
             };
         }
     }
 
-    // Compute "final line" text for each rule. For Keep: take the
-    // existing argument + trailing bytes. For Rewrite: take new_text.
-    let mut finals: Vec<(String, Range<usize>, String)> = Vec::new();
-    for (rule_name, o) in outcomes {
-        match o {
-            Outcome::Keep => {
-                let r = argument_and_trailing_range(include);
-                finals.push((rule_name, r.clone(), source[r].to_string()));
-            }
-            Outcome::Rewrite {
+    let mut action_candidates: Vec<(String, Range<usize>, String)> = Vec::new();
+    let mut trailing_candidates: Vec<(String, String)> = Vec::new();
+    for ev in &evaluations {
+        match &ev.action {
+            ActionOutcome::Apply {
                 edit_range,
                 new_text,
             } => {
-                finals.push((rule_name, edit_range, new_text));
+                action_candidates.push((ev.rule_name.clone(), edit_range.clone(), new_text.clone()))
             }
-            Outcome::Error { .. }
-            | Outcome::TrailingCommentError { .. }
-            | Outcome::EvaluationFailure { .. } => unreachable!(),
+            ActionOutcome::Skip
+            | ActionOutcome::Error { .. }
+            | ActionOutcome::EvaluationFailure { .. } => {}
+        }
+        match &ev.trailing {
+            TrailingOutcome::Apply { new_text } => {
+                trailing_candidates.push((ev.rule_name.clone(), new_text.clone()));
+            }
+            TrailingOutcome::Skip | TrailingOutcome::Error { .. } => {}
         }
     }
 
-    // All identical (edit_range, new_text)?
-    let (first_range, first_text) = (finals[0].1.clone(), finals[0].2.clone());
-    let all_same = finals
+    let action = match collapse_action_candidates(include, source, action_candidates) {
+        Ok(action) => action,
+        Err(conflict) => return conflict,
+    };
+    let trailing = match collapse_trailing_candidates(include, source, &action, trailing_candidates)
+    {
+        Ok(trailing) => trailing,
+        Err(conflict) => return conflict,
+    };
+
+    let original_trailing = &source[include.trailing_range.clone()];
+    if action.edit_range != include.argument_range {
+        if !trailing.rules.is_empty() && trailing.new_text != original_trailing {
+            let mut rule_outputs: Vec<(String, String)> = action
+                .rules
+                .iter()
+                .map(|rule| (rule.clone(), action.new_text.clone()))
+                .collect();
+            rule_outputs.extend(
+                trailing
+                    .rules
+                    .iter()
+                    .map(|rule| (rule.clone(), trailing.new_text.clone())),
+            );
+            return IncludeOutcome::Conflict {
+                rule_outputs,
+                differing_aspects: vec![DiffAspect::TrailingComment],
+            };
+        }
+        return rewritten_or_keep(source, action.edit_range, action.new_text, action.rules);
+    }
+
+    let edit_range = argument_and_trailing_range(include);
+    let new_text = format!("{}{}", action.new_text, trailing.new_text);
+    let rules = merge_rules(action.rules, trailing.rules);
+    rewritten_or_keep(source, edit_range, new_text, rules)
+}
+
+fn collapse_action_candidates(
+    include: &Include,
+    source: &str,
+    candidates: Vec<(String, Range<usize>, String)>,
+) -> std::result::Result<CollapsedAction, IncludeOutcome> {
+    if candidates.is_empty() {
+        return Ok(CollapsedAction {
+            edit_range: include.argument_range.clone(),
+            new_text: source[include.argument_range.clone()].to_string(),
+            rules: Vec::new(),
+        });
+    }
+    let (first_range, first_text) = (candidates[0].1.clone(), candidates[0].2.clone());
+    let all_same = candidates
         .iter()
         .all(|(_, r, t)| *r == first_range && *t == first_text);
     if all_same {
-        let original_text = &source[first_range.clone()];
-        if first_text == original_text {
-            IncludeOutcome::Keep {
-                rules: finals.into_iter().map(|(n, _, _)| n).collect(),
-            }
-        } else {
-            IncludeOutcome::Rewritten {
-                rules: finals.into_iter().map(|(n, _, _)| n).collect(),
-                edit_range: first_range,
-                new_text: first_text,
-            }
-        }
+        return Ok(CollapsedAction {
+            edit_range: first_range,
+            new_text: first_text,
+            rules: candidates.into_iter().map(|(n, _, _)| n).collect(),
+        });
+    }
+
+    let rule_outputs: Vec<(String, String)> = candidates
+        .into_iter()
+        .map(|(name, range, text)| {
+            let display = action_candidate_display(include, source, &range, &text);
+            (name, display)
+        })
+        .collect();
+    let differing_aspects = compute_differing_aspects(
+        &rule_outputs
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>(),
+    );
+    Err(IncludeOutcome::Conflict {
+        rule_outputs,
+        differing_aspects,
+    })
+}
+
+fn collapse_trailing_candidates(
+    include: &Include,
+    source: &str,
+    action: &CollapsedAction,
+    candidates: Vec<(String, String)>,
+) -> std::result::Result<CollapsedTrailing, IncludeOutcome> {
+    if candidates.is_empty() {
+        return Ok(CollapsedTrailing {
+            new_text: source[include.trailing_range.clone()].to_string(),
+            rules: Vec::new(),
+        });
+    }
+    let first_text = candidates[0].1.clone();
+    if candidates.iter().all(|(_, t)| *t == first_text) {
+        return Ok(CollapsedTrailing {
+            new_text: first_text,
+            rules: candidates.into_iter().map(|(n, _)| n).collect(),
+        });
+    }
+
+    let action_arg = if action.edit_range == include.argument_range {
+        action.new_text.as_str()
     } else {
-        let differing_aspects = compute_differing_aspects(
-            &finals
-                .iter()
-                .map(|(_, _, t)| t.as_str())
-                .collect::<Vec<_>>(),
-        );
-        IncludeOutcome::Conflict {
-            rule_outputs: finals.into_iter().map(|(n, _, t)| (n, t)).collect(),
-            differing_aspects,
+        &source[include.argument_range.clone()]
+    };
+    let rule_outputs: Vec<(String, String)> = candidates
+        .into_iter()
+        .map(|(name, trailing)| (name, format!("{action_arg}{trailing}")))
+        .collect();
+    Err(IncludeOutcome::Conflict {
+        rule_outputs,
+        differing_aspects: vec![DiffAspect::TrailingComment],
+    })
+}
+
+fn action_candidate_display(
+    include: &Include,
+    source: &str,
+    range: &Range<usize>,
+    text: &str,
+) -> String {
+    if *range == include.argument_range {
+        format!("{text}{}", &source[include.trailing_range.clone()])
+    } else {
+        text.to_string()
+    }
+}
+
+fn rewritten_or_keep(
+    source: &str,
+    edit_range: Range<usize>,
+    new_text: String,
+    rules: Vec<String>,
+) -> IncludeOutcome {
+    if new_text == source[edit_range.clone()] {
+        IncludeOutcome::Keep { rules }
+    } else {
+        IncludeOutcome::Rewritten {
+            rules,
+            edit_range,
+            new_text,
         }
     }
+}
+
+fn merge_rules(left: Vec<String>, right: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(left.len() + right.len());
+    for rule in left.into_iter().chain(right) {
+        if !out.contains(&rule) {
+            out.push(rule);
+        }
+    }
+    out
 }
 
 /// Parse each rule's final-line text and report which sub-parts diverge.
@@ -1403,6 +1552,63 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn action_and_trailing_comment_skip_compose_without_conflict() {
+        let rules = r#"
+            [[rule]]
+            name = "path"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "lib/${original}" }
+            trailing_comment = "skip"
+
+            [[rule]]
+            name = "comment"
+            file_paths = ["src/**/*"]
+            action = "skip"
+            trailing_comment = { append_if_absent = "  // IWYU: export" }
+        "#;
+        let proj = TmpProject::create_with_rules(rules);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(summary.conflicts.is_empty());
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten {
+                rules, new_text, ..
+            } => {
+                assert_eq!(rules, &vec!["path".to_string(), "comment".to_string()]);
+                assert_eq!(new_text, "\"lib/foo.h\"  // IWYU: export");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_conflict_is_checked_separately() {
+        let rules = r#"
+            [[rule]]
+            name = "a"
+            file_paths = ["src/**/*"]
+            action = { type = "keep" }
+            trailing_comment = { append_if_absent = "  // A" }
+
+            [[rule]]
+            name = "b"
+            file_paths = ["src/**/*"]
+            action = { type = "keep" }
+            trailing_comment = { append_if_absent = "  // B" }
+        "#;
+        let proj = TmpProject::create_with_rules(rules);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert_eq!(summary.conflicts.len(), 1);
+        assert_eq!(
+            summary.conflicts[0].differing_aspects,
+            vec![DiffAspect::TrailingComment]
+        );
     }
 
     #[test]

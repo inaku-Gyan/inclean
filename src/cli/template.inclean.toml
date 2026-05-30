@@ -54,7 +54,7 @@
 #   { block_start, block_end, line }  — regexes over each line's comment
 #                                       body (delimiters stripped + trim)
 #
-# Six action types:
+# Six action object types, plus the whole-field value `action = "skip"`:
 #   { type = "resolve", relative_to = "...", output_form? = "..." }
 #       Rewrite using the header selected by include_directories, relative
 #       to `relative_to`. Use ${current_file} to mean "the directory of
@@ -69,8 +69,12 @@
 #       Wrap the include line in a comment.
 #   { type = "error", message = "..." }
 #       Surface a configured error and exit 2.
+#   "skip"
+#       This rule still matches, but contributes no action candidate. Use it
+#       for rules that should only transform trailing comments.
 #
-# trailing_comment (optional):
+# trailing_comment (optional), or the whole-field value
+# `trailing_comment = "skip"`:
 #   { transform? = { match_styles?, content_regex?, action },
 #     append_if_absent? = "..." }
 # transform matches an existing same-line // or /* */ trailing comment.
@@ -80,6 +84,12 @@
 # append_if_absent writes the literal text the user provides (delimiters
 # and leading whitespace included) when the action's outcome leaves no
 # trailing comment. It must stay on one line.
+# "skip" makes this rule contribute no trailing-comment candidate. Use it
+# for rules that should only rewrite include paths/forms.
+#
+# Conflict detection compares action candidates separately from
+# trailing-comment candidates. `keep` still participates in that check;
+# `skip` does not.
 #
 # Copy via `copied_from = "name"`:
 # - The parent rule must be declared earlier. Chains are allowed because
@@ -94,6 +104,8 @@
 # - Use the whole-field form `field = "${copied}"` (as a string) to inherit
 #   the parent's entire object verbatim. Valid only for `action`,
 #   `suppression_comments_regex`, and `trailing_comment`.
+# - Use `action = "skip"` or `trailing_comment = "skip"` to leave that
+#   side out of conflict detection for the child rule.
 #
 # Default action when neither child nor any ancestor specifies one:
 #   { type = "keep", output_form = "preserve" }
@@ -149,6 +161,7 @@ name = "base"
 # include_on_unresolved = "error"
 # include_on_ambiguous = "error"
 # action = { type = "resolve", relative_to = "include", output_form = "quote" }
+# trailing_comment = "skip"
 
 
 # ----------------------------------------------------------------------------
@@ -197,8 +210,9 @@ name = "base"
 # name = "iwyu-pragma"
 # copied_from = "base"
 # include_match = ["foo.h", "bar.h"]
+# action = "skip"
 # trailing_comment = {
-#     append_if_absent = "  // IWYU pragma: export",
+#     append_if_absent = "  // IWYU: export",
 # }
 
 # [[rule]]

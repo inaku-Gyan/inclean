@@ -144,7 +144,7 @@
           ]
         },
         "action": {
-          "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is\n`{ type = \"keep\", output_form = \"preserve\" }`. The whole field can also\nbe the string `\"${copied}\"` to reuse the parent's resolved action.",
+          "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is\n`{ type = \"keep\", output_form = \"preserve\" }`. The whole field can also\nbe the string `\"${copied}\"` to reuse the parent's resolved action, or\n`\"skip\"` to avoid contributing an action candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawAction"
@@ -155,7 +155,7 @@
           ]
         },
         "trailing_comment": {
-          "description": "Optional trailing-comment transform and/or append rule for\n`resolve`/`replace`/`keep` actions. The whole field can also be the\nstring `\"${copied}\"` to reuse the parent's resolved value verbatim.",
+          "description": "Optional trailing-comment transform and/or append rule for\n`resolve`/`replace`/`keep` actions. The whole field can also be the\nstring `\"${copied}\"` to reuse the parent's resolved value verbatim,\nor `\"skip\"` to avoid contributing a trailing-comment candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawTrailingComment"
@@ -481,6 +481,11 @@
           "description": "Copy this whole object from the resolved parent rule named by copied_from.",
           "type": "string",
           "const": "${copied}"
+        },
+        {
+          "description": "Do not contribute this field to conflict detection for this rule.",
+          "type": "string",
+          "const": "skip"
         }
       ]
     },
@@ -550,6 +555,11 @@
           "description": "Copy this whole object from the resolved parent rule named by copied_from.",
           "type": "string",
           "const": "${copied}"
+        },
+        {
+          "description": "Do not contribute this field to conflict detection for this rule.",
+          "type": "string",
+          "const": "skip"
         }
       ]
     },

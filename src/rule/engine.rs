@@ -71,6 +71,7 @@ impl<'a> CompiledRule<'a> {
 
         let suppression = compile_suppression(&rule.suppression, &rule.name)?;
         let trailing_content_regex = match &rule.trailing_comment.transform {
+            _ if rule.trailing_comment.skip => None,
             Some(t) => Some(Regex::new(&t.content_regex).with_context(|| {
                 format!(
                     "rule `{}`: trailing_comment.transform.content_regex compile",

@@ -34,8 +34,8 @@ use anyhow::{Context, Result, bail};
 use super::constants;
 use super::schema::{
     CommentStyle, IncludeForm, IncludeOnAmbiguous, IncludeOnUnresolved, LoadedConfig,
-    MaybeCopiedObject, OutputCommentStyle, OutputForm, RawAction, RawRule, RawSuppression,
-    RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
+    MaybeCopiedObject, MaybeCopiedOrSkipObject, OutputCommentStyle, OutputForm, RawAction, RawRule,
+    RawSuppression, RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
 };
 
 const COPIED_TOKEN: &str = "${copied}";
@@ -77,6 +77,7 @@ pub struct ResolvedSuppression {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedAction {
+    Skip,
     Resolve {
         relative_to: String,
         output_form: OutputForm,
@@ -107,6 +108,7 @@ pub enum ResolvedAction {
 
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedTrailingComment {
+    pub skip: bool,
     pub transform: Option<ResolvedTrailingTransform>,
     pub append_if_absent: Option<String>,
 }
@@ -308,7 +310,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     };
 
     let action = match raw.action.as_ref() {
-        Some(MaybeCopiedObject::Copied) => {
+        Some(MaybeCopiedOrSkipObject::Copied) => {
             if !has_parent {
                 bail!("{ctx}: `action = \"${{copied}}\"` requires `copied_from`");
             }
@@ -316,7 +318,8 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
                 .map(|p| p.action.clone())
                 .unwrap_or_else(default_action)
         }
-        Some(MaybeCopiedObject::Object(a)) => {
+        Some(MaybeCopiedOrSkipObject::Skip) => ResolvedAction::Skip,
+        Some(MaybeCopiedOrSkipObject::Object(a)) => {
             build_action(a, parent.map(|p| &p.action), has_parent, &ctx)?
         }
         None => parent
@@ -331,7 +334,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     }
 
     let trailing_comment = match raw.trailing_comment.as_ref() {
-        Some(MaybeCopiedObject::Copied) => {
+        Some(MaybeCopiedOrSkipObject::Copied) => {
             if !has_parent {
                 bail!("{ctx}: `trailing_comment = \"${{copied}}\"` requires `copied_from`");
             }
@@ -339,7 +342,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
                 .map(|p| p.trailing_comment.clone())
                 .unwrap_or_default()
         }
-        Some(MaybeCopiedObject::Object(t)) => {
+        Some(MaybeCopiedOrSkipObject::Skip) => ResolvedTrailingComment {
+            skip: true,
+            ..ResolvedTrailingComment::default()
+        },
+        Some(MaybeCopiedOrSkipObject::Object(t)) => {
             build_trailing(t, parent.map(|p| &p.trailing_comment), has_parent, &ctx)?
         }
         None => parent
@@ -523,6 +530,7 @@ fn build_action(
         | ResolvedAction::Remove { message, .. }
         | ResolvedAction::CommentOut { message, .. }
         | ResolvedAction::Error { message } => message.clone(),
+        ResolvedAction::Skip => String::new(),
     });
 
     match raw {
@@ -659,6 +667,7 @@ fn build_trailing(
         );
     }
     Ok(ResolvedTrailingComment {
+        skip: false,
         transform,
         append_if_absent,
     })
@@ -1181,6 +1190,24 @@ mod tests {
             ResolvedAction::Error { message } => assert_eq!(message, "deprecated"),
             other => panic!("expected inherited Error action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn skip_sentinel_resolves_for_action_and_trailing_comment() {
+        let cfg = load_rules(
+            r#"
+            [[rule]]
+            name = "r"
+            action = "skip"
+            trailing_comment = "skip"
+            "#,
+        );
+        let resolved = resolve(&[cfg]).unwrap();
+        let r = get(&resolved, "r");
+        assert!(matches!(r.action, ResolvedAction::Skip));
+        assert!(r.trailing_comment.skip);
+        assert!(r.trailing_comment.transform.is_none());
+        assert!(r.trailing_comment.append_if_absent.is_none());
     }
 
     #[test]

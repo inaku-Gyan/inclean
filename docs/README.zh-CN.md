@@ -88,6 +88,9 @@ inclean apply               # 就地写入改写
 当设置了 `include_directories`，inclean 会继续探测这些字面目录，并应用
 `include_on_unresolved`（`error` / `skip` / `allow`）和
 `include_on_ambiguous`（`error` / `skip` / `first`）。
+如果一条规则只想参与某一侧的改写，可以把整个字段写成
+`action = "skip"` 或 `trailing_comment = "skip"`，让这一侧不参与
+冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。
 
 ### 示例
 
@@ -97,8 +100,8 @@ inclean apply               # 就地写入改写
 ```toml
 [project]
 root = "."
-version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.2"
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
 
 [[rule]]
 name = "lib-prefix"

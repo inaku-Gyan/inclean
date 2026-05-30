@@ -98,6 +98,10 @@ for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
 When `include_directories` is set, inclean then probes those literal
 directories and applies `include_on_unresolved` (`error` / `skip` /
 `allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).
+For rules that are meant to affect only one side of a rewrite, the whole
+field values `action = "skip"` and `trailing_comment = "skip"` make that
+side opt out of conflict detection. `keep` still participates in conflict
+checks; `skip` does not.
 
 ### Example
 
@@ -107,8 +111,8 @@ A simple `replace`-action config that rewrites `#include "foo.h"` to
 ```toml
 [project]
 root = "."
-version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.2"
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
 
 [[rule]]
 name = "lib-prefix"
