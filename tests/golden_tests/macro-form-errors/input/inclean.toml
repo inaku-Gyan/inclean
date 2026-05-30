@@ -3,8 +3,8 @@ root = "."
 version = "0.3.0-alpha.3"
 min_inclean_version = "0.3.0-alpha.3"
 
-# v1: matching a macro-form #include forces an Error regardless of the
-# declared action. The file is skipped (no partial writes).
+# Undefined/unsupported macro-form includes still force an Error when a
+# non-skip action matches. The file is skipped (no partial writes).
 
 [[rule]]
 name = "rewrite-quote"
