@@ -98,7 +98,7 @@ inclean apply               # 就地写入改写
 [project]
 root = "."
 version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.1"
+min_inclean_version = "0.3.0-alpha.2"
 
 [[rule]]
 name = "lib-prefix"

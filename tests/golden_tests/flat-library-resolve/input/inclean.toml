@@ -1,7 +1,7 @@
 [project]
 root = "."
-version = "0.3.0-alpha.1"
-min_inclean_version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
+min_inclean_version = "0.3.0-alpha.2"
 
 # A fake "flat" library whose internal sources include headers by bare
 # basename (#include "foo.h") even though those headers live at
