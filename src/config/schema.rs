@@ -238,8 +238,10 @@ pub struct RawRule {
 
     // ---- Layer 3: include forms ------------------------------------------
     /// Include delimiter forms this rule matches. Effective default for a rule
-    /// with no parent is `["quote"]`. `macro` can match `#include FOO`, but
-    /// evaluating any action against a macro include is currently an error.
+    /// with no parent is `["quote"]`. Header-like macro includes are
+    /// statically expanded when a unique simple `#define FOO "bar.h"` /
+    /// `#define FOO <bar.h>` is found; otherwise `macro` can match the raw
+    /// `#include FOO` token.
     pub include_forms: Option<Vec<IncludeForm>>,
 
     // ---- Layer 4: glob on the stripped include argument ------------------
@@ -304,9 +306,8 @@ pub enum IncludeForm {
     Quote,
     /// `#include <foo.h>`
     Angle,
-    /// `#include MY_HEADER` (macro-defined). Matching this form is allowed
-    /// in config; in v1 evaluation of an action against a macro #include
-    /// always produces an error.
+    /// `#include MY_HEADER` (macro-defined). Simple header-like macro
+    /// definitions are expanded before rule matching when possible.
     Macro,
 }
 

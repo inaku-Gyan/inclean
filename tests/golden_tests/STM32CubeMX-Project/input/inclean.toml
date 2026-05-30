@@ -110,6 +110,15 @@ include_match = ["**/cmsis_os2.h"]
 
 
 [[rule]]
+name = "export CMSIS device header macro"
+copied_from = "export inner headers"
+
+file_paths = ["Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/freertos_os2.h"]
+
+include_match = ["**/stm32f4xx.h"]
+
+
+[[rule]]
 name = "keep FreeRTOS.h"
 
 file_paths = ["**"]

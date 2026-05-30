@@ -98,6 +98,10 @@ for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
 When `include_directories` is set, inclean then probes those literal
 directories and applies `include_on_unresolved` (`error` / `skip` /
 `allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).
+For `#include MACRO`, inclean statically expands simple header-like
+definitions such as `#define MACRO "foo.h"` or `#define MACRO <foo.h>`.
+Path rewrites for these includes update the macro definition value, while
+trailing comments stay on the `#include MACRO` use site.
 For rules that are meant to affect only one side of a rewrite, the whole
 field values `action = "skip"` and `trailing_comment = "skip"` make that
 side opt out of conflict detection. `keep` still participates in conflict

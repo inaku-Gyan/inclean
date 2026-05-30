@@ -92,7 +92,7 @@
           ]
         },
         "include_forms": {
-          "description": "Include delimiter forms this rule matches. Effective default for a rule\nwith no parent is `[\"quote\"]`. `macro` can match `#include FOO`, but\nevaluating any action against a macro include is currently an error.",
+          "description": "Include delimiter forms this rule matches. Effective default for a rule\nwith no parent is `[\"quote\"]`. Header-like macro includes are\nstatically expanded when a unique simple `#define FOO \"bar.h\"` /\n`#define FOO <bar.h>` is found; otherwise `macro` can match the raw\n`#include FOO` token.",
           "type": [
             "array",
             "null"
@@ -222,7 +222,7 @@
           "const": "angle"
         },
         {
-          "description": "`#include MY_HEADER` (macro-defined). Matching this form is allowed\nin config; in v1 evaluation of an action against a macro #include\nalways produces an error.",
+          "description": "`#include MY_HEADER` (macro-defined). Simple header-like macro\ndefinitions are expanded before rule matching when possible.",
           "type": "string",
           "const": "macro"
         }

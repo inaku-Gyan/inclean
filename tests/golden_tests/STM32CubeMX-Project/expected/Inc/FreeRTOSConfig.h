@@ -5,7 +5,7 @@
   #include <stdint.h>
 #endif
 #ifndef CMSIS_device_header
-#define CMSIS_device_header "stm32f4xx.h"
+#define CMSIS_device_header "../../../../../Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"
 #endif /* CMSIS_device_header */
 
 #endif /* FREERTOS_CONFIG_H */
