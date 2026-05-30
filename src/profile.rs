@@ -27,6 +27,7 @@ mod tests {
 
         assert_eq!(cfg_version, cli_version);
         assert!(min_cfg_version <= cfg_version);
+        assert!(min_cfg_version <= min_cli_version);
         assert!(min_cli_version <= cli_version);
     }
 }
