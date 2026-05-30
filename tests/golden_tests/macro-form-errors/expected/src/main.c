@@ -1,2 +1,2 @@
-#include "alpha.h"
+#include "common/alpha.h"
 #include MY_HEADER

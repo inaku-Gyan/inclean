@@ -1,0 +1,1 @@
+/* vendor API fixture */

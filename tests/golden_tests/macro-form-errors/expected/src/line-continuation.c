@@ -1,4 +1,4 @@
-#include "alpha.h"
+#include "common/alpha.h"
 
 #define CONTINUED_HEADER \
     "stm32f4xx.h"
