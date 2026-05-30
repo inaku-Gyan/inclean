@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::CheckRunArgs;
+use super::{CheckRunArgs, report, style as cli_style};
 use crate::pipeline::run::{self, CheckMode, IncludeOutcome, Summary};
 
 /// `inclean check config` / `inclean config check`. Validates the
@@ -19,9 +19,7 @@ pub fn run_config(config: Option<PathBuf>) -> Result<u8> {
     let start_dir = start_dir_for(config.as_deref(), &[]);
     let summary = run::run(config.as_deref(), &start_dir, &[], None, CheckMode::Config)?;
     print_config_report(config.as_deref(), &start_dir)?;
-    for w in &summary.warnings {
-        eprintln!("{w}");
-    }
+    report::print_warnings(&summary.warnings);
     Ok(run::summary_exit_code(&summary))
 }
 
@@ -37,9 +35,7 @@ pub fn run_full(args: CheckRunArgs, filter: ReportFilter) -> Result<u8> {
         CheckMode::Run,
     )?;
     print_full_report(&summary, filter);
-    for w in &summary.warnings {
-        eprintln!("{w}");
-    }
+    report::print_warnings(&summary.warnings);
     Ok(run::summary_exit_code(&summary))
 }
 
@@ -81,20 +77,29 @@ fn print_config_report(
     let project_root = discover::resolve_project_root(&config_path, project)?;
     let resolved = copy::resolve(std::slice::from_ref(&cfg))?;
     println!(
-        "ok: loaded {}, project root = {} ({} rule(s))",
-        cfg.path.display(),
-        project_root.display(),
+        "{} loaded {}, project root = {} ({} rule(s))",
+        cli_style::success("ok:"),
+        cli_style::path(cfg.path.display()),
+        cli_style::path(project_root.display()),
         resolved.len()
     );
     for (name, rule) in resolved.iter() {
         let copied = rule
             .copied_from
             .as_deref()
-            .map(|p| format!(" copied_from `{p}`"))
+            .map(|p| {
+                format!(
+                    " {} `{}`",
+                    cli_style::label("copied_from"),
+                    cli_style::rule(p)
+                )
+            })
             .unwrap_or_default();
         println!(
-            "  rule:   `{name}`{copied}  ({} :: #{})",
-            rule.origin.config_path.display(),
+            "  {}   `{}`{copied}  ({} :: #{})",
+            cli_style::label("rule:"),
+            cli_style::rule(name),
+            cli_style::path(rule.origin.config_path.display()),
             rule.origin.index
         );
     }
@@ -118,7 +123,7 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
             continue;
         }
         interesting += 1;
-        println!("{}:", file.relpath.display());
+        println!("{}:", cli_style::path(file.relpath.display()));
         for r in &file.include_results {
             if !should_print(&r.outcome, filter) {
                 continue;
@@ -126,37 +131,59 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
             match &r.outcome {
                 IncludeOutcome::NoMatch => {}
                 IncludeOutcome::Keep { rules } => println!(
-                    "  L{:>4} keep    \"{}\"   (rules: {})",
-                    r.include.line,
-                    r.include.content,
-                    rules.join(", ")
+                    "  {} {}    \"{}\"   ({} {})",
+                    cli_style::line_tag(r.include.line),
+                    cli_style::keep("keep"),
+                    cli_style::include(&r.include.content),
+                    cli_style::label("rules:"),
+                    cli_style::rule(rules.join(", "))
                 ),
                 IncludeOutcome::Rewritten {
                     rules, new_text, ..
                 } => println!(
-                    "  L{:>4} rewrite \"{}\"  ->  {new_text}   (rules: {})",
-                    r.include.line,
-                    r.include.content,
-                    rules.join(", ")
+                    "  {} {} \"{}\"  {}  {}   ({} {})",
+                    cli_style::line_tag(r.include.line),
+                    cli_style::rewrite("rewrite"),
+                    cli_style::include(&r.include.content),
+                    cli_style::label("->"),
+                    cli_style::include(new_text),
+                    cli_style::label("rules:"),
+                    cli_style::rule(rules.join(", "))
                 ),
                 IncludeOutcome::Error { rule, message } => eprintln!(
-                    "  L{:>4} error   \"{}\"   (rule: {rule}): {message}",
-                    r.include.line, r.include.content
+                    "  {} {}   \"{}\"   ({} {}): {message}",
+                    cli_style::line_tag_err(r.include.line),
+                    cli_style::error("error"),
+                    cli_style::include_err(&r.include.content),
+                    cli_style::label_err("rule:"),
+                    cli_style::rule_err(rule)
                 ),
                 IncludeOutcome::EvaluationFailure { rule, message } => eprintln!(
-                    "  L{:>4} fail    \"{}\"   (rule: {rule}): {message}",
-                    r.include.line, r.include.content
+                    "  {} {}    \"{}\"   ({} {}): {message}",
+                    cli_style::line_tag_err(r.include.line),
+                    cli_style::failure("fail"),
+                    cli_style::include_err(&r.include.content),
+                    cli_style::label_err("rule:"),
+                    cli_style::rule_err(rule)
                 ),
                 IncludeOutcome::Conflict {
                     rule_outputs,
                     differing_aspects,
                 } => {
                     eprintln!(
-                        "  L{:>4} conflict \"{}\":",
-                        r.include.line, r.include.content
+                        "  {} {} \"{}\":",
+                        cli_style::line_tag_err(r.include.line),
+                        cli_style::conflict("conflict"),
+                        cli_style::include_err(&r.include.content)
                     );
                     for (rule, text) in rule_outputs {
-                        eprintln!("           rule `{rule}` -> {text}");
+                        eprintln!(
+                            "           {} `{}` {} {}",
+                            cli_style::label_err("rule"),
+                            cli_style::rule_err(rule),
+                            cli_style::label_err("->"),
+                            cli_style::include_err(text)
+                        );
                     }
                     if !differing_aspects.is_empty() {
                         let parts: Vec<&str> = differing_aspects
@@ -169,30 +196,34 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                                 }
                             })
                             .collect();
-                        eprintln!("           differs in: {}", parts.join(", "));
+                        eprintln!(
+                            "           {} {}",
+                            cli_style::label_err("differs in:"),
+                            cli_style::warning(parts.join(", "))
+                        );
                     }
                 }
                 IncludeOutcome::TrailingCommentError { rule, message } => eprintln!(
-                    "  L{:>4} trailing-comment error \"{}\"   (rule: {rule}): {message}",
-                    r.include.line, r.include.content
+                    "  {} {} \"{}\"   ({} {}): {message}",
+                    cli_style::line_tag_err(r.include.line),
+                    cli_style::error("trailing-comment error"),
+                    cli_style::include_err(&r.include.content),
+                    cli_style::label_err("rule:"),
+                    cli_style::rule_err(rule)
                 ),
             }
         }
     }
     if !summary.skipped.is_empty() {
         eprintln!();
-        eprintln!(
-            "warning: skipped {} file(s) that could not be parsed:",
-            summary.skipped.len()
-        );
-        for s in &summary.skipped {
-            eprintln!("  - {}: {}", s.relpath.display(), s.reason);
-        }
+        report::print_skipped_parse_failures(&summary.skipped);
     }
     if interesting == 0 && summary.conflicts.is_empty() {
         match filter {
-            ReportFilter::All => println!("no changes proposed"),
-            ReportFilter::UnfixableOnly => println!("no unfixable violations"),
+            ReportFilter::All => println!("{}", cli_style::success("no changes proposed")),
+            ReportFilter::UnfixableOnly => {
+                println!("{}", cli_style::success("no unfixable violations"))
+            }
         }
     }
 }

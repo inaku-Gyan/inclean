@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 
-use super::DiffArgs;
+use super::{DiffArgs, report, style as cli_style};
 use crate::pipeline::run::{self, CheckMode};
 
 pub fn run(args: DiffArgs) -> Result<u8> {
@@ -34,18 +34,20 @@ pub fn run(args: DiffArgs) -> Result<u8> {
         Some(path) => {
             std::fs::write(path, &body)
                 .with_context(|| format!("writing diff to {}", path.display()))?;
-            eprintln!("wrote diff to {}", path.display());
+            eprintln!(
+                "{} diff to {}",
+                cli_style::success_err("wrote"),
+                cli_style::path_err(path.display())
+            );
         }
         None => {
             print!("{body}");
         }
     }
-    for w in &summary.warnings {
-        eprintln!("{w}");
-    }
-    let report = run::render_unfixable_report(&summary);
-    if !report.is_empty() {
-        eprint!("{report}");
+    report::print_warnings(&summary.warnings);
+    let unfixable_report = report::render_unfixable_report(&summary);
+    if !unfixable_report.is_empty() {
+        eprint!("{unfixable_report}");
     }
     Ok(run::summary_exit_code(&summary))
 }
