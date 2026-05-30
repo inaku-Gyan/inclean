@@ -33,9 +33,9 @@ use anyhow::{Context, Result, bail};
 
 use super::constants;
 use super::schema::{
-    CommentStyle, IncludeForm, LoadedConfig, MaybeCopiedObject, OutputCommentStyle, OutputForm,
-    RawAction, RawRule, RawSuppression, RawTrailingAction, RawTrailingComment,
-    RawTrailingTransform, RuleLocator,
+    CommentStyle, IncludeForm, IncludeOnAmbiguous, IncludeOnUnresolved, LoadedConfig,
+    MaybeCopiedObject, OutputCommentStyle, OutputForm, RawAction, RawRule, RawSuppression,
+    RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
 };
 
 const COPIED_TOKEN: &str = "${copied}";
@@ -57,9 +57,11 @@ pub struct ResolvedRule {
 
     pub file_paths: Vec<String>,
     pub file_suffixes: Vec<String>,
-    pub match_forms: Vec<IncludeForm>,
+    pub include_forms: Vec<IncludeForm>,
     pub include_match: Vec<String>,
     pub include_directories: Vec<String>,
+    pub include_on_unresolved: IncludeOnUnresolved,
+    pub include_on_ambiguous: IncludeOnAmbiguous,
 
     pub suppression: ResolvedSuppression,
     pub action: ResolvedAction,
@@ -146,7 +148,7 @@ fn default_file_suffixes() -> Vec<String> {
         "@std.cpp.extensions".to_string(),
     ]
 }
-fn default_match_forms() -> Vec<IncludeForm> {
+fn default_include_forms() -> Vec<IncludeForm> {
     vec![IncludeForm::Quote]
 }
 fn default_include_match() -> Vec<String> {
@@ -255,11 +257,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         "file_suffixes",
     )?;
 
-    let match_forms = match raw.match_forms.as_ref() {
+    let include_forms = match raw.include_forms.as_ref() {
         Some(v) => v.clone(),
         None => parent
-            .map(|p| p.match_forms.clone())
-            .unwrap_or_else(default_match_forms),
+            .map(|p| p.include_forms.clone())
+            .unwrap_or_else(default_include_forms),
     };
 
     let include_match = resolve_str_list(
@@ -279,6 +281,16 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         "include_directories",
         has_parent,
     )?;
+
+    let include_on_unresolved = raw
+        .include_on_unresolved
+        .or_else(|| parent.map(|p| p.include_on_unresolved))
+        .unwrap_or(IncludeOnUnresolved::Error);
+
+    let include_on_ambiguous = raw
+        .include_on_ambiguous
+        .or_else(|| parent.map(|p| p.include_on_ambiguous))
+        .unwrap_or(IncludeOnAmbiguous::Error);
 
     let suppression = match raw.suppression_comments_regex.as_ref() {
         Some(MaybeCopiedObject::Copied) => {
@@ -312,6 +324,12 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
             .unwrap_or_else(default_action),
     };
 
+    if matches!(include_on_unresolved, IncludeOnUnresolved::Allow)
+        && matches!(action, ResolvedAction::Resolve { .. })
+    {
+        bail!("{ctx}: `include_on_unresolved = \"allow\"` cannot be used with action `resolve`");
+    }
+
     let trailing_comment = match raw.trailing_comment.as_ref() {
         Some(MaybeCopiedObject::Copied) => {
             if !has_parent {
@@ -343,9 +361,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         },
         file_paths,
         file_suffixes,
-        match_forms,
+        include_forms,
         include_match,
         include_directories,
+        include_on_unresolved,
+        include_on_ambiguous,
         suppression,
         action,
         trailing_comment,
@@ -786,10 +806,7 @@ mod tests {
             r.include_on_unresolved,
             IncludeOnUnresolved::Error
         ));
-        assert!(matches!(
-            r.include_on_ambiguous,
-            IncludeOnAmbiguous::Error
-        ));
+        assert!(matches!(r.include_on_ambiguous, IncludeOnAmbiguous::Error));
         assert!(matches!(r.action, ResolvedAction::Keep { .. }));
     }
 

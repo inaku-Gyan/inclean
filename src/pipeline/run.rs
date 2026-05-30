@@ -382,13 +382,13 @@ fn collect_duplicate_literal_warnings(cfg: &crate::config::schema::LoadedConfig)
             raw.include_directories.as_deref(),
             &mut out,
         );
-        if let Some(forms) = raw.match_forms.as_ref() {
+        if let Some(forms) = raw.include_forms.as_ref() {
             let mut seen = HashSet::new();
             for f in forms {
                 let key = format!("{f:?}");
                 if !seen.insert(key.clone()) {
                     out.push(format!(
-                        "warning: rule '{}': duplicate literal element '{}' in match_forms",
+                        "warning: rule '{}': duplicate literal element '{}' in include_forms",
                         raw.name,
                         format!("{f:?}").to_lowercase(),
                     ));
@@ -638,9 +638,9 @@ fn process_file(
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
 
     for include in includes {
-        let matched = engine::match_all(rules, relpath, &include, &suppressed);
+        let matched = engine::match_all(rules, relpath, &include, &suppressed, project_root);
 
-        if matched.matched.is_empty() {
+        if matched.matched.is_empty() && matched.failures.is_empty() {
             include_results.push(IncludeResult {
                 include,
                 outcome: IncludeOutcome::NoMatch,
@@ -649,14 +649,30 @@ fn process_file(
         }
 
         // Evaluate every matched rule's action; collect outcomes.
-        let outcomes: Vec<(String, Outcome)> = matched
-            .matched
+        let mut outcomes: Vec<(String, Outcome)> = matched
+            .failures
             .iter()
-            .map(|cm| {
-                let outcome = action::evaluate(cm.rule, &include, original, relpath, project_root);
-                (cm.rule.rule.name.clone(), outcome)
+            .map(|failure| {
+                (
+                    failure.rule.rule.name.clone(),
+                    Outcome::EvaluationFailure {
+                        message: failure.message.clone(),
+                    },
+                )
             })
             .collect();
+
+        outcomes.extend(matched.matched.iter().map(|cm| {
+            let outcome = action::evaluate_with_resolution(
+                cm.rule,
+                &include,
+                original,
+                relpath,
+                project_root,
+                cm.resolved_header.as_deref(),
+            );
+            (cm.rule.rule.name.clone(), outcome)
+        }));
 
         let outcome = collapse_outcomes(&include, original, outcomes);
 
@@ -1280,7 +1296,7 @@ mod tests {
         let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         match &summary.files[0].include_results[0].outcome {
             IncludeOutcome::Rewritten { new_text, .. } => {
-                assert_eq!(new_text, "\"first/foo.h\"");
+                assert_eq!(new_text, "\"../first/foo.h\"");
             }
             other => panic!("unexpected outcome: {other:?}"),
         }

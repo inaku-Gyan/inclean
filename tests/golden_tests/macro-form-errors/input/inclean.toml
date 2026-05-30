@@ -9,13 +9,13 @@ min_inclean_version = "0.3.0-alpha.1"
 [[rule]]
 name = "rewrite-quote"
 file_paths = ["src/**/*"]
-match_forms = ["quote"]
+include_forms = ["quote"]
 include_match = ["**"]
 action = { type = "replace", with = "lib/${original}" }
 
 [[rule]]
 name = "rewrite-macro"
 file_paths = ["src/**/*"]
-match_forms = ["macro"]
+include_forms = ["macro"]
 include_match = ["**"]
 action = { type = "keep" }

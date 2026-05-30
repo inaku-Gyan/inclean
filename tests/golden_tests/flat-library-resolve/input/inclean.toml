@@ -12,6 +12,6 @@ min_inclean_version = "0.3.0-alpha.1"
 [[rule]]
 name = "flat"
 file_paths = ["src/**", "include/**"]
-match_forms = ["quote"]
+include_forms = ["quote"]
 include_directories = ["include/mylib/internal"]
 action = { type = "resolve", relative_to = "include" }

@@ -4,7 +4,7 @@
 //! 1. `file_paths` glob + `file_suffixes` literal extension — handled by
 //!    [`PathMatcher`] (see [`crate::rule::glob`]).
 //! 2. *(Folded into layer 1 — the same matcher checks both.)*
-//! 3. `match_forms` — `include.form` must be in the set.
+//! 3. `include_forms` — `include.form` must be in the set.
 //! 4. `include_match` — at least one glob must match the stripped include
 //!    text (`include.content`).
 //!
@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
@@ -32,6 +32,7 @@ use regex::Regex;
 
 use super::glob::PathMatcher;
 use crate::config::copy::{ResolvedRule, ResolvedSuppression};
+use crate::config::schema::{IncludeOnAmbiguous, IncludeOnUnresolved};
 use crate::lex::include_line::Include;
 
 /// A rule with all of its matchers pre-compiled.
@@ -207,11 +208,19 @@ pub fn compute_all_suppressed(
 #[derive(Debug)]
 pub struct CandidateMatch<'a> {
     pub rule: &'a CompiledRule<'a>,
+    pub resolved_header: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct ResolutionFailure<'a> {
+    pub rule: &'a CompiledRule<'a>,
+    pub message: String,
 }
 
 #[derive(Debug, Default)]
 pub struct MatchAllOutcome<'a> {
     pub matched: Vec<CandidateMatch<'a>>,
+    pub failures: Vec<ResolutionFailure<'a>>,
 }
 
 /// Run all four layers + suppression for every rule. Returns every rule
@@ -222,6 +231,7 @@ pub fn match_all<'a>(
     file_relpath: &Path,
     include: &Include,
     suppressed_per_rule: &BTreeMap<String, HashSet<usize>>,
+    project_root: &Path,
 ) -> MatchAllOutcome<'a> {
     let mut out = MatchAllOutcome::default();
     for r in rules {
@@ -236,16 +246,76 @@ pub fn match_all<'a>(
             continue;
         }
         // Layer 3.
-        if !r.rule.match_forms.contains(&include.form) {
+        if !r.rule.include_forms.contains(&include.form) {
             continue;
         }
         // Layer 4.
         if !r.include_matcher.is_match(&include.content) {
             continue;
         }
-        out.matched.push(CandidateMatch { rule: r });
+        match resolve_include(r, include, project_root) {
+            IncludeResolution::Matched(resolved_header) => out.matched.push(CandidateMatch {
+                rule: r,
+                resolved_header,
+            }),
+            IncludeResolution::Skipped => {}
+            IncludeResolution::Failed(message) => {
+                out.failures.push(ResolutionFailure { rule: r, message });
+            }
+        }
     }
     out
+}
+
+enum IncludeResolution {
+    Matched(Option<PathBuf>),
+    Skipped,
+    Failed(String),
+}
+
+fn resolve_include(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    project_root: &Path,
+) -> IncludeResolution {
+    let dirs = &rule.rule.include_directories;
+    if dirs.is_empty() {
+        return IncludeResolution::Matched(None);
+    }
+
+    let mut hits: Vec<(String, PathBuf)> = Vec::new();
+    for dir in dirs {
+        let candidate = project_root.join(dir).join(&include.content);
+        if candidate.is_file() {
+            hits.push((dir.clone(), candidate));
+        }
+    }
+
+    match hits.len() {
+        0 => match rule.rule.include_on_unresolved {
+            IncludeOnUnresolved::Error => IncludeResolution::Failed(format!(
+                "no include_directories entry contains '{}'",
+                include.content
+            )),
+            IncludeOnUnresolved::Skip => IncludeResolution::Skipped,
+            IncludeOnUnresolved::Allow => IncludeResolution::Matched(None),
+        },
+        1 => IncludeResolution::Matched(Some(hits.remove(0).1)),
+        _ => match rule.rule.include_on_ambiguous {
+            IncludeOnAmbiguous::Error => {
+                let dirs_list = hits
+                    .iter()
+                    .map(|(d, _)| d.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                IncludeResolution::Failed(format!(
+                    "include resolves under multiple include_directories: {dirs_list}"
+                ))
+            }
+            IncludeOnAmbiguous::Skip => IncludeResolution::Skipped,
+            IncludeOnAmbiguous::First => IncludeResolution::Matched(Some(hits.remove(0).1)),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -292,6 +362,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 1);
     }
@@ -310,6 +381,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Angle, "stdio.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert!(out.matched.is_empty());
     }
@@ -329,12 +401,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "old_foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let out_new = match_all(
             &rules,
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out_old.matched.len(), 1);
         assert!(out_new.matched.is_empty());
@@ -355,12 +429,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let outside_src = match_all(
             &rules,
             Path::new("lib/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(in_src.matched.len(), 1);
         assert!(outside_src.matched.is_empty());
@@ -382,12 +458,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let cpp_file = match_all(
             &rules,
             Path::new("src/main.cpp"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(c_file.matched.len(), 1);
         assert!(cpp_file.matched.is_empty());
@@ -412,6 +490,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 2);
     }
@@ -437,6 +516,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 2),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 1);
         assert!(sup.get("base").unwrap().contains(&1));
@@ -469,12 +549,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 2),
             &sup,
+            Path::new("/proj"),
         );
         let outside = match_all(
             &rules,
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "bar.h", 4),
             &sup,
+            Path::new("/proj"),
         );
         assert!(inside.matched.is_empty());
         assert_eq!(outside.matched.len(), 1);

@@ -135,16 +135,18 @@ pub struct RawRule {
     pub suppression_comments_regex: Option<MaybeCopiedObject<RawSuppression>>,
 
     // ---- Layer 3: include forms ------------------------------------------
-    pub match_forms: Option<Vec<IncludeForm>>,
+    pub include_forms: Option<Vec<IncludeForm>>,
 
     // ---- Layer 4: glob on the stripped include argument ------------------
     pub include_match: Option<Vec<String>>,
 
-    // ---- Non-matching configuration --------------------------------------
+    // ---- Layer 5: optional include directory resolution -------------------
     /// Literal directory paths under the project root (relative to it) that
     /// the `resolve` action probes to locate the include's actual header.
     /// NOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.
     pub include_directories: Option<Vec<String>>,
+    pub include_on_unresolved: Option<IncludeOnUnresolved>,
+    pub include_on_ambiguous: Option<IncludeOnAmbiguous>,
 
     /// The whole field can also be the string `"${copied}"` to reuse the
     /// parent rule's resolved action verbatim (object-context `${copied}`).
@@ -176,6 +178,26 @@ pub enum IncludeForm {
     /// in config; in v1 evaluation of an action against a macro #include
     /// always produces an error.
     Macro,
+}
+
+/// Policy when `include_directories` is configured but no directory contains
+/// the include argument.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IncludeOnUnresolved {
+    Error,
+    Skip,
+    Allow,
+}
+
+/// Policy when `include_directories` is configured and multiple directories
+/// contain the include argument.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IncludeOnAmbiguous {
+    Error,
+    Skip,
+    First,
 }
 
 /// Output form for the include's delimiters after a rule fires.
@@ -452,10 +474,7 @@ mod tests {
             r.include_match.as_ref().unwrap(),
             &vec!["**/foo.h".to_string()]
         );
-        assert_eq!(
-            r.include_on_unresolved,
-            Some(IncludeOnUnresolved::Skip)
-        );
+        assert_eq!(r.include_on_unresolved, Some(IncludeOnUnresolved::Skip));
         assert_eq!(r.include_on_ambiguous, Some(IncludeOnAmbiguous::First));
         match raw_action_of(r) {
             RawAction::Resolve {

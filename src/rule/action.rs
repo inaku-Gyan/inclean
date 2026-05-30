@@ -69,6 +69,18 @@ pub fn evaluate(
     file_relpath: &Path,
     project_root: &Path,
 ) -> Outcome {
+    evaluate_with_resolution(rule, include, source, file_relpath, project_root, None)
+}
+
+/// Evaluate an action with an optional header path selected by the matcher.
+pub fn evaluate_with_resolution(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    source: &str,
+    file_relpath: &Path,
+    project_root: &Path,
+    resolved_header: Option<&Path>,
+) -> Outcome {
     // Macro-form hatch: never evaluate an action against a macro #include.
     if include.form == IncludeForm::Macro {
         return Outcome::Error {
@@ -101,6 +113,7 @@ pub fn evaluate(
             source,
             file_relpath,
             project_root,
+            resolved_header,
             relative_to,
             *output_form,
             &ctx,
@@ -233,6 +246,7 @@ fn apply_resolve(
     source: &str,
     file_relpath: &Path,
     project_root: &Path,
+    resolved_header: Option<&Path>,
     relative_to: &str,
     output_form: OutputForm,
     ctx: &TemplateCtx,
@@ -246,38 +260,18 @@ fn apply_resolve(
             ),
         };
     }
-    // Probe each include_directory literally; collect matches alongside
-    // the directory that produced them (for the diagnostic).
-    let mut hits: Vec<(String, PathBuf)> = Vec::new();
-    for dir in dirs {
-        let candidate = project_root.join(dir).join(&include.content);
-        if candidate.is_file() {
-            hits.push((dir.clone(), candidate));
-        }
-    }
-    if hits.is_empty() {
+    let Some(resolved_abs) = resolved_header else {
         return Outcome::EvaluationFailure {
             message: format!(
-                "no include_directories entry contains '{}'",
-                include.content
+                "rule `{}`: action `resolve` requires a resolved include path from `include_directories`",
+                rule.rule.name
             ),
         };
-    }
-    if hits.len() > 1 {
-        let dirs_list = hits
-            .iter()
-            .map(|(d, _)| d.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Outcome::EvaluationFailure {
-            message: format!("include resolves under multiple include_directories: {dirs_list}"),
-        };
-    }
-    let resolved_abs = hits.into_iter().next().unwrap().1;
+    };
     let resolved_rel = resolved_abs
         .strip_prefix(project_root)
         .map(|p| p.to_path_buf())
-        .unwrap_or(resolved_abs);
+        .unwrap_or_else(|_| resolved_abs.to_path_buf());
 
     // Compute the path relative to `relative_to` (after `${current_file}`
     // substitution). When `relative_to` resolves to `${current_file}`, we
@@ -693,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_no_match_emits_spec_wording() {
+    fn resolve_without_matcher_path_emits_failure() {
         let rules = compile_rules(
             r#"
             [[rule]]
@@ -713,10 +707,9 @@ mod tests {
         match out {
             Outcome::EvaluationFailure { message } => {
                 assert!(
-                    message.starts_with("no include_directories entry contains '"),
+                    message.contains("requires a resolved include path"),
                     "unexpected wording: {message}"
                 );
-                assert!(message.contains("foo.h"));
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -728,7 +721,7 @@ mod tests {
             r#"
             [[rule]]
             name = "base"
-            match_forms = ["macro"]
+            include_forms = ["macro"]
             action = { type = "keep" }
             "#,
         );
