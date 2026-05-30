@@ -1,4 +1,4 @@
-#include "FreeRTOS.h"
-#include "task.h"
+#include <Third_Party/FreeRTOS/Source/include/FreeRTOS.h>  // IWYU: keep
+#include <Third_Party/FreeRTOS/Source/include/task.h>
 #include "main.h"
-#include "cmsis_os.h"
+#include <Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h>

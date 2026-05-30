@@ -4,8 +4,8 @@
 
 #define MPU_WRAPPERS_INCLUDED_FROM_API_FILE
 
-#include "FreeRTOS.h"
-#include "task.h"
-#include "queue.h"
+#include "include/FreeRTOS.h"  // IWYU: keep
+#include "include/task.h"
+#include "include/queue.h"
 
 #undef MPU_WRAPPERS_INCLUDED_FROM_API_FILE /*lint !e961 !e750 !e9021. */

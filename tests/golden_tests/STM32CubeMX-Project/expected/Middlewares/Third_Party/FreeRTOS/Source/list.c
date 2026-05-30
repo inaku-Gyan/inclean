@@ -1,4 +1,4 @@
 
 #include <stdlib.h>
-#include "FreeRTOS.h"
-#include "list.h"
+#include "include/FreeRTOS.h"  // IWYU: keep
+#include "include/list.h"

@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "FreeRTOS.h"                   // ARM.FreeRTOS::RTOS:Core
+#include "../include/FreeRTOS.h"  // IWYU: keep
 
 #include CMSIS_device_header
 

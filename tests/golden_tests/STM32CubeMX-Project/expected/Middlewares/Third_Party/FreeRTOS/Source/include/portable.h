@@ -4,7 +4,7 @@
 #include "deprecated_definitions.h"
 
 #ifndef portENTER_CRITICAL
-	#include "portmacro.h"
+	#include "../portable/GCC/ARM_CM4F/portmacro.h"
 #endif
 
 #ifdef __cplusplus

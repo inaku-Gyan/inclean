@@ -7,13 +7,13 @@
  * Arm Compiler 4/5
  */
 #if   defined ( __CC_ARM )
-  #include "cmsis_armcc.h"
+  #include "cmsis_armcc.h"  // IWYU: export
 
 /*
  * GNU Compiler
  */
 #elif defined ( __GNUC__ )
-  #include "cmsis_gcc.h"
+  #include "cmsis_gcc.h"  // IWYU: export
 
 
 /*
