@@ -1278,6 +1278,28 @@ mod tests {
     }
 
     #[test]
+    fn parent_segments_in_include_path_are_normalized_before_resolve() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["Core/Src/**/*"]
+            include_directories = ["Core/Inc", "Core/Src"]
+            action = { type = "resolve", relative_to = "Core" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("Core/Src/main.c", "#include \"../Inc/foo.h\"\n");
+        proj.write("Core/Inc/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"Inc/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
     fn ambiguous_include_can_skip_rule() {
         let rule = r#"
             [[rule]]
