@@ -1287,6 +1287,33 @@ mod tests {
     }
 
     #[test]
+    fn open_block_trailing_prevents_line_comment_append_after_action_rewrite() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            action = { type = "replace", with = "lib/${original}" }
+            trailing_comment = { append_if_absent = "  // IWYU: keep" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write(
+            "src/main.c",
+            "#include \"foo.h\" /* opens\nstill comment */\n",
+        );
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"lib/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        apply(&summary).unwrap();
+        let new = fs::read_to_string(proj.path().join("src/main.c")).unwrap();
+        assert_eq!(new, "#include \"lib/foo.h\" /* opens\nstill comment */\n");
+    }
+
+    #[test]
     fn replace_action_writes_back() {
         let rule = r#"
             [[rule]]
