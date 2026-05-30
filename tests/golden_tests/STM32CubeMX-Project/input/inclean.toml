@@ -1,8 +1,8 @@
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.2/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0-alpha.3/schemas/inclean.toml.schema.json
 
 [project]
-version = "0.3.0-alpha.2"
-min_inclean_version = "0.3.0-alpha.2"
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
 
 
 [[rule]]
@@ -14,6 +14,7 @@ include_directories = ["Inc"]
 include_on_unresolved = "skip"
 
 action = { type = "keep" }
+trailing_comment = "skip"
 
 
 [[rule]]
@@ -32,6 +33,7 @@ include_on_unresolved = "skip"
 # include_on_ambiguous = "error"
 
 action = { type = "resolve", relative_to = "${current_file}" }
+trailing_comment = "skip"
 
 
 [[rule]]
@@ -46,6 +48,7 @@ include_directories = [
 include_on_unresolved = "skip"
 
 action = { type = "resolve", relative_to = "Drivers", output_form = "angle" }
+trailing_comment = "skip"
 
 
 [[rule]]
@@ -62,11 +65,102 @@ action = { type = "resolve", relative_to = "Middlewares", output_form = "angle" 
 
 
 [[rule]]
-name = "export stm32f4xx_hal_*.h"
-copied_from = "inside-libs"
+name = "export HAL config modules"
 
-file_paths = ["**"]
+file_paths = ["Inc/stm32f4xx_hal_conf.h"]
+include_match = ["stm32f4xx_hal_*.h"]
 
-include_match = ["**/stm32f4xx_hal_*.h"]
+action = "skip"
+trailing_comment = { append_if_absent = "  // IWYU: export" }
 
-trailing_comment = { append_if_absent = "  // IWYU pragma: export" }
+
+[[rule]]
+name = "export STM32 umbrellas"
+
+file_paths = [
+    "Inc/main.h",
+    "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h",
+    "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_def.h",
+    "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h",
+    "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc_ex.h",
+    "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h",
+]
+include_match = [
+    "stm32f4xx_hal.h",
+    "stm32f4xx_hal_conf.h",
+    "stm32f4xx_hal_def.h",
+    "stm32f4xx_hal_rcc_ex.h",
+    "stm32f4xx.h",
+    "stm32f407xx.h",
+    "Legacy/stm32_hal_legacy.h",
+]
+
+action = "skip"
+trailing_comment = { append_if_absent = "  // IWYU: export" }
+
+
+[[rule]]
+name = "export FreeRTOS umbrellas"
+
+file_paths = [
+    "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/freertos_mpool.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/include/portable.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/include/queue.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h",
+    "Middlewares/Third_Party/FreeRTOS/Source/include/task.h",
+]
+include_match = [
+    "FreeRTOS.h",
+    "FreeRTOSConfig.h",
+    "deprecated_definitions.h",
+    "list.h",
+    "mpu_wrappers.h",
+    "portable.h",
+    "portmacro.h",
+    "projdefs.h",
+    "queue.h",
+    "semphr.h",
+    "task.h",
+    "cmsis_os2.h",
+]
+
+action = "skip"
+trailing_comment = { append_if_absent = "  // IWYU: export" }
+
+
+[[rule]]
+name = "keep generated application includes"
+
+file_paths = ["Src/**"]
+include_match = [
+    "FreeRTOS.h",
+    "cmsis_os.h",
+    "gpio.h",
+    "main.h",
+    "stm32f4xx.h",
+    "stm32f4xx_hal.h",
+    "stm32f4xx_hal_tim.h",
+    "stm32f4xx_it.h",
+    "task.h",
+]
+
+action = "skip"
+trailing_comment = { append_if_absent = "  // IWYU: keep" }
+
+
+[[rule]]
+name = "keep compiler selection includes"
+
+file_paths = ["Drivers/CMSIS/Include/cmsis_compiler.h"]
+include_forms = ["quote", "angle"]
+include_match = [
+    "cmsis_armcc.h",
+    "cmsis_gcc.h",
+    "cmsis_ccs.h",
+    "cmsis_csm.h",
+]
+
+action = "skip"
+trailing_comment = { append_if_absent = "  // IWYU: keep" }

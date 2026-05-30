@@ -10,13 +10,13 @@ extern "C" {
 #endif
 
 /* Application specific configuration options. */
-#include "FreeRTOSConfig.h"
+#include "FreeRTOSConfig.h"  // IWYU: export
 
 /* Basic FreeRTOS definitions. */
-#include "projdefs.h"
+#include "projdefs.h"  // IWYU: export
 
 /* Definitions specific to the port being used. */
-#include "portable.h"
+#include "portable.h"  // IWYU: export
 
 /* Must be defaulted before configUSE_NEWLIB_REENTRANT is used below. */
 #ifndef configUSE_NEWLIB_REENTRANT

@@ -10,7 +10,7 @@ extern "C" {
 #elif defined(STM32F415xx)
 #include "stm32f415xx.h"
 #elif defined(STM32F407xx)
-#include "stm32f407xx.h"
+#include "stm32f407xx.h"  // IWYU: export
 #elif defined(STM32F417xx)
 #include "stm32f417xx.h"
 #elif defined(STM32F427xx)
@@ -56,7 +56,7 @@ extern "C" {
 #endif
 
 #if defined (USE_HAL_DRIVER)
-#include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal.h"  // IWYU: export
 #endif /* USE_HAL_DRIVER */
 
 #ifdef __cplusplus
