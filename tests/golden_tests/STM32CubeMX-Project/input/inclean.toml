@@ -1,0 +1,120 @@
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0/schemas/inclean.toml.schema.json
+
+[project]
+version = "0.3.0"
+min_inclean_version = "0.3.0"
+
+
+[[rule]]
+name = "global"
+
+file_paths = ["**"]
+
+include_directories = ["Inc"]
+include_on_unresolved = "skip"
+
+action = { type = "keep" }
+trailing_comment = "skip"
+
+
+[[rule]]
+name = "inside-libs"
+
+file_paths = ["**", '!Inc/**', '!Src/**']
+
+include_directories = [
+    "Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+    "Drivers/CMSIS/Include",
+    "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+    "Middlewares/Third_Party/FreeRTOS/Source/include",
+    "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F",
+]
+include_on_unresolved = "skip"
+# include_on_ambiguous = "error"
+
+action = { type = "resolve", relative_to = "${current_file}" }
+trailing_comment = "skip"
+
+
+[[rule]]
+name = "Drivers"
+
+file_paths = ["Inc/**", "Src/**"]
+
+include_directories = [
+    "Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+    "Drivers/CMSIS/Include",
+]
+include_on_unresolved = "skip"
+
+action = { type = "resolve", relative_to = "Drivers", output_form = "angle" }
+trailing_comment = "skip"
+
+
+[[rule]]
+name = "Middlewares"
+copied_from = "Drivers"
+
+include_directories = [
+    "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+    "Middlewares/Third_Party/FreeRTOS/Source/include",
+    "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F",
+]
+
+action = { type = "resolve", relative_to = "Middlewares", output_form = "angle" }
+trailing_comment = "skip"
+
+[[rule]]
+name = "Restrict to public lib headers"
+copied_from = "Drivers"
+
+include_forms = ["quote", "angle"]
+include_directories = [
+    "${copied}",
+    "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/**",
+]
+include_match = [
+    "**/*.h",
+    "!**/stm32f4xx.h",
+    "!**/cmsis_compiler.h",
+    "!**/stm32f4xx_hal.h",
+    # "**/freertos_os2.h",
+    # "**/freertos_mpool.h",
+]
+
+action = { type = "error", message = "User code should only include public library headers" }
+trailing_comment = "skip"
+
+
+[[rule]]
+name = "export inner headers"
+copied_from = "inside-libs"
+
+file_paths = [
+    "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h",
+    "Drivers/CMSIS/Include/cmsis_compiler.h",
+    "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h",
+]
+
+action = "skip"
+trailing_comment = { transform = { action = { type = "replace", with = "IWYU: export" } }, append_if_absent = "  // IWYU: export" }
+
+
+[[rule]]
+name = "export cmsis_os2.h"
+copied_from = "export inner headers"
+
+file_paths = ["Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/**"]
+
+include_match = ["**/cmsis_os2.h"]
+
+
+[[rule]]
+name = "keep FreeRTOS.h"
+
+file_paths = ["**"]
+include_forms = ["quote", "angle"]
+include_match = ["**/FreeRTOS.h"]
+
+action = "skip"
+trailing_comment = { transform = { action = { type = "replace", with = "IWYU: keep" } }, append_if_absent = "  // IWYU: keep" }

@@ -1,0 +1,18 @@
+[project]
+root = "."
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
+
+[[rule]]
+name = "same-header"
+file_paths = ["src/**"]
+include_forms = ["quote"]
+include_directories = ["include", "include/."]
+action = { type = "resolve", relative_to = "." }
+
+[[rule]]
+name = "parent-segment"
+file_paths = ["Core/Src/**"]
+include_forms = ["quote"]
+include_directories = ["Core/Inc", "Core/Src"]
+action = { type = "resolve", relative_to = "Core" }

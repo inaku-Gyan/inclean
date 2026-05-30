@@ -59,13 +59,7 @@ if you don't already have it.
 
 Download a tarball for your platform from the
 [latest GitHub Release](https://github.com/inaku-Gyan/inclean/releases/latest)
-and put `inclean` (or `inclean.exe`) on your `PATH`. Released targets:
-
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-pc-windows-msvc`
+and put `inclean` (or `inclean.exe`) on your `PATH`.
 
 ### From repo source
 
@@ -95,6 +89,21 @@ which files are processed; with no paths they consider every source
 file under the project root. `-c PATH` overrides the upward `inclean.toml`
 walk; `-j N` sets the worker thread count.
 
+Rule matching first checks `file_paths`, `file_suffixes`, `include_forms`,
+and `include_match`. Globs are anchored and use literal separators:
+`foo.h` only matches `foo.h`, while `**/foo.h` matches at any depth.
+Glob lists are ordered: a leading unescaped `!` excludes, and the last
+matching pattern wins. Use TOML single quotes for a literal leading bang,
+for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
+When `include_directories` is set, inclean then probes those literal
+directories and applies `include_on_unresolved` (`error` / `skip` /
+`allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).
+For rules that are meant to affect only one side of a rewrite, the whole
+field values `action = "skip"` and `trailing_comment = "skip"` make that
+side opt out of conflict detection. `keep` still participates in conflict
+checks; `skip` does not. For a rule without `copied_from`, both fields
+default to `skip` when omitted.
+
 ### Example
 
 A simple `replace`-action config that rewrites `#include "foo.h"` to
@@ -115,21 +124,6 @@ action = { type = "replace", with = "lib/${original}" }
 
 See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
-## Commands
-
-| Command                                              | Purpose                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `inclean init [PATH]`                                | Generate a documented starter `inclean.toml`. Alias of `inclean config new`.                                                                                                                                                                                                                                                               |
-| `inclean check [SUBCOMMAND]`                         | Read-only check. Subcommands: `config` validates the file alone (`-c PATH`); `unfixable` runs the full pipeline and reports only unfixable violations; `all` runs the full pipeline and reports every per-include outcome. Bare `inclean check` is equivalent to `inclean check all`. The full forms accept `[-c PATH] [-j N] [PATHS...]`. |
-| `inclean diff [-o PATH] [-c PATH] [-j N] [PATHS...]` | Print a unified diff of every proposed rewrite. Optional `-o` writes to a file instead of stdout.                                                                                                                                                                                                                                          |
-| `inclean apply [-c PATH] [-j N] [PATHS...]`          | Apply rewrites in place. Files free of unfixable violations are written; files with errors / conflicts / evaluation failures are skipped and reported at end.                                                                                                                                                                              |
-| `inclean config check [-c PATH]`                     | Alias of `inclean check config`.                                                                                                                                                                                                                                                                                                           |
-| `inclean config new [PATH]`                          | Alias of `inclean init`.                                                                                                                                                                                                                                                                                                                   |
-| `inclean config schema [-o PATH] [--check]`          | Emit / validate the JSON Schema for `inclean.toml`. `--check` requires `-o` and exits non-zero if the file drifts.                                                                                                                                                                                                                         |
-
-The default action when no rule specifies one is `keep` with
-`output_form = preserve` — a rule that omits `action` is a no-op.
-
 ## Editor support
 
 `inclean.toml` ships with a JSON Schema for editor completion and
@@ -138,19 +132,20 @@ with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tama
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.3.0"
-min_inclean_version = "0.3.0"
+version = "1.2.3"
+min_inclean_version = "1.1.0"
 ```
+
+(The above version numbers are just examples.)
 
 `inclean init` writes both the `#:schema` line (for the editor) and the
 `[project].version` + `[project].min_inclean_version` fields, each
 pinned to the CLI version that generated the file. To upgrade schema
-validation, edit the `v0.3.0` segment in the URL to a newer release
-tag.
+validation, edit the version segment in the URL to a newer release tag.
 
 **`#:schema` and the `[project]` version fields are independent.** The
 `#:schema` URL is purely for editor tooling; the CLI runs its own
@@ -162,35 +157,20 @@ not ship migration shims for breaking schema changes — see
 You can also dump a local copy:
 
 ```sh
-inclean schema --output inclean.toml.schema.json
+inclean config schema --output inclean.toml.schema.json
 ```
 
 ## Documentation
 
-- **[docs/configuration.md](docs/configuration.md)** — full
-  `inclean.toml` schema: the four-layer matching model, `copied_from`
-  copy semantics, `@std.*` constants, six action variants, `${copied}`
-  and other placeholders, exit codes.
-- **[docs/architecture.md](docs/architecture.md)** — code-level
-  architecture: module map, pipeline phases, key invariants.
+- `inclean init` writes the most complete user-facing configuration
+  reference into the generated `inclean.toml`.
+- **[schemas/inclean.toml.schema.json](schemas/inclean.toml.schema.json)** —
+  editor schema generated from the Rust config structs.
+- **[tests/golden_tests/](tests/golden_tests/)** — runnable examples for
+  replacement, resolution, copy semantics, suppression, trailing comments,
+  conflicts, and encoding preservation.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — toolchain, dev workflow,
   conventions, scope.
-- **[CHANGELOG.md](CHANGELOG.md)** — release history.
-
-## Status
-
-`0.3.0` — current. Reshapes the configuration around `copied_from` (a
-single-level transitive copy that replaces `extends` AND-merge),
-4-layer matching (`file_paths` / `file_suffixes` / `match_forms` /
-`include_match`), six action variants (`resolve` / `replace` /
-`keep` / `remove` / `comment_out` / `error`), `suppression_comments_regex`
-off-limits regions, a new `trailing_comment.transform` model, and
-conflict-detection by final-line text rather than rule-tree invariants.
-The CLI gains `check unfixable`, `check all`, `[PATHS...]` filtering,
-and a unified-diff output via `inclean diff -o`. inclean is pre-1.0 /
-beta and does not provide migration shims between breaking schema
-changes; see [CLAUDE.md](CLAUDE.md#pre-10-backward-compat-policy)
-for the project policy.
 
 ## License
 

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use schemars::generate::SchemaSettings;
 
+use super::style as cli_style;
 use crate::config::schema::RawConfig;
 
 const DEFAULT_SCHEMA_FILENAME: &str = "inclean.toml.schema.json";
@@ -53,7 +54,11 @@ pub fn run(args: SchemaArgs) -> Result<u8> {
             }
             std::fs::write(&target, &rendered)
                 .with_context(|| format!("writing {}", target.display()))?;
-            eprintln!("wrote {}", target.display());
+            eprintln!(
+                "{} {}",
+                cli_style::success_err("wrote"),
+                cli_style::path_err(target.display())
+            );
         }
         None => {
             use std::io::Write;
@@ -94,7 +99,7 @@ fn render() -> Result<String> {
     obj.insert(
         "description".into(),
         "Configuration schema for inclean. \
-         See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md"
+         Generate a documented starter config with `inclean init`."
             .into(),
     );
 
@@ -119,11 +124,12 @@ fn check_against(path: &Path, rendered: &str) -> Result<u8> {
     use similar::TextDiff;
     let diff = TextDiff::from_lines(&on_disk, rendered);
     eprintln!(
-        "error: {} is out of date.\n\
+        "{} {} is out of date.\n\
          It does not match the schema generated from the current source.\n\
-         Regenerate it with:\n    inclean config schema -o {}\n",
-        target.display(),
-        target.display(),
+         Regenerate it with:\n    {}\n",
+        cli_style::error("error:"),
+        cli_style::path_err(target.display()),
+        cli_style::command_err(format!("inclean config schema -o {}", target.display())),
     );
     eprint!(
         "{}",

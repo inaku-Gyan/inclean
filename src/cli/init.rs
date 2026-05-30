@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::style as cli_style;
 use crate::profile::{CFG_VERSION, CLI_VERSION, CONFIG_FILENAME, MIN_COMPAT_CLI_VERSION};
 
 const TEMPLATE: &str = include_str!("template.inclean.toml");
@@ -35,16 +36,29 @@ pub fn run(path: Option<&Path>) -> Result<u8> {
     }
     let contents = construct_inclean_toml_template();
     std::fs::write(&target, contents).with_context(|| format!("writing {}", target.display()))?;
-    println!("wrote {}", target.display());
-    println!("next:");
-    println!("  edit {} to taste, then run:", target.display());
     println!(
-        "    inclean config check {}",
-        target.parent().unwrap_or(Path::new(".")).display()
+        "{} {}",
+        cli_style::success("wrote"),
+        cli_style::path(target.display())
+    );
+    println!("{}", cli_style::status("next:"));
+    println!(
+        "  edit {} to taste, then run:",
+        cli_style::path(target.display())
     );
     println!(
-        "    inclean check {}",
-        target.parent().unwrap_or(Path::new(".")).display()
+        "    {}",
+        cli_style::command(format!(
+            "inclean config check {}",
+            target.parent().unwrap_or(Path::new(".")).display()
+        ))
+    );
+    println!(
+        "    {}",
+        cli_style::command(format!(
+            "inclean check {}",
+            target.parent().unwrap_or(Path::new(".")).display()
+        ))
     );
     Ok(0)
 }

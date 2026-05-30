@@ -1,12 +1,16 @@
-//! Four-layer matching engine.
+//! Include matching engine.
 //!
-//! Layers (all must pass for the rule to fire):
+//! Text layers (all must pass before optional directory resolution):
 //! 1. `file_paths` glob + `file_suffixes` literal extension — handled by
 //!    [`PathMatcher`] (see [`crate::rule::glob`]).
 //! 2. *(Folded into layer 1 — the same matcher checks both.)*
-//! 3. `match_forms` — `include.form` must be in the set.
-//! 4. `include_match` — at least one glob must match the stripped include
-//!    text (`include.content`).
+//! 3. `include_forms` — `include.form` must be in the set.
+//! 4. `include_match` — ordered signed globs over the stripped include text
+//!    (`include.content`), where a leading unescaped `!` negates and the last
+//!    match wins.
+//! 5. If `include_directories` is non-empty, the engine probes those
+//!    directories and applies `include_on_unresolved` /
+//!    `include_on_ambiguous`.
 //!
 //! `suppression_comments_regex` filters includes out *before* layer
 //! checks: if the include's `#`-line falls inside a per-rule "off-limits"
@@ -24,14 +28,14 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::Regex;
 
-use super::glob::PathMatcher;
+use super::glob::{OrderedGlobMatcher, PathMatcher};
 use crate::config::copy::{ResolvedRule, ResolvedSuppression};
+use crate::config::schema::{IncludeOnAmbiguous, IncludeOnUnresolved};
 use crate::lex::include_line::Include;
 
 /// A rule with all of its matchers pre-compiled.
@@ -39,7 +43,7 @@ use crate::lex::include_line::Include;
 pub struct CompiledRule<'a> {
     pub rule: &'a ResolvedRule,
     pub path_matcher: PathMatcher,
-    pub include_matcher: GlobSet,
+    pub include_matcher: OrderedGlobMatcher,
     pub suppression: CompiledSuppression,
     pub trailing_content_regex: Option<Regex>,
 }
@@ -62,18 +66,12 @@ impl<'a> CompiledRule<'a> {
         let path_matcher = PathMatcher::build(&rule.file_paths, &rule.file_suffixes)
             .with_context(|| format!("rule `{}`: file_paths/file_suffixes compile", rule.name))?;
 
-        let mut gsb = GlobSetBuilder::new();
-        for p in &rule.include_match {
-            let g = build_include_glob(p)
-                .with_context(|| format!("rule `{}`: include_match glob `{}`", rule.name, p))?;
-            gsb.add(g);
-        }
-        let include_matcher = gsb
-            .build()
-            .with_context(|| format!("rule `{}`: include_match GlobSet build", rule.name))?;
+        let include_matcher = OrderedGlobMatcher::build(&rule.include_match)
+            .with_context(|| format!("rule `{}`: include_match glob compile", rule.name))?;
 
         let suppression = compile_suppression(&rule.suppression, &rule.name)?;
         let trailing_content_regex = match &rule.trailing_comment.transform {
+            _ if rule.trailing_comment.skip => None,
             Some(t) => Some(Regex::new(&t.content_regex).with_context(|| {
                 format!(
                     "rule `{}`: trailing_comment.transform.content_regex compile",
@@ -91,13 +89,6 @@ impl<'a> CompiledRule<'a> {
             trailing_content_regex,
         })
     }
-}
-
-fn build_include_glob(pattern: &str) -> Result<Glob> {
-    GlobBuilder::new(pattern)
-        .literal_separator(true)
-        .build()
-        .with_context(|| format!("invalid include_match glob `{pattern}`"))
 }
 
 fn compile_suppression(raw: &ResolvedSuppression, rule_name: &str) -> Result<CompiledSuppression> {
@@ -207,21 +198,31 @@ pub fn compute_all_suppressed(
 #[derive(Debug)]
 pub struct CandidateMatch<'a> {
     pub rule: &'a CompiledRule<'a>,
+    pub resolved_header: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct ResolutionFailure<'a> {
+    pub rule: &'a CompiledRule<'a>,
+    pub message: String,
 }
 
 #[derive(Debug, Default)]
 pub struct MatchAllOutcome<'a> {
     pub matched: Vec<CandidateMatch<'a>>,
+    pub failures: Vec<ResolutionFailure<'a>>,
 }
 
-/// Run all four layers + suppression for every rule. Returns every rule
-/// that matched, in declaration order. Conflict detection (final-text
+/// Run all text layers, suppression, and optional directory resolution for
+/// every rule. Returns every rule that matched, in declaration order, plus
+/// pre-action directory-resolution failures. Conflict detection (final-text
 /// equality across all matches) is the pipeline's job.
 pub fn match_all<'a>(
     rules: &'a [CompiledRule<'a>],
     file_relpath: &Path,
     include: &Include,
     suppressed_per_rule: &BTreeMap<String, HashSet<usize>>,
+    project_root: &Path,
 ) -> MatchAllOutcome<'a> {
     let mut out = MatchAllOutcome::default();
     for r in rules {
@@ -236,16 +237,83 @@ pub fn match_all<'a>(
             continue;
         }
         // Layer 3.
-        if !r.rule.match_forms.contains(&include.form) {
+        if !r.rule.include_forms.contains(&include.form) {
             continue;
         }
         // Layer 4.
         if !r.include_matcher.is_match(&include.content) {
             continue;
         }
-        out.matched.push(CandidateMatch { rule: r });
+        match resolve_include(r, include, project_root) {
+            IncludeResolution::Matched(resolved_header) => out.matched.push(CandidateMatch {
+                rule: r,
+                resolved_header,
+            }),
+            IncludeResolution::Skipped => {}
+            IncludeResolution::Failed(message) => {
+                out.failures.push(ResolutionFailure { rule: r, message });
+            }
+        }
     }
     out
+}
+
+enum IncludeResolution {
+    Matched(Option<PathBuf>),
+    Skipped,
+    Failed(String),
+}
+
+fn resolve_include(
+    rule: &CompiledRule<'_>,
+    include: &Include,
+    project_root: &Path,
+) -> IncludeResolution {
+    let dirs = &rule.rule.include_directories;
+    if dirs.is_empty() {
+        return IncludeResolution::Matched(None);
+    }
+
+    let mut hits: Vec<(String, PathBuf)> = Vec::new();
+    for dir in dirs {
+        let candidate = project_root.join(dir).join(&include.content);
+        if candidate.is_file() {
+            // Different include dirs can reach the same physical header
+            // (for example `include` and `include/.`, `../`, or symlinked dirs).
+            let resolved = candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
+            if !hits.iter().any(|(_, seen)| *seen == resolved) {
+                hits.push((dir.clone(), resolved));
+            }
+        }
+    }
+
+    match hits.len() {
+        0 => match rule.rule.include_on_unresolved {
+            IncludeOnUnresolved::Error => IncludeResolution::Failed(format!(
+                "no include_directories entry contains '{}'",
+                include.content
+            )),
+            IncludeOnUnresolved::Skip => IncludeResolution::Skipped,
+            IncludeOnUnresolved::Allow => IncludeResolution::Matched(None),
+        },
+        1 => IncludeResolution::Matched(Some(hits.remove(0).1)),
+        _ => match rule.rule.include_on_ambiguous {
+            IncludeOnAmbiguous::Error => {
+                let dirs_list = hits
+                    .iter()
+                    .map(|(d, _)| d.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                IncludeResolution::Failed(format!(
+                    "include resolves under multiple include_directories: {dirs_list}"
+                ))
+            }
+            IncludeOnAmbiguous::Skip => IncludeResolution::Skipped,
+            IncludeOnAmbiguous::First => IncludeResolution::Matched(Some(hits.remove(0).1)),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -292,6 +360,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 1);
     }
@@ -310,6 +379,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Angle, "stdio.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert!(out.matched.is_empty());
     }
@@ -329,15 +399,101 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "old_foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let out_new = match_all(
             &rules,
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out_old.matched.len(), 1);
         assert!(out_new.matched.is_empty());
+    }
+
+    #[test]
+    fn include_match_negated_glob_excludes_previous_match() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "not-private"
+            include_match = ["**", "!private/**"]
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let public = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "public/foo.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let private = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/foo.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert_eq!(public.matched.len(), 1);
+        assert!(private.matched.is_empty());
+    }
+
+    #[test]
+    fn include_match_later_positive_reincludes_after_negation() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "private-allowlist"
+            include_match = ["**", "!private/**", "private/allowed.h"]
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let denied = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/denied.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let allowed = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/allowed.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert!(denied.matched.is_empty());
+        assert_eq!(allowed.matched.len(), 1);
+    }
+
+    #[test]
+    fn include_match_escaped_bang_matches_literal_bang() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "literal-bang"
+            include_match = ['\!weird.h']
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let literal = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "!weird.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let plain = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "weird.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert_eq!(literal.matched.len(), 1);
+        assert!(plain.matched.is_empty());
     }
 
     #[test]
@@ -355,12 +511,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let outside_src = match_all(
             &rules,
             Path::new("lib/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(in_src.matched.len(), 1);
         assert!(outside_src.matched.is_empty());
@@ -382,12 +540,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         let cpp_file = match_all(
             &rules,
             Path::new("src/main.cpp"),
             &inc(IncludeForm::Quote, "x.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(c_file.matched.len(), 1);
         assert!(cpp_file.matched.is_empty());
@@ -412,6 +572,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 1),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 2);
     }
@@ -437,6 +598,7 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 2),
             &sup,
+            Path::new("/proj"),
         );
         assert_eq!(out.matched.len(), 1);
         assert!(sup.get("base").unwrap().contains(&1));
@@ -469,12 +631,14 @@ mod tests {
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "foo.h", 2),
             &sup,
+            Path::new("/proj"),
         );
         let outside = match_all(
             &rules,
             Path::new("src/main.c"),
             &inc(IncludeForm::Quote, "bar.h", 4),
             &sup,
+            Path::new("/proj"),
         );
         assert!(inside.matched.is_empty());
         assert_eq!(outside.matched.len(), 1);

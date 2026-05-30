@@ -7,10 +7,18 @@ mod apply;
 mod check;
 mod diff;
 mod init;
+mod report;
 mod schema;
+mod style;
 
 #[derive(Parser, Debug)]
-#[command(name = "inclean", version, about = "C/C++ #include path normalizer")]
+#[command(
+    name = "inclean",
+    version,
+    about = "C/C++ #include path normalizer",
+    color = clap::ColorChoice::Always,
+    styles = style::HELP_STYLES
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -146,7 +154,7 @@ pub fn run() -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(code),
         Err(err) => {
-            eprintln!("error: {err:#}");
+            eprintln!("{}", style::error_line(&format!("error: {err:#}")));
             ExitCode::from(1)
         }
     }

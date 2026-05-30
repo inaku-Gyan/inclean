@@ -31,11 +31,14 @@ pub struct Include {
     /// quote / angle (delimiters included), or the macro identifier(s) for
     /// macro form. This is what a rewrite replaces.
     pub argument_range: Range<usize>,
-    /// Byte range covering the trailing comment (leading whitespace +
-    /// comment + delimiters) on the same physical line as the include.
+    /// Byte range covering the same-line trailing bytes after the include
+    /// argument. When a recognized same-line trailing comment is present,
+    /// this spans from the argument end through the physical line end so
+    /// action-layer transforms can edit the first comment while preserving
+    /// any later same-line suffix bytes.
     /// Empty (start == end) when there is no trailing comment, or when
-    /// the comment opens with `/*` but doesn't close on the same line
-    /// (per refactor.md, cross-line block comments are NOT trailing
+    /// the first comment opens with `/*` but doesn't close on the same
+    /// line (per refactor.md, cross-line block comments are NOT trailing
     /// comments and are skipped by trailing-comment processing).
     /// Carriage returns at end of line, if any, are excluded.
     pub trailing_range: Range<usize>,
@@ -43,8 +46,9 @@ pub struct Include {
     /// closes on the same line. `None` for no trailing comment or for
     /// any text after the argument that isn't a recognized comment.
     pub trailing_comment_style: Option<CommentStyle>,
-    /// `true` when the text after the include argument opens a block
-    /// comment (`/*`) that does NOT close on the same physical line.
+    /// `true` when the same-line trailing bytes after the include argument
+    /// contain a block comment (`/*`) that does NOT close on the same
+    /// physical line.
     /// Per refactor.md §"Trailing comment 的定义": such cross-line block
     /// comments are not trailing comments; the trailing_comment.transform
     /// AND the trailing_comment.append_if_absent paths both no-op for
@@ -114,6 +118,11 @@ struct Lexer<'a> {
     report: ScanReport,
 }
 
+enum DirectiveGap {
+    SameLine(usize),
+    CrossLineBlock { start: usize },
+}
+
 impl<'a> Lexer<'a> {
     fn new(src: &'a [u8]) -> Self {
         Lexer {
@@ -142,8 +151,10 @@ impl<'a> Lexer<'a> {
                 continue;
             }
             if b == b'/' && self.peek(1) == Some(b'*') {
-                self.skip_block_comment();
-                at_line_start = false;
+                let crossed_line = self.skip_block_comment();
+                if crossed_line {
+                    at_line_start = true;
+                }
                 continue;
             }
 
@@ -175,13 +186,11 @@ impl<'a> Lexer<'a> {
 
             // ---- Possible directive ----
             if at_line_start && b == b'#' {
-                if let Some(inc) = self.try_include_directive() {
+                let (inc, next_at_line_start) = self.try_include_directive();
+                if let Some(inc) = inc {
                     out.push(inc);
                 }
-                // try_include_directive leaves `pos` on the next interesting
-                // byte (typically past the argument or end-of-line). Either
-                // way, anything else on this line breaks "line start".
-                at_line_start = false;
+                at_line_start = next_at_line_start;
                 continue;
             }
 
@@ -206,21 +215,24 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn skip_block_comment(&mut self) {
+    fn skip_block_comment(&mut self) -> bool {
         debug_assert_eq!(self.src[self.pos], b'/');
         debug_assert_eq!(self.src[self.pos + 1], b'*');
         self.pos += 2;
+        let mut crossed_line = false;
         while self.pos < self.src.len() {
             let b = self.src[self.pos];
             if b == b'*' && self.peek(1) == Some(b'/') {
                 self.pos += 2;
-                return;
+                return crossed_line;
             }
             if b == b'\n' {
                 self.line += 1;
+                crossed_line = true;
             }
             self.pos += 1;
         }
+        crossed_line
     }
 
     fn skip_quoted(&mut self, delim: u8) {
@@ -245,9 +257,9 @@ impl<'a> Lexer<'a> {
 
     /// Called when `at_line_start && src[pos] == '#'`. Tries to parse an
     /// `#include` directive. Returns `Some(...)` if one was found. In all
-    /// cases, advances `pos` past whatever it consumed (typically the entire
-    /// directive line up to but not including the newline).
-    fn try_include_directive(&mut self) -> Option<Include> {
+    /// cases, advances `pos` past whatever it consumed and returns the next
+    /// `at_line_start` state for the main scanner.
+    fn try_include_directive(&mut self) -> (Option<Include>, bool) {
         let directive_start_line = self.line;
         let start = self.pos;
         debug_assert_eq!(self.src[start], b'#');
@@ -255,39 +267,64 @@ impl<'a> Lexer<'a> {
         // Step past `#`.
         let mut p = start + 1;
 
-        // Skip horizontal whitespace between `#` and keyword.
-        while p < self.src.len() && (self.src[p] == b' ' || self.src[p] == b'\t') {
-            p += 1;
-        }
+        // Skip whitespace/comments between `#` and keyword. Comments are
+        // whitespace in C/C++ preprocessing, but a block comment that crosses
+        // a newline ends this directive line instead of continuing it.
+        p = match self.skip_directive_gap_on_line(p) {
+            DirectiveGap::SameLine(p) => p,
+            DirectiveGap::CrossLineBlock { start } => {
+                self.pos = start;
+                let crossed_line = self.skip_block_comment();
+                return (None, crossed_line);
+            }
+        };
 
         // Match "include".
         const KEY: &[u8] = b"include";
         if !self.src[p..].starts_with(KEY) {
-            // Not an include directive — skip the rest of the line so we
-            // don't re-trigger on the same `#`. Not flagged: `#define`,
-            // `#pragma`, etc. are normal directives, not lex errors.
-            self.skip_to_end_of_line();
-            return None;
+            // Not an include directive. Not flagged: `#define`, `#pragma`,
+            // etc. are normal directives, not lex errors.
+            self.pos = p;
+            let next_at_line_start = self.skip_rest_of_directive_line();
+            return (None, next_at_line_start);
         }
         p += KEY.len();
 
-        // The next byte must be whitespace (or end of line). Otherwise it's
-        // an identifier like `#includefoo`, not the include directive.
-        match self.src.get(p) {
-            Some(&b' ' | &b'\t' | &b'\r' | &b'\n') => {}
-            _ => {
-                self.report.skipped_lines.push((
-                    directive_start_line,
-                    "looks like `#include<identifier>` (missing whitespace after `include`) — skipped".to_string(),
-                ));
-                self.skip_to_end_of_line();
-                return None;
-            }
+        // The next byte must be a preprocessing-token separator. Otherwise
+        // it's an identifier like `#includefoo`, not the include directive.
+        if !self.is_include_keyword_delimiter(p) {
+            self.report.skipped_lines.push((
+                directive_start_line,
+                "looks like `#include<identifier>` (missing whitespace after `include`) — skipped"
+                    .to_string(),
+            ));
+            self.pos = p;
+            let next_at_line_start = self.skip_rest_of_directive_line();
+            return (None, next_at_line_start);
         }
 
-        // Skip whitespace before the argument.
-        while p < self.src.len() && (self.src[p] == b' ' || self.src[p] == b'\t') {
-            p += 1;
+        // Skip whitespace/comments before the argument.
+        p = match self.skip_directive_gap_on_line(p) {
+            DirectiveGap::SameLine(p) => p,
+            DirectiveGap::CrossLineBlock { start } => {
+                self.report.skipped_lines.push((
+                    directive_start_line,
+                    "missing argument in `#include` directive".to_string(),
+                ));
+                self.pos = start;
+                let crossed_line = self.skip_block_comment();
+                return (None, crossed_line);
+            }
+        };
+
+        if self.is_end_of_line(p) || self.starts_line_comment(p) {
+            self.report.skipped_lines.push((
+                directive_start_line,
+                "missing argument in `#include` directive".to_string(),
+            ));
+            self.pos = p;
+            let next_at_line_start = self.skip_rest_of_directive_line();
+            return (None, next_at_line_start);
         }
 
         // Parse the argument.
@@ -309,7 +346,7 @@ impl<'a> Lexer<'a> {
                             "unterminated quote `\"` in `#include` argument".to_string(),
                         ));
                         self.skip_to_end_of_line();
-                        return None;
+                        return (None, false);
                     }
                 }
             }
@@ -329,7 +366,7 @@ impl<'a> Lexer<'a> {
                             "unterminated angle `<` in `#include` argument".to_string(),
                         ));
                         self.skip_to_end_of_line();
-                        return None;
+                        return (None, false);
                     }
                 }
             }
@@ -348,17 +385,18 @@ impl<'a> Lexer<'a> {
             }
             None => {
                 // EOF directly after `#include`.
-                return None;
+                return (None, false);
             }
         };
 
-        // Advance the main cursor past the directive line.
+        // Keep the main cursor at the end of the argument. The main scanner
+        // will consume the rest of the line, including any block comment that
+        // crosses lines, so includes inside that comment remain ignored.
         self.pos = arg_end;
-        self.skip_to_end_of_line();
 
-        // `self.pos` now points at the newline (or EOF). Trim a trailing
+        // Find this physical line's end and trim a trailing
         // `\r` for the EOL marker so we can reason about printable bytes.
-        let mut eol_end = self.pos;
+        let mut eol_end = self.find_line_end(arg_end);
         if eol_end > arg_end && self.src.get(eol_end - 1) == Some(&b'\r') {
             eol_end -= 1;
         }
@@ -366,15 +404,70 @@ impl<'a> Lexer<'a> {
         let (trailing_range, trailing_comment_style, has_cross_line_block_trailing) =
             classify_trailing(self.src, arg_end, eol_end);
 
-        Some(Include {
-            form,
-            content,
-            line: directive_start_line,
-            argument_range: arg_start..arg_end,
-            trailing_range,
-            trailing_comment_style,
-            has_cross_line_block_trailing,
-        })
+        (
+            Some(Include {
+                form,
+                content,
+                line: directive_start_line,
+                argument_range: arg_start..arg_end,
+                trailing_range,
+                trailing_comment_style,
+                has_cross_line_block_trailing,
+            }),
+            false,
+        )
+    }
+
+    fn skip_directive_gap_on_line(&self, mut p: usize) -> DirectiveGap {
+        while p < self.src.len() {
+            match self.src[p] {
+                b' ' | b'\t' | b'\r' => p += 1,
+                b'/' if self.src.get(p + 1) == Some(&b'*') => {
+                    match self.find_block_comment_end_on_line(p) {
+                        Some(end) => p = end,
+                        None => return DirectiveGap::CrossLineBlock { start: p },
+                    }
+                }
+                _ => return DirectiveGap::SameLine(p),
+            }
+        }
+        DirectiveGap::SameLine(p)
+    }
+
+    fn find_block_comment_end_on_line(&self, start: usize) -> Option<usize> {
+        debug_assert_eq!(self.src[start], b'/');
+        debug_assert_eq!(self.src[start + 1], b'*');
+        let mut i = start + 2;
+        while i < self.src.len() {
+            if self.src[i] == b'\n' {
+                return None;
+            }
+            if self.src[i] == b'*' && self.src.get(i + 1) == Some(&b'/') {
+                return Some(i + 2);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn is_include_keyword_delimiter(&self, p: usize) -> bool {
+        match self.src.get(p) {
+            None | Some(&b' ' | &b'\t' | &b'\r' | &b'\n') => true,
+            Some(&b'/')
+                if self.src.get(p + 1) == Some(&b'*') || self.src.get(p + 1) == Some(&b'/') =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn is_end_of_line(&self, p: usize) -> bool {
+        p >= self.src.len() || self.src[p] == b'\n' || self.src[p] == b'\r'
+    }
+
+    fn starts_line_comment(&self, p: usize) -> bool {
+        self.src.get(p) == Some(&b'/') && self.src.get(p + 1) == Some(&b'/')
     }
 
     fn find_byte_on_line(&self, from: usize, byte: u8) -> Option<usize> {
@@ -408,10 +501,39 @@ impl<'a> Lexer<'a> {
         i
     }
 
+    fn find_line_end(&self, from: usize) -> usize {
+        let mut i = from;
+        while i < self.src.len() && self.src[i] != b'\n' {
+            i += 1;
+        }
+        i
+    }
+
     fn skip_to_end_of_line(&mut self) {
         while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
             self.pos += 1;
         }
+    }
+
+    fn skip_rest_of_directive_line(&mut self) -> bool {
+        while self.pos < self.src.len() {
+            if self.src[self.pos] == b'\n' {
+                return false;
+            }
+            if self.src[self.pos] == b'/' && self.peek(1) == Some(b'/') {
+                self.skip_line_comment();
+                return false;
+            }
+            if self.src[self.pos] == b'/' && self.peek(1) == Some(b'*') {
+                let crossed_line = self.skip_block_comment();
+                if crossed_line {
+                    return true;
+                }
+                continue;
+            }
+            self.pos += 1;
+        }
+        false
     }
 }
 
@@ -420,9 +542,13 @@ impl<'a> Lexer<'a> {
 ///
 /// - All whitespace / empty → empty range, `None`.
 /// - Starts (after whitespace) with `//` → `Line`, range = `[arg_end, eol_end)`.
-/// - Starts with `/*` and closes with `*/` on the same line → `Block`,
-///   range = `[arg_end, eol_end)`.
-/// - Starts with `/*` but no `*/` on the same line → empty range, `None`.
+/// - Starts with `/*` and the first block comment closes on the same line
+///   → `Block`, range = `[arg_end, eol_end)`. Any later same-line bytes
+///   are preserved by action-layer trailing-comment processing. If those
+///   later bytes contain an unterminated block comment, the cross-line flag
+///   is also set so transform/append logic no-ops.
+/// - Starts with `/*` but the first block comment has no `*/` on the same
+///   line → empty range, `None`.
 ///   The block comment continues to be skipped by the main lexer loop on
 ///   the next iteration; we deliberately drop it from `trailing_range` so
 ///   M4's trailing-comment processing leaves it alone.
@@ -453,7 +579,14 @@ fn classify_trailing(
         let mut j = i + 2;
         while j + 1 < slice.len() {
             if slice[j] == b'*' && slice[j + 1] == b'/' {
-                return (arg_end..eol_end, Some(CommentStyle::Block), false);
+                let first_block_end = j + 2;
+                let has_cross_line_block =
+                    suffix_has_unclosed_block_comment(&slice[first_block_end..]);
+                return (
+                    arg_end..eol_end,
+                    Some(CommentStyle::Block),
+                    has_cross_line_block,
+                );
             }
             j += 1;
         }
@@ -462,6 +595,28 @@ fn classify_trailing(
         return (arg_end..arg_end, None, true);
     }
     (arg_end..eol_end, None, false)
+}
+
+fn suffix_has_unclosed_block_comment(slice: &[u8]) -> bool {
+    let mut i = 0usize;
+    'outer: while i < slice.len() {
+        if slice[i] == b'/' && slice.get(i + 1) == Some(&b'/') {
+            return false;
+        }
+        if slice[i] == b'/' && slice.get(i + 1) == Some(&b'*') {
+            let mut j = i + 2;
+            while j + 1 < slice.len() {
+                if slice[j] == b'*' && slice[j + 1] == b'/' {
+                    i = j + 2;
+                    continue 'outer;
+                }
+                j += 1;
+            }
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -536,6 +691,39 @@ mod tests {
         let incs = scan("   #include <foo.h>\n");
         assert_eq!(incs.len(), 1);
         assert_eq!(incs[0].content, "foo.h");
+    }
+
+    #[test]
+    fn allows_block_comment_before_hash_at_line_start() {
+        let incs = scan("/* banner */ #include \"foo.h\"\n");
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].content, "foo.h");
+        assert_eq!(incs[0].line, 1);
+    }
+
+    #[test]
+    fn closed_block_comment_after_code_does_not_restore_line_start() {
+        let src = "int x; /* banner */ #include \"foo.h\"\n";
+        assert!(scan(src).is_empty());
+    }
+
+    #[test]
+    fn allows_block_comments_between_directive_tokens() {
+        let incs = scan("#/**/include/* gap */ \"foo.h\"\n#include/* gap */\"bar.h\"\n");
+        assert_eq!(incs.len(), 2);
+        assert_eq!(incs[0].content, "foo.h");
+        assert_eq!(incs[1].content, "bar.h");
+    }
+
+    #[test]
+    fn cross_line_block_between_include_and_argument_is_not_joined() {
+        let src = "#include /* gap\n*/ \"foo.h\"\n#include \"bar.h\"\n";
+        let (incs, report) = scan_with_report(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].content, "bar.h");
+        assert_eq!(incs[0].line, 3);
+        assert_eq!(report.skipped_lines.len(), 1);
+        assert!(report.skipped_lines[0].1.contains("missing argument"));
     }
 
     #[test]
@@ -624,6 +812,26 @@ mod tests {
     }
 
     #[test]
+    fn trailing_range_preserves_suffix_after_first_block_comment() {
+        let src = "#include \"foo.h\" /*1st*/ /*2nd*/\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " /*1st*/ /*2nd*/");
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+        assert!(!incs[0].has_cross_line_block_trailing);
+    }
+
+    #[test]
+    fn first_block_comment_with_later_open_block_sets_cross_line_flag() {
+        let src = "#include \"foo.h\" /*1st*/ /* open\n*/\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " /*1st*/ /* open");
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+        assert!(incs[0].has_cross_line_block_trailing);
+    }
+
+    #[test]
     fn trailing_line_comment_classified_as_line_style() {
         let src = "#include \"foo.h\" // note\n";
         let incs = scan(src);
@@ -646,6 +854,39 @@ mod tests {
         let t = &incs[0].trailing_range;
         assert_eq!(t.start, t.end);
         assert_eq!(incs[0].trailing_comment_style, None);
+    }
+
+    #[test]
+    fn trailing_cross_line_block_hides_includes_until_close() {
+        let src = "#include \"foo.h\" /* opens\n#include \"hidden.h\"\n*/\n#include \"bar.h\"\n";
+        let incs = scan(src);
+        assert_eq!(incs.len(), 2);
+        assert_eq!((incs[0].line, incs[0].content.as_str()), (1, "foo.h"));
+        assert_eq!((incs[1].line, incs[1].content.as_str()), (4, "bar.h"));
+        assert!(incs[0].has_cross_line_block_trailing);
+    }
+
+    #[test]
+    fn trailing_unterminated_block_hides_includes_to_eof() {
+        let src = "#include \"foo.h\" /* opens\n#include \"hidden.h\"\n";
+        let incs = scan(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].content, "foo.h");
+        assert!(incs[0].has_cross_line_block_trailing);
+    }
+
+    #[test]
+    fn unterminated_block_before_include_hides_to_eof() {
+        let src = "/* opens\n#include \"hidden.h\"\n";
+        assert!(scan(src).is_empty());
+    }
+
+    #[test]
+    fn other_directive_cross_line_block_hides_include_inside_and_recovers() {
+        let src = "#define X /* opens\n#include \"hidden.h\"\n*/\n#include \"bar.h\"\n";
+        let incs = scan(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!((incs[0].line, incs[0].content.as_str()), (4, "bar.h"));
     }
 
     #[test]

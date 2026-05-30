@@ -33,9 +33,9 @@ use anyhow::{Context, Result, bail};
 
 use super::constants;
 use super::schema::{
-    CommentStyle, IncludeForm, LoadedConfig, MaybeCopiedObject, OutputCommentStyle, OutputForm,
-    RawAction, RawRule, RawSuppression, RawTrailingAction, RawTrailingComment,
-    RawTrailingTransform, RuleLocator,
+    CommentStyle, IncludeForm, IncludeOnAmbiguous, IncludeOnUnresolved, LoadedConfig,
+    MaybeCopiedObject, MaybeCopiedOrSkipObject, OutputCommentStyle, OutputForm, RawAction, RawRule,
+    RawSuppression, RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
 };
 
 const COPIED_TOKEN: &str = "${copied}";
@@ -57,9 +57,11 @@ pub struct ResolvedRule {
 
     pub file_paths: Vec<String>,
     pub file_suffixes: Vec<String>,
-    pub match_forms: Vec<IncludeForm>,
+    pub include_forms: Vec<IncludeForm>,
     pub include_match: Vec<String>,
     pub include_directories: Vec<String>,
+    pub include_on_unresolved: IncludeOnUnresolved,
+    pub include_on_ambiguous: IncludeOnAmbiguous,
 
     pub suppression: ResolvedSuppression,
     pub action: ResolvedAction,
@@ -75,6 +77,7 @@ pub struct ResolvedSuppression {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedAction {
+    Skip,
     Resolve {
         relative_to: String,
         output_form: OutputForm,
@@ -105,6 +108,7 @@ pub enum ResolvedAction {
 
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedTrailingComment {
+    pub skip: bool,
     pub transform: Option<ResolvedTrailingTransform>,
     pub append_if_absent: Option<String>,
 }
@@ -146,16 +150,19 @@ fn default_file_suffixes() -> Vec<String> {
         "@std.cpp.extensions".to_string(),
     ]
 }
-fn default_match_forms() -> Vec<IncludeForm> {
+fn default_include_forms() -> Vec<IncludeForm> {
     vec![IncludeForm::Quote]
 }
 fn default_include_match() -> Vec<String> {
     vec!["**".to_string()]
 }
 fn default_action() -> ResolvedAction {
-    ResolvedAction::Keep {
-        output_form: OutputForm::Preserve,
-        message: String::new(),
+    ResolvedAction::Skip
+}
+fn default_trailing_comment() -> ResolvedTrailingComment {
+    ResolvedTrailingComment {
+        skip: true,
+        ..ResolvedTrailingComment::default()
     }
 }
 
@@ -255,11 +262,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         "file_suffixes",
     )?;
 
-    let match_forms = match raw.match_forms.as_ref() {
+    let include_forms = match raw.include_forms.as_ref() {
         Some(v) => v.clone(),
         None => parent
-            .map(|p| p.match_forms.clone())
-            .unwrap_or_else(default_match_forms),
+            .map(|p| p.include_forms.clone())
+            .unwrap_or_else(default_include_forms),
     };
 
     let include_match = resolve_str_list(
@@ -280,6 +287,16 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         has_parent,
     )?;
 
+    let include_on_unresolved = raw
+        .include_on_unresolved
+        .or_else(|| parent.map(|p| p.include_on_unresolved))
+        .unwrap_or(IncludeOnUnresolved::Error);
+
+    let include_on_ambiguous = raw
+        .include_on_ambiguous
+        .or_else(|| parent.map(|p| p.include_on_ambiguous))
+        .unwrap_or(IncludeOnAmbiguous::Error);
+
     let suppression = match raw.suppression_comments_regex.as_ref() {
         Some(MaybeCopiedObject::Copied) => {
             if !has_parent {
@@ -296,7 +313,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
     };
 
     let action = match raw.action.as_ref() {
-        Some(MaybeCopiedObject::Copied) => {
+        Some(MaybeCopiedOrSkipObject::Copied) => {
             if !has_parent {
                 bail!("{ctx}: `action = \"${{copied}}\"` requires `copied_from`");
             }
@@ -304,7 +321,8 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
                 .map(|p| p.action.clone())
                 .unwrap_or_else(default_action)
         }
-        Some(MaybeCopiedObject::Object(a)) => {
+        Some(MaybeCopiedOrSkipObject::Skip) => ResolvedAction::Skip,
+        Some(MaybeCopiedOrSkipObject::Object(a)) => {
             build_action(a, parent.map(|p| &p.action), has_parent, &ctx)?
         }
         None => parent
@@ -312,8 +330,14 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
             .unwrap_or_else(default_action),
     };
 
+    if matches!(include_on_unresolved, IncludeOnUnresolved::Allow)
+        && matches!(action, ResolvedAction::Resolve { .. })
+    {
+        bail!("{ctx}: `include_on_unresolved = \"allow\"` cannot be used with action `resolve`");
+    }
+
     let trailing_comment = match raw.trailing_comment.as_ref() {
-        Some(MaybeCopiedObject::Copied) => {
+        Some(MaybeCopiedOrSkipObject::Copied) => {
             if !has_parent {
                 bail!("{ctx}: `trailing_comment = \"${{copied}}\"` requires `copied_from`");
             }
@@ -321,12 +345,16 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
                 .map(|p| p.trailing_comment.clone())
                 .unwrap_or_default()
         }
-        Some(MaybeCopiedObject::Object(t)) => {
+        Some(MaybeCopiedOrSkipObject::Skip) => ResolvedTrailingComment {
+            skip: true,
+            ..ResolvedTrailingComment::default()
+        },
+        Some(MaybeCopiedOrSkipObject::Object(t)) => {
             build_trailing(t, parent.map(|p| &p.trailing_comment), has_parent, &ctx)?
         }
         None => parent
             .map(|p| p.trailing_comment.clone())
-            .unwrap_or_default(),
+            .unwrap_or_else(default_trailing_comment),
     };
 
     Ok(ResolvedRule {
@@ -343,9 +371,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         },
         file_paths,
         file_suffixes,
-        match_forms,
+        include_forms,
         include_match,
         include_directories,
+        include_on_unresolved,
+        include_on_ambiguous,
         suppression,
         action,
         trailing_comment,
@@ -503,6 +533,7 @@ fn build_action(
         | ResolvedAction::Remove { message, .. }
         | ResolvedAction::CommentOut { message, .. }
         | ResolvedAction::Error { message } => message.clone(),
+        ResolvedAction::Skip => String::new(),
     });
 
     match raw {
@@ -639,6 +670,7 @@ fn build_trailing(
         );
     }
     Ok(ResolvedTrailingComment {
+        skip: false,
         transform,
         append_if_absent,
     })
@@ -780,9 +812,15 @@ mod tests {
         assert!(r.file_suffixes.contains(&".c".to_string()));
         assert!(r.file_suffixes.contains(&".h".to_string()));
         assert!(r.file_suffixes.contains(&".cpp".to_string()));
-        assert_eq!(r.match_forms, vec![IncludeForm::Quote]);
+        assert_eq!(r.include_forms, vec![IncludeForm::Quote]);
         assert_eq!(r.include_match, vec!["**"]);
-        assert!(matches!(r.action, ResolvedAction::Keep { .. }));
+        assert!(matches!(
+            r.include_on_unresolved,
+            IncludeOnUnresolved::Error
+        ));
+        assert!(matches!(r.include_on_ambiguous, IncludeOnAmbiguous::Error));
+        assert!(matches!(r.action, ResolvedAction::Skip));
+        assert!(r.trailing_comment.skip);
     }
 
     #[test]
@@ -792,7 +830,10 @@ mod tests {
             [[rule]]
             name = "base"
             file_paths = ["src/**"]
+            include_forms = ["quote", "angle"]
             include_directories = ["src", "src/internal"]
+            include_on_unresolved = "skip"
+            include_on_ambiguous = "first"
 
             [[rule]]
             name = "child"
@@ -803,7 +844,19 @@ mod tests {
         let resolved = resolve(&[cfg]).unwrap();
         let child = get(&resolved, "child");
         assert_eq!(child.file_paths, vec!["src/**"]);
+        assert_eq!(
+            child.include_forms,
+            vec![IncludeForm::Quote, IncludeForm::Angle]
+        );
         assert_eq!(child.include_directories, vec!["src", "src/internal"]);
+        assert!(matches!(
+            child.include_on_unresolved,
+            IncludeOnUnresolved::Skip
+        ));
+        assert!(matches!(
+            child.include_on_ambiguous,
+            IncludeOnAmbiguous::First
+        ));
         assert!(matches!(child.action, ResolvedAction::Replace { .. }));
     }
 
@@ -814,15 +867,50 @@ mod tests {
             [[rule]]
             name = "base"
             file_paths = ["src/**"]
+            include_forms = ["quote", "angle"]
+            include_on_unresolved = "allow"
+            include_on_ambiguous = "first"
 
             [[rule]]
             name = "narrow"
             copied_from = "base"
             file_paths = ["src/foo/**"]
+            include_forms = ["macro"]
+            include_on_unresolved = "skip"
+            include_on_ambiguous = "skip"
             "#,
         );
         let resolved = resolve(&[cfg]).unwrap();
-        assert_eq!(get(&resolved, "narrow").file_paths, vec!["src/foo/**"]);
+        let narrow = get(&resolved, "narrow");
+        assert_eq!(narrow.file_paths, vec!["src/foo/**"]);
+        assert_eq!(narrow.include_forms, vec![IncludeForm::Macro]);
+        assert!(matches!(
+            narrow.include_on_unresolved,
+            IncludeOnUnresolved::Skip
+        ));
+        assert!(matches!(
+            narrow.include_on_ambiguous,
+            IncludeOnAmbiguous::Skip
+        ));
+    }
+
+    #[test]
+    fn allow_unresolved_with_resolve_action_is_rejected() {
+        let cfg = load_rules(
+            r#"
+            [[rule]]
+            name = "bad"
+            include_directories = ["include"]
+            include_on_unresolved = "allow"
+            action = { type = "resolve", relative_to = "include" }
+            "#,
+        );
+        let err = resolve(&[cfg]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("include_on_unresolved = \"allow\"") && msg.contains("resolve"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1106,6 +1194,24 @@ mod tests {
             ResolvedAction::Error { message } => assert_eq!(message, "deprecated"),
             other => panic!("expected inherited Error action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn skip_sentinel_resolves_for_action_and_trailing_comment() {
+        let cfg = load_rules(
+            r#"
+            [[rule]]
+            name = "r"
+            action = "skip"
+            trailing_comment = "skip"
+            "#,
+        );
+        let resolved = resolve(&[cfg]).unwrap();
+        let r = get(&resolved, "r");
+        assert!(matches!(r.action, ResolvedAction::Skip));
+        assert!(r.trailing_comment.skip);
+        assert!(r.trailing_comment.transform.is_none());
+        assert!(r.trailing_comment.append_if_absent.is_none());
     }
 
     #[test]

@@ -1,0 +1,10 @@
+[project]
+root = "."
+version = "0.3.0-alpha.3"
+min_inclean_version = "0.3.0-alpha.3"
+
+[[rule]]
+name = "rewrite-selected"
+file_paths = ["src/**/*", "!src/generated/**/*", "src/generated/keep.c"]
+include_match = ["**", "!private/**", "private/allowed.h"]
+action = { type = "replace", with = "clean/${original}" }

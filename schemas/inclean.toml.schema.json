@@ -2,7 +2,7 @@
   "$id": "https://raw.githubusercontent.com/inaku-Gyan/inclean/main/schemas/inclean.toml.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "inclean.toml",
-  "description": "Configuration schema for inclean. See https://github.com/inaku-Gyan/inclean/blob/main/docs/configuration.md",
+  "description": "Configuration schema for inclean. Generate a documented starter config with `inclean init`.",
   "type": "object",
   "properties": {
     "project": {
@@ -46,21 +46,22 @@
       ]
     },
     "RawRule": {
-      "description": "A single `[[rule]]` entry, before defaulting / copy / constant expansion.\n`Option<_>` distinguishes \"user did not specify\" from \"user wrote empty\".",
+      "description": "A single `[[rule]]` entry. Raw rules deserialize exactly as written;\ninheritance from `copied_from`, `@std.*` constants, `${copied}`, and\neffective defaults are resolved later.",
       "type": "object",
       "properties": {
         "name": {
-          "description": "Globally unique across the config.",
+          "description": "Globally unique rule name. Rules are evaluated in declaration order,\nand diagnostics refer to this name.",
           "type": "string"
         },
         "copied_from": {
-          "description": "Name of a previously declared rule whose resolved fields are copied\n(transitively) into this one. Top-level fields the child sets are\nkept; top-level fields the child omits inherit from the parent's\nresolved value. Inner fields of an object the child rewrites default\nto null/disabled — use `${copied}` to pull each inner field from the\nparent explicitly.",
+          "description": "Name of a previously declared rule to copy from. The child starts from\nthe parent's already resolved value, so copy chains are transitive, but\nreferences are forward-only. Omitted top-level fields inherit from the\nparent; written top-level fields replace the parent's field. Inside a\nwritten object, omitted inner fields reset to their defaults unless the\nchild writes `${copied}` for that inner field.",
           "type": [
             "string",
             "null"
           ]
         },
         "file_paths": {
+          "description": "Globset patterns matched against paths relative to `[project].root`.\nPatterns are ordered: a leading unescaped `!` negates, and the last\nmatching pattern wins. Use `\\!` for a literal leading `!`. `*` does not\ncross `/`; `**` does. Effective default for a rule with no parent is\n`[\"**/*\"]`. If a matching pattern contains wildcard characters,\n`file_suffixes` must also match; exact literal paths skip the suffix\ncheck.",
           "type": [
             "array",
             "null"
@@ -70,6 +71,7 @@
           }
         },
         "file_suffixes": {
+          "description": "Literal extensions, including the leading dot, used after a wildcard\n`file_paths` match. Effective default for a rule with no parent is\n`[\"@std.c.extensions\", \"@std.cpp.extensions\"]`, expanded to the built-in\nC and C++ extension lists.",
           "type": [
             "array",
             "null"
@@ -79,7 +81,7 @@
           }
         },
         "suppression_comments_regex": {
-          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved value verbatim (object-context `${copied}`).",
+          "description": "Optional per-rule suppression markers. Regexes are matched against each\nline after stripping `//` or same-line `/* */` delimiters when present\nand trimming whitespace. The whole field can also be the string\n`\"${copied}\"` to reuse the parent's resolved value verbatim.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawSuppression"
@@ -89,7 +91,8 @@
             }
           ]
         },
-        "match_forms": {
+        "include_forms": {
+          "description": "Include delimiter forms this rule matches. Effective default for a rule\nwith no parent is `[\"quote\"]`. `macro` can match `#include FOO`, but\nevaluating any action against a macro include is currently an error.",
           "type": [
             "array",
             "null"
@@ -99,6 +102,7 @@
           }
         },
         "include_match": {
+          "description": "Globset patterns matched against the include argument with quotes or\nangle brackets stripped, for example `mylib/foo.h`. Patterns are\nordered: a leading unescaped `!` negates, and the last matching pattern\nwins. Use `\\!` for a literal leading `!`. `*` does not cross `/`; `**`\ndoes. Effective default for a rule with no parent is `[\"**\"]`.",
           "type": [
             "array",
             "null"
@@ -108,7 +112,7 @@
           }
         },
         "include_directories": {
-          "description": "Literal directory paths under the project root (relative to it) that\nthe `resolve` action probes to locate the include's actual header.\nNOT a glob; no implicit `/**` suffix; no `.gitignore` semantics.",
+          "description": "Literal directory paths under the project root (relative to it) that\nare probed after `include_forms` and `include_match` pass. NOT a glob;\nno implicit `/**` suffix; no `.gitignore` semantics. When this list is\nempty, no directory-resolution policy is applied.",
           "type": [
             "array",
             "null"
@@ -117,8 +121,30 @@
             "type": "string"
           }
         },
+        "include_on_unresolved": {
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand no directory contains the include argument. Effective default is\n`error`. `allow` keeps the rule matched for non-`resolve` actions; it\nis rejected with action `resolve`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IncludeOnUnresolved"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "include_on_ambiguous": {
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand more than one directory contains the include argument. Effective\ndefault is `error`; `first` selects the first matching directory in\ndeclaration order.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IncludeOnAmbiguous"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "action": {
-          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved action verbatim (object-context `${copied}`).",
+          "description": "Action to run when all match layers pass. If neither this rule nor any\ncopied ancestor sets an action, the effective action is `\"skip\"`. The\nwhole field can also be the string `\"${copied}\"` to reuse the parent's\nresolved action, or `\"skip\"` to avoid contributing an action candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawAction"
@@ -129,7 +155,7 @@
           ]
         },
         "trailing_comment": {
-          "description": "The whole field can also be the string `\"${copied}\"` to reuse the\nparent rule's resolved value verbatim (object-context `${copied}`).",
+          "description": "Optional trailing-comment transform and/or append rule. If neither this\nrule nor any copied ancestor sets one, the effective value is `\"skip\"`.\nThe whole field can also be the string `\"${copied}\"` to reuse the\nparent's resolved value verbatim, or `\"skip\"` to avoid contributing a\ntrailing-comment candidate.",
           "anyOf": [
             {
               "$ref": "#/$defs/RawTrailingComment"
@@ -146,29 +172,41 @@
       ]
     },
     "RawSuppression": {
-      "description": "Suppression markers: regex patterns matched line-by-line.",
-      "type": "object",
-      "properties": {
-        "block_start": {
-          "type": [
-            "string",
-            "null"
-          ]
+      "anyOf": [
+        {
+          "description": "Suppression markers: regex patterns matched line-by-line. `line` suppresses\nonly matching lines. `block_start` suppresses from its matching line until a\nlater `block_end` match, inclusive. If `block_end` is omitted, suppression\ncontinues to the end of the file after `block_start` matches.",
+          "type": "object",
+          "properties": {
+            "block_start": {
+              "description": "Regex that starts an off-limits block.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "block_end": {
+              "description": "Regex that ends an off-limits block.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "line": {
+              "description": "Regex that suppresses a single line.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
         },
-        "block_end": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "line": {
-          "type": [
-            "string",
-            "null"
-          ]
+        {
+          "description": "Copy this whole object from the resolved parent rule named by copied_from.",
+          "type": "string",
+          "const": "${copied}"
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "IncludeForm": {
       "description": "Which \"form\" of `#include` a rule applies to.",
@@ -190,196 +228,264 @@
         }
       ]
     },
-    "RawAction": {
-      "description": "The action a rule executes on a matched `#include`. Tagged by `type`.",
+    "IncludeOnUnresolved": {
+      "description": "Policy when `include_directories` is configured but no directory contains\nthe include argument.",
       "oneOf": [
         {
-          "description": "Resolve the include against the rule's `include_directories`, then\nrewrite the path to be relative to `relative_to`.",
-          "type": "object",
-          "properties": {
-            "relative_to": {
-              "type": "string"
-            },
-            "output_form": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/OutputForm"
+          "description": "Report an evaluation failure.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Treat this rule as not matched for this include.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Keep this rule matched. Rejected for `resolve` actions.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "IncludeOnAmbiguous": {
+      "description": "Policy when `include_directories` is configured and multiple directories\ncontain the include argument.",
+      "oneOf": [
+        {
+          "description": "Report an evaluation failure.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Treat this rule as not matched for this include.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Select the first matching include directory in declaration order.",
+          "type": "string",
+          "const": "first"
+        }
+      ]
+    },
+    "RawAction": {
+      "anyOf": [
+        {
+          "description": "The action a rule executes on a matched `#include`. This is a tagged object\nusing `type = \"resolve\"`, `\"replace\"`, `\"keep\"`, `\"remove\"`,\n`\"comment_out\"`, or `\"error\"`.",
+          "oneOf": [
+            {
+              "description": "Rewrite the include using the header path selected by\n`include_directories`, relative to `relative_to`. `${current_file}`\nmeans the directory of the file being edited. Default `output_form`\nis `preserve`; default `message` is empty.",
+              "type": "object",
+              "properties": {
+                "relative_to": {
+                  "description": "Base path for the rewritten include. Use `${current_file}` for the\ncurrent source file's directory.",
+                  "type": "string"
                 },
-                {
-                  "type": "null"
+                "output_form": {
+                  "description": "Output delimiter form. Defaults to `preserve`.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/OutputForm"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "message": {
+                  "description": "Optional diagnostic message string. `${current_file}` and\n`${original}` placeholders are supported where messages are emitted.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "resolve"
                 }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "relative_to"
               ]
             },
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "resolve"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "relative_to"
-          ]
-        },
-        {
-          "description": "Replace the include text with `with`, supporting `${...}` placeholders.",
-          "type": "object",
-          "properties": {
-            "with": {
-              "type": "string"
-            },
-            "output_form": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/OutputForm"
+            {
+              "description": "Replace the include argument with `with`. Default `output_form` is\n`preserve`; default `message` is empty.",
+              "type": "object",
+              "properties": {
+                "with": {
+                  "description": "Replacement include argument. Supports `${original}` and\n`${current_file}` placeholders.",
+                  "type": "string"
                 },
-                {
-                  "type": "null"
+                "output_form": {
+                  "description": "Output delimiter form. Defaults to `preserve`.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/OutputForm"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "message": {
+                  "description": "Optional diagnostic message string.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "replace"
                 }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "with"
               ]
             },
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "replace"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "with"
-          ]
-        },
-        {
-          "description": "Leave the include's argument alone (the form may still change via\n`output_form`).",
-          "type": "object",
-          "properties": {
-            "output_form": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/OutputForm"
+            {
+              "description": "Leave the include's argument alone (the form may still change via\n`output_form`). Default `output_form` is `preserve`; default `message`\nis empty.",
+              "type": "object",
+              "properties": {
+                "output_form": {
+                  "description": "Output delimiter form. Defaults to `preserve`.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/OutputForm"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                {
-                  "type": "null"
+                "message": {
+                  "description": "Optional diagnostic message string.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "keep"
                 }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type"
               ]
             },
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "keep"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "Delete the entire `#include` line.",
-          "type": "object",
-          "properties": {
-            "keep_blank_line": {
-              "type": [
-                "boolean",
-                "null"
-              ],
-              "default": null
-            },
-            "keep_trailing_comment": {
-              "type": [
-                "boolean",
-                "null"
-              ],
-              "default": null
-            },
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "remove"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "Wrap the include line in `//` (default) or `/* */` delimiters.",
-          "type": "object",
-          "properties": {
-            "style": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/CommentStyle"
+            {
+              "description": "Delete the entire `#include` line. By default no blank line is kept and\na same-line trailing comment is kept on its own line.",
+              "type": "object",
+              "properties": {
+                "keep_blank_line": {
+                  "description": "Keep the line terminator as a blank line. Defaults to `false`.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "default": null
                 },
-                {
-                  "type": "null"
+                "keep_trailing_comment": {
+                  "description": "Preserve a recognized same-line trailing comment on its own line.\nDefaults to `true`.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "message": {
+                  "description": "Optional diagnostic message string.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "remove"
                 }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type"
               ]
             },
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
+            {
+              "description": "Wrap the include line in `//` (default) or `/* */` delimiters. Default\n`message` is empty.",
+              "type": "object",
+              "properties": {
+                "style": {
+                  "description": "Comment delimiter style. Defaults to `//`.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CommentStyle"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "message": {
+                  "description": "Optional diagnostic message string.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "comment_out"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ]
             },
-            "type": {
-              "type": "string",
-              "const": "comment_out"
+            {
+              "description": "Report a user-facing error for the matched include. Exit code 2.",
+              "type": "object",
+              "properties": {
+                "message": {
+                  "description": "Error message. Supports `${original}` and `${current_file}`.\nDefaults to an empty string.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "type": "string",
+                  "const": "error"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ]
             }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
           ]
         },
         {
-          "description": "Report a user-facing error for the matched include. Exit code 2.",
-          "type": "object",
-          "properties": {
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "error"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
+          "description": "Copy this whole object from the resolved parent rule named by copied_from.",
+          "type": "string",
+          "const": "${copied}"
+        },
+        {
+          "description": "Do not contribute this field to conflict detection for this rule.",
+          "type": "string",
+          "const": "skip"
         }
       ]
     },
@@ -419,34 +525,50 @@
       ]
     },
     "RawTrailingComment": {
-      "description": "Trailing-comment configuration.",
-      "type": "object",
-      "properties": {
-        "transform": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RawTrailingTransform"
+      "anyOf": [
+        {
+          "description": "Trailing-comment configuration for `resolve`, `replace`, and `keep`\nactions. Cross-line block comments after an include are not considered\ntrailing comments and are left alone.",
+          "type": "object",
+          "properties": {
+            "transform": {
+              "description": "Optional transform to run when an existing same-line trailing comment\nmatches.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RawTrailingTransform"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
-            {
-              "type": "null"
+            "append_if_absent": {
+              "description": "Literal text to append to the include line when there is no\ntrailing comment after action evaluation. The user writes the full\ncomment text, including delimiters and leading whitespace. It must not\ncontain line terminators.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
-          ]
+          },
+          "additionalProperties": false
         },
-        "append_if_absent": {
-          "description": "Literal text to append to the include line when there is no\ntrailing comment after action evaluation. The user writes the full\ncomment text (including delimiters and leading whitespace).",
-          "type": [
-            "string",
-            "null"
-          ]
+        {
+          "description": "Copy this whole object from the resolved parent rule named by copied_from.",
+          "type": "string",
+          "const": "${copied}"
+        },
+        {
+          "description": "Do not contribute this field to conflict detection for this rule.",
+          "type": "string",
+          "const": "skip"
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "RawTrailingTransform": {
-      "description": "Trailing-comment transform: matches an existing comment, then runs an\naction over it. `action` is required — per refactor.md §\"Config File\"\nthe schema lists it without a `?`, and silent defaulting to `Keep`\nhides config bugs.",
+      "description": "Trailing-comment transform: matches an existing comment, then runs an\naction over it. `action` is required so a transform cannot silently become\na no-op because of an omitted nested action.",
       "type": "object",
       "properties": {
         "match_styles": {
+          "description": "Existing comment styles that can match. Effective default is both\n`//` and `/**/`.",
           "type": [
             "array",
             "null"
@@ -456,12 +578,14 @@
           }
         },
         "content_regex": {
+          "description": "Regex matched against the trimmed trailing-comment body. Effective\ndefault is `.*`.",
           "type": [
             "string",
             "null"
           ]
         },
         "action": {
+          "description": "Action to run when style and regex both match.",
           "$ref": "#/$defs/RawTrailingAction"
         }
       },
@@ -474,13 +598,15 @@
       "description": "The action a trailing-comment transform runs on its match.",
       "oneOf": [
         {
-          "description": "Replace the comment body with `with`.",
+          "description": "Replace the comment body with `with`. Default `output_style` is\n`preserve`; default `message` is empty.",
           "type": "object",
           "properties": {
             "with": {
+              "description": "Replacement comment body. Supports `${original}` and\n`${current_file}` placeholders.",
               "type": "string"
             },
             "output_style": {
+              "description": "Output comment delimiter style. Defaults to `preserve`.",
               "anyOf": [
                 {
                   "$ref": "#/$defs/OutputCommentStyle"
@@ -491,6 +617,7 @@
               ]
             },
             "message": {
+              "description": "Optional diagnostic message string.",
               "type": [
                 "string",
                 "null"
@@ -509,10 +636,11 @@
           ]
         },
         {
-          "description": "Keep the comment body; only `output_style` may change.",
+          "description": "Keep the comment body; only `output_style` may change. Default\n`output_style` is `preserve`; default `message` is empty.",
           "type": "object",
           "properties": {
             "output_style": {
+              "description": "Output comment delimiter style. Defaults to `preserve`.",
               "anyOf": [
                 {
                   "$ref": "#/$defs/OutputCommentStyle"
@@ -523,6 +651,7 @@
               ]
             },
             "message": {
+              "description": "Optional diagnostic message string.",
               "type": [
                 "string",
                 "null"
@@ -540,10 +669,11 @@
           ]
         },
         {
-          "description": "Remove the trailing comment entirely.",
+          "description": "Remove the trailing comment entirely. Default `message` is empty.",
           "type": "object",
           "properties": {
             "message": {
+              "description": "Optional diagnostic message string.",
               "type": [
                 "string",
                 "null"
@@ -565,6 +695,7 @@
           "type": "object",
           "properties": {
             "message": {
+              "description": "Error message. Supports `${original}` for the original comment body\nand `${current_file}` for the edited source path.",
               "type": [
                 "string",
                 "null"

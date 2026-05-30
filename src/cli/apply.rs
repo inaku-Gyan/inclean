@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 
-use super::ApplyArgs;
+use super::{ApplyArgs, report, style as cli_style};
 use crate::pipeline::run::{self, CheckMode};
 
 pub fn run(args: ApplyArgs) -> Result<u8> {
@@ -39,23 +39,20 @@ pub fn run(args: ApplyArgs) -> Result<u8> {
         .count();
 
     if !summary.skipped.is_empty() {
-        eprintln!(
-            "warning: skipped {} file(s) that could not be parsed",
-            summary.skipped.len()
-        );
-        for s in &summary.skipped {
-            eprintln!("  - {}: {}", s.relpath.display(), s.reason);
-        }
+        report::print_skipped_parse_failures(&summary.skipped);
     }
-    for w in &summary.warnings {
-        eprintln!("{w}");
-    }
+    report::print_warnings(&summary.warnings);
+    let status = if skipped_for_errors == 0 {
+        cli_style::success("wrote")
+    } else {
+        cli_style::warning_out("wrote")
+    };
     println!(
-        "wrote {written} file(s); {skipped_for_errors} file(s) skipped due to unfixable violations"
+        "{status} {written} file(s); {skipped_for_errors} file(s) skipped due to unfixable violations"
     );
-    let report = run::render_unfixable_report(&summary);
-    if !report.is_empty() {
-        eprint!("{report}");
+    let unfixable_report = report::render_unfixable_report(&summary);
+    if !unfixable_report.is_empty() {
+        eprint!("{unfixable_report}");
     }
     Ok(run::summary_exit_code(&summary))
 }
