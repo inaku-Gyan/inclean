@@ -273,11 +273,18 @@ fn resolve_include(
         return IncludeResolution::Matched(None);
     }
 
-    let mut hits: Vec<(String, PathBuf)> = Vec::new();
+    let mut hits: Vec<(String, PathBuf, PathBuf)> = Vec::new();
     for dir in dirs {
         let candidate = project_root.join(dir).join(&include.content);
         if candidate.is_file() {
-            hits.push((dir.clone(), candidate));
+            // Different include dirs can reach the same physical header
+            // (for example `include` and `include/.`, or symlinked dirs).
+            let identity = candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
+            if !hits.iter().any(|(_, _, seen)| *seen == identity) {
+                hits.push((dir.clone(), candidate, identity));
+            }
         }
     }
 
@@ -295,7 +302,7 @@ fn resolve_include(
             IncludeOnAmbiguous::Error => {
                 let dirs_list = hits
                     .iter()
-                    .map(|(d, _)| d.as_str())
+                    .map(|(d, _, _)| d.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
                 IncludeResolution::Failed(format!(

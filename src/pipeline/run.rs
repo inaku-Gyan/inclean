@@ -1256,6 +1256,28 @@ mod tests {
     }
 
     #[test]
+    fn same_header_reached_through_multiple_directories_is_not_ambiguous() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["include", "include/."]
+            action = { type = "resolve", relative_to = "." }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("include/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"../include/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
     fn ambiguous_include_can_skip_rule() {
         let rule = r#"
             [[rule]]
