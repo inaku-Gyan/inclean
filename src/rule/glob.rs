@@ -16,22 +16,63 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use globset::{GlobBuilder, GlobMatcher};
 
 #[derive(Debug)]
 pub struct PathMatcher {
-    globs: Vec<CompiledGlob>,
+    globs: Vec<CompiledPathGlob>,
     extensions: Vec<String>,
 }
 
 #[derive(Debug)]
-struct CompiledGlob {
+pub struct OrderedGlobMatcher {
+    globs: Vec<CompiledSignedGlob>,
+}
+
+#[derive(Debug)]
+struct CompiledSignedGlob {
     matcher: GlobMatcher,
     /// Original pattern string. Kept for explain-mode output (M2) and tests.
     #[allow(dead_code)]
     pattern: String,
+    is_negated: bool,
+}
+
+#[derive(Debug)]
+struct CompiledPathGlob {
+    signed: CompiledSignedGlob,
     has_wildcards: bool,
+}
+
+#[derive(Debug)]
+struct ParsedSignedPattern {
+    is_negated: bool,
+    glob_pattern: String,
+}
+
+impl OrderedGlobMatcher {
+    /// Compile a list of ordered signed globs. Later matching patterns override
+    /// earlier ones; a negated pattern makes the final result false.
+    pub fn build(patterns: &[String]) -> Result<Self> {
+        let mut globs = Vec::with_capacity(patterns.len());
+        for p in patterns {
+            globs.push(compile_signed(p).with_context(|| format!("invalid glob `{p}`"))?);
+        }
+        Ok(Self { globs })
+    }
+
+    /// Does `path` satisfy this ordered signed glob list?
+    pub fn is_match<P: AsRef<Path>>(&self, path: P) -> bool {
+        let path = path.as_ref();
+        let mut matched = false;
+        for g in &self.globs {
+            if g.matcher.is_match(path) {
+                matched = !g.is_negated;
+            }
+        }
+        matched
+    }
 }
 
 impl PathMatcher {
@@ -50,18 +91,17 @@ impl PathMatcher {
     /// Does `path` (relative to the project root) satisfy this rule's
     /// layer 1 + layer 2 match?
     pub fn matches(&self, path: &Path) -> bool {
+        let mut matched = false;
         for g in &self.globs {
-            if !g.matcher.is_match(path) {
+            if !g.signed.matcher.is_match(path) {
                 continue;
             }
-            if !g.has_wildcards {
-                return true;
+            if g.has_wildcards && !self.matches_extension(path) {
+                continue;
             }
-            if self.matches_extension(path) {
-                return true;
-            }
+            matched = !g.signed.is_negated;
         }
-        false
+        matched
     }
 
     fn matches_extension(&self, path: &Path) -> bool {
@@ -81,15 +121,58 @@ impl PathMatcher {
     }
 }
 
-fn compile(pattern: &str) -> Result<CompiledGlob> {
-    let glob = GlobBuilder::new(pattern)
+fn compile(pattern: &str) -> Result<CompiledPathGlob> {
+    let parsed =
+        parse_signed_pattern(pattern).with_context(|| format!("invalid path glob `{pattern}`"))?;
+    let signed = compile_parsed_signed(pattern, &parsed)
+        .with_context(|| format!("invalid path glob `{pattern}`"))?;
+    Ok(CompiledPathGlob {
+        signed,
+        has_wildcards: parsed
+            .glob_pattern
+            .chars()
+            .any(|c| matches!(c, '*' | '?' | '[' | '{')),
+    })
+}
+
+fn compile_signed(pattern: &str) -> Result<CompiledSignedGlob> {
+    let parsed = parse_signed_pattern(pattern)?;
+    compile_parsed_signed(pattern, &parsed)
+}
+
+fn compile_parsed_signed(
+    original_pattern: &str,
+    parsed: &ParsedSignedPattern,
+) -> Result<CompiledSignedGlob> {
+    let glob = GlobBuilder::new(&parsed.glob_pattern)
         .literal_separator(true)
         .build()
-        .with_context(|| format!("invalid path glob `{pattern}`"))?;
-    Ok(CompiledGlob {
+        .with_context(|| format!("glob pattern `{original_pattern}`"))?;
+    Ok(CompiledSignedGlob {
         matcher: glob.compile_matcher(),
-        pattern: pattern.to_string(),
-        has_wildcards: pattern.chars().any(|c| matches!(c, '*' | '?' | '[' | '{')),
+        pattern: original_pattern.to_string(),
+        is_negated: parsed.is_negated,
+    })
+}
+
+fn parse_signed_pattern(pattern: &str) -> Result<ParsedSignedPattern> {
+    let (is_negated, body) = if let Some(body) = pattern.strip_prefix('!') {
+        if body.is_empty() {
+            bail!("negated glob `!` is missing a pattern");
+        }
+        (true, body)
+    } else {
+        (false, pattern)
+    };
+
+    let glob_pattern = match body.strip_prefix(r"\!") {
+        Some(rest) => format!("!{rest}"),
+        None => body.to_string(),
+    };
+
+    Ok(ParsedSignedPattern {
+        is_negated,
+        glob_pattern,
     })
 }
 
@@ -180,5 +263,44 @@ mod tests {
         let m = pm(&["src/foo?.c"], &[".c"]);
         assert!(m.matches(&PathBuf::from("src/foo1.c")));
         assert!(!m.matches(&PathBuf::from("src/foo12.c"))); // ? matches one char
+    }
+
+    #[test]
+    fn negated_pattern_excludes_previous_match() {
+        let m = pm(&["src/**", "!src/generated/**"], &[".c"]);
+        assert!(m.matches(&PathBuf::from("src/main.c")));
+        assert!(!m.matches(&PathBuf::from("src/generated/main.c")));
+    }
+
+    #[test]
+    fn later_positive_pattern_reincludes_after_negation() {
+        let m = pm(
+            &["src/**", "!src/generated/**", "src/generated/keep.c"],
+            &[".c"],
+        );
+        assert!(m.matches(&PathBuf::from("src/main.c")));
+        assert!(!m.matches(&PathBuf::from("src/generated/skip.c")));
+        assert!(m.matches(&PathBuf::from("src/generated/keep.c")));
+    }
+
+    #[test]
+    fn negated_pattern_without_positive_match_does_not_include() {
+        let m = pm(&["!src/**"], &[".c"]);
+        assert!(!m.matches(&PathBuf::from("src/main.c")));
+        assert!(!m.matches(&PathBuf::from("lib/main.c")));
+    }
+
+    #[test]
+    fn escaped_leading_bang_matches_literal_bang_path() {
+        let m = pm(&[r"\!foo.c"], &[]);
+        assert!(m.matches(&PathBuf::from("!foo.c")));
+        assert!(!m.matches(&PathBuf::from("foo.c")));
+    }
+
+    #[test]
+    fn bare_bang_pattern_is_rejected() {
+        let res = PathMatcher::build(&["!".to_string()], &[]);
+        let err = res.unwrap_err();
+        assert!(format!("{err:#}").contains("missing a pattern"));
     }
 }

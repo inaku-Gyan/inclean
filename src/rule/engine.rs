@@ -30,10 +30,9 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::Regex;
 
-use super::glob::PathMatcher;
+use super::glob::{OrderedGlobMatcher, PathMatcher};
 use crate::config::copy::{ResolvedRule, ResolvedSuppression};
 use crate::config::schema::{IncludeOnAmbiguous, IncludeOnUnresolved};
 use crate::lex::include_line::Include;
@@ -43,7 +42,7 @@ use crate::lex::include_line::Include;
 pub struct CompiledRule<'a> {
     pub rule: &'a ResolvedRule,
     pub path_matcher: PathMatcher,
-    pub include_matcher: GlobSet,
+    pub include_matcher: OrderedGlobMatcher,
     pub suppression: CompiledSuppression,
     pub trailing_content_regex: Option<Regex>,
 }
@@ -66,15 +65,8 @@ impl<'a> CompiledRule<'a> {
         let path_matcher = PathMatcher::build(&rule.file_paths, &rule.file_suffixes)
             .with_context(|| format!("rule `{}`: file_paths/file_suffixes compile", rule.name))?;
 
-        let mut gsb = GlobSetBuilder::new();
-        for p in &rule.include_match {
-            let g = build_include_glob(p)
-                .with_context(|| format!("rule `{}`: include_match glob `{}`", rule.name, p))?;
-            gsb.add(g);
-        }
-        let include_matcher = gsb
-            .build()
-            .with_context(|| format!("rule `{}`: include_match GlobSet build", rule.name))?;
+        let include_matcher = OrderedGlobMatcher::build(&rule.include_match)
+            .with_context(|| format!("rule `{}`: include_match glob compile", rule.name))?;
 
         let suppression = compile_suppression(&rule.suppression, &rule.name)?;
         let trailing_content_regex = match &rule.trailing_comment.transform {
@@ -95,13 +87,6 @@ impl<'a> CompiledRule<'a> {
             trailing_content_regex,
         })
     }
-}
-
-fn build_include_glob(pattern: &str) -> Result<Glob> {
-    GlobBuilder::new(pattern)
-        .literal_separator(true)
-        .build()
-        .with_context(|| format!("invalid include_match glob `{pattern}`"))
 }
 
 fn compile_suppression(raw: &ResolvedSuppression, rule_name: &str) -> Result<CompiledSuppression> {
@@ -416,6 +401,90 @@ mod tests {
         );
         assert_eq!(out_old.matched.len(), 1);
         assert!(out_new.matched.is_empty());
+    }
+
+    #[test]
+    fn include_match_negated_glob_excludes_previous_match() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "not-private"
+            include_match = ["**", "!private/**"]
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let public = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "public/foo.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let private = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/foo.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert_eq!(public.matched.len(), 1);
+        assert!(private.matched.is_empty());
+    }
+
+    #[test]
+    fn include_match_later_positive_reincludes_after_negation() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "private-allowlist"
+            include_match = ["**", "!private/**", "private/allowed.h"]
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let denied = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/denied.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let allowed = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "private/allowed.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert!(denied.matched.is_empty());
+        assert_eq!(allowed.matched.len(), 1);
+    }
+
+    #[test]
+    fn include_match_escaped_bang_matches_literal_bang() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "literal-bang"
+            include_match = ['\!weird.h']
+            "#,
+        );
+        let sup = BTreeMap::new();
+        let literal = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "!weird.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        let plain = match_all(
+            &rules,
+            Path::new("src/main.c"),
+            &inc(IncludeForm::Quote, "weird.h", 1),
+            &sup,
+            Path::new("/proj"),
+        );
+        assert_eq!(literal.matched.len(), 1);
+        assert!(plain.matched.is_empty());
     }
 
     #[test]
