@@ -1,4 +1,4 @@
 
 #include <stdlib.h>
-#include "include/FreeRTOS.h"
-#include "include/list.h"
+#include "FreeRTOS.h"
+#include "list.h"

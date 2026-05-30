@@ -5,8 +5,8 @@
  extern "C" {
 #endif
 
-#include "../../CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"  // IWYU: export
-#include "Legacy/stm32_hal_legacy.h"  // IWYU: export
+#include "stm32f4xx.h"
+#include "Legacy/stm32_hal_legacy.h"
 #include <stddef.h>
 
 #ifdef __cplusplus

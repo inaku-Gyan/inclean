@@ -85,7 +85,7 @@ projects should not use them. */
 #endif
 
 #ifdef GCC_ARM7_ECLIPSE
-	#include "../portable/GCC/ARM_CM4F/portmacro.h"
+	#include "portmacro.h"
 #endif
 
 #ifdef ROWLEY_LPC23xx
@@ -226,24 +226,24 @@ projects should not use them. */
 
 #ifdef __GNUC__
    #ifdef __AVR32_AVR32A__
-	   #include "../portable/GCC/ARM_CM4F/portmacro.h"
+	   #include "portmacro.h"
    #endif
 #endif
 
 #ifdef __ICCAVR32__
    #ifdef __CORE__
       #if __CORE__ == __AVR32A__
-	      #include "../portable/GCC/ARM_CM4F/portmacro.h"
+	      #include "portmacro.h"
       #endif
    #endif
 #endif
 
 #ifdef __91467D
-	#include "../portable/GCC/ARM_CM4F/portmacro.h"
+	#include "portmacro.h"
 #endif
 
 #ifdef __96340
-	#include "../portable/GCC/ARM_CM4F/portmacro.h"
+	#include "portmacro.h"
 #endif
 
 

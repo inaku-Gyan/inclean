@@ -1,2 +1,2 @@
-#include "../../../include/FreeRTOS.h"
-#include "../../../include/task.h"
+#include "FreeRTOS.h"
+#include "task.h"

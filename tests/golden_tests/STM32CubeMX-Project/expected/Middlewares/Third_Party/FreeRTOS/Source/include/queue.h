@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#include "task.h"  // IWYU: export
+#include "task.h"
 
 #ifdef __cplusplus
 }

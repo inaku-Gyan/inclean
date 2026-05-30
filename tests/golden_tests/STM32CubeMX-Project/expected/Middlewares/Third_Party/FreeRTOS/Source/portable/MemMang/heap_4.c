@@ -2,7 +2,7 @@
 
 #define MPU_WRAPPERS_INCLUDED_FROM_API_FILE
 
-#include "../../include/FreeRTOS.h"
-#include "../../include/task.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #undef MPU_WRAPPERS_INCLUDED_FROM_API_FILE

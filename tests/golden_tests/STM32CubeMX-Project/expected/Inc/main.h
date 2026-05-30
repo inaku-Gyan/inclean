@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "stm32f4xx_hal.h"  // IWYU: export
+#include "stm32f4xx_hal.h"
 
 
 #ifdef __cplusplus

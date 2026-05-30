@@ -1,17 +1,17 @@
 #ifndef PORTABLE_H
 #define PORTABLE_H
 
-#include "deprecated_definitions.h"  // IWYU: export
+#include "deprecated_definitions.h"
 
 #ifndef portENTER_CRITICAL
-	#include "../portable/GCC/ARM_CM4F/portmacro.h"  // IWYU: export
+	#include "portmacro.h"
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "mpu_wrappers.h"  // IWYU: export
+#include "mpu_wrappers.h"
 
 #ifdef __cplusplus
 }

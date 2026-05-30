@@ -5,6 +5,6 @@
 	#error "include FreeRTOS.h" must appear in source files before "include semphr.h"
 #endif
 
-#include "queue.h"  // IWYU: export
+#include "queue.h"
 
 #endif /* SEMAPHORE_H */
