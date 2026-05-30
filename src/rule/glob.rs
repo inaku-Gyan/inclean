@@ -1,9 +1,12 @@
 //! Layer 1 (`paths`) + layer 2 (`extensions`) file-level matcher.
 //!
-//! Path globs are interpreted with `globset` in **literal-separator** mode
-//! (modern-tool semantics, not classic gitignore): `*` does NOT cross a
-//! path separator; only `**` does. Users who want "match at any depth"
-//! write `**/foo.c` rather than the gitignore `foo.c` shorthand.
+//! Path globs are interpreted with `globset` in **literal-separator** mode:
+//! `*` does NOT cross a path separator; only `**` does. Users who want
+//! "match at any depth" write `**/foo.c` rather than the gitignore `foo.c`
+//! shorthand.
+//!
+//! Glob lists are ordered. A leading unescaped `!` negates a pattern, and the
+//! last matching pattern wins. Use `\!` for a literal leading `!`.
 //!
 //! All paths in rules are **relative to the resolved project root**
 //! (i.e. `<config_dir>/<[project].root>`), not to the config file's

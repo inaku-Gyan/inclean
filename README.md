@@ -92,6 +92,9 @@ walk; `-j N` sets the worker thread count.
 Rule matching first checks `file_paths`, `file_suffixes`, `include_forms`,
 and `include_match`. Globs are anchored and use literal separators:
 `foo.h` only matches `foo.h`, while `**/foo.h` matches at any depth.
+Glob lists are ordered: a leading unescaped `!` excludes, and the last
+matching pattern wins. Use TOML single quotes for a literal leading bang,
+for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
 When `include_directories` is set, inclean then probes those literal
 directories and applies `include_on_unresolved` (`error` / `skip` /
 `allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).

@@ -137,10 +137,12 @@ pub struct RawRule {
 
     // ---- Layer 1: file paths (globset globs) -----------------------------
     /// Globset patterns matched against paths relative to `[project].root`.
-    /// `*` does not cross `/`; `**` does. Effective default for a rule with no
-    /// parent is `["**/*"]`. If a matching pattern contains wildcard
-    /// characters, `file_suffixes` must also match; exact literal paths skip
-    /// the suffix check.
+    /// Patterns are ordered: a leading unescaped `!` negates, and the last
+    /// matching pattern wins. Use `\!` for a literal leading `!`. `*` does not
+    /// cross `/`; `**` does. Effective default for a rule with no parent is
+    /// `["**/*"]`. If a matching pattern contains wildcard characters,
+    /// `file_suffixes` must also match; exact literal paths skip the suffix
+    /// check.
     pub file_paths: Option<Vec<String>>,
 
     // ---- Layer 2: file suffixes (literal extensions like ".c") -----------
@@ -165,8 +167,10 @@ pub struct RawRule {
 
     // ---- Layer 4: glob on the stripped include argument ------------------
     /// Globset patterns matched against the include argument with quotes or
-    /// angle brackets stripped, for example `mylib/foo.h`. `*` does not cross
-    /// `/`; `**` does. Effective default for a rule with no parent is `["**"]`.
+    /// angle brackets stripped, for example `mylib/foo.h`. Patterns are
+    /// ordered: a leading unescaped `!` negates, and the last matching pattern
+    /// wins. Use `\!` for a literal leading `!`. `*` does not cross `/`; `**`
+    /// does. Effective default for a rule with no parent is `["**"]`.
     pub include_match: Option<Vec<String>>,
 
     // ---- Layer 5: optional include directory resolution -------------------

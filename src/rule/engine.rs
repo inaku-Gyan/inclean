@@ -5,8 +5,9 @@
 //!    [`PathMatcher`] (see [`crate::rule::glob`]).
 //! 2. *(Folded into layer 1 — the same matcher checks both.)*
 //! 3. `include_forms` — `include.form` must be in the set.
-//! 4. `include_match` — at least one glob must match the stripped include
-//!    text (`include.content`).
+//! 4. `include_match` — ordered signed globs over the stripped include text
+//!    (`include.content`), where a leading unescaped `!` negates and the last
+//!    match wins.
 //! 5. If `include_directories` is non-empty, the engine probes those
 //!    directories and applies `include_on_unresolved` /
 //!    `include_on_ambiguous`.

@@ -9,11 +9,21 @@
 #   inclean apply                       # write the rewrites
 #
 # =============================================================================
-# IMPORTANT — GLOB ANCHORING
+# IMPORTANT — GLOB MATCHING
 # Every glob in this file (file_paths, include_match) is FULL-STRING
 # ANCHORED. "foo.h" matches ONLY the literal "foo.h" — NOT "a/foo.h",
 # NOT "any/dir/foo.h". To match a name at any depth, write "**/foo.h".
 # "*" never crosses "/"; "**" does.
+#
+# Glob lists are ordered. A leading unescaped "!" negates a pattern, and
+# the LAST matching pattern wins:
+#   file_paths    = ["src/**/*", "!src/generated/**/*", "src/generated/keep.c"]
+#   include_match = ["**", "!private/**", "private/allowed.h"]
+#
+# To match a literal leading "!", escape it as "\!". TOML single-quoted
+# strings are literal, so '\!weird.h' is the clearest spelling. TOML
+# double-quoted strings process backslash escapes, so the same pattern is
+# "\\!weird.h" there.
 # =============================================================================
 #
 # Config cheat-sheet (written by inclean {{CFG_VERSION}})
@@ -21,13 +31,13 @@
 # Each rule has 4 text matching layers (all must pass), plus an optional
 # include-directory resolution layer:
 #   1. file_paths   — globset patterns relative to the project root
-#                     (default ["**/*"]; see GLOB ANCHORING above)
+#                     (default ["**/*"]; see GLOB MATCHING above)
 #   2. file_suffixes — literal extensions like ".c" (default covers C+C++);
 #                     skipped when file_paths is an exact literal path
 #   3. include_forms — set of "quote" / "angle" / "macro" (default ["quote"])
 #                     "macro" matches but action evaluation always errors
 #   4. include_match — globset patterns over the stripped include argument
-#                     (default ["**"]; see GLOB ANCHORING above)
+#                     (default ["**"]; see GLOB MATCHING above)
 #
 # include_directories is NOT a glob — it's a list of literal directory
 # paths under the project root. When non-empty, inclean probes each path
@@ -170,6 +180,12 @@ name = "base"
 # copied_from = "base"
 # include_match = ["legacy/**/*"]
 # action = { type = "comment_out", style = "/**/" }
+
+# [[rule]]
+# name = "skip-generated-and-private"
+# copied_from = "base"
+# file_paths = ["src/**/*", "!src/generated/**/*", "src/generated/keep.c"]
+# include_match = ["**", "!private/**", "private/allowed.h"]
 
 # [[rule]]
 # name = "delete-deprecated-includes"

@@ -61,7 +61,7 @@
           ]
         },
         "file_paths": {
-          "description": "Globset patterns matched against paths relative to `[project].root`.\n`*` does not cross `/`; `**` does. Effective default for a rule with no\nparent is `[\"**/*\"]`. If a matching pattern contains wildcard\ncharacters, `file_suffixes` must also match; exact literal paths skip\nthe suffix check.",
+          "description": "Globset patterns matched against paths relative to `[project].root`.\nPatterns are ordered: a leading unescaped `!` negates, and the last\nmatching pattern wins. Use `\\!` for a literal leading `!`. `*` does not\ncross `/`; `**` does. Effective default for a rule with no parent is\n`[\"**/*\"]`. If a matching pattern contains wildcard characters,\n`file_suffixes` must also match; exact literal paths skip the suffix\ncheck.",
           "type": [
             "array",
             "null"
@@ -102,7 +102,7 @@
           }
         },
         "include_match": {
-          "description": "Globset patterns matched against the include argument with quotes or\nangle brackets stripped, for example `mylib/foo.h`. `*` does not cross\n`/`; `**` does. Effective default for a rule with no parent is `[\"**\"]`.",
+          "description": "Globset patterns matched against the include argument with quotes or\nangle brackets stripped, for example `mylib/foo.h`. Patterns are\nordered: a leading unescaped `!` negates, and the last matching pattern\nwins. Use `\\!` for a literal leading `!`. `*` does not cross `/`; `**`\ndoes. Effective default for a rule with no parent is `[\"**\"]`.",
           "type": [
             "array",
             "null"
