@@ -31,11 +31,14 @@ pub struct Include {
     /// quote / angle (delimiters included), or the macro identifier(s) for
     /// macro form. This is what a rewrite replaces.
     pub argument_range: Range<usize>,
-    /// Byte range covering the trailing comment (leading whitespace +
-    /// comment + delimiters) on the same physical line as the include.
+    /// Byte range covering the same-line trailing bytes after the include
+    /// argument. When a recognized same-line trailing comment is present,
+    /// this spans from the argument end through the physical line end so
+    /// action-layer transforms can edit the first comment while preserving
+    /// any later same-line suffix bytes.
     /// Empty (start == end) when there is no trailing comment, or when
-    /// the comment opens with `/*` but doesn't close on the same line
-    /// (per refactor.md, cross-line block comments are NOT trailing
+    /// the first comment opens with `/*` but doesn't close on the same
+    /// line (per refactor.md, cross-line block comments are NOT trailing
     /// comments and are skipped by trailing-comment processing).
     /// Carriage returns at end of line, if any, are excluded.
     pub trailing_range: Range<usize>,
@@ -43,8 +46,9 @@ pub struct Include {
     /// closes on the same line. `None` for no trailing comment or for
     /// any text after the argument that isn't a recognized comment.
     pub trailing_comment_style: Option<CommentStyle>,
-    /// `true` when the text after the include argument opens a block
-    /// comment (`/*`) that does NOT close on the same physical line.
+    /// `true` when the same-line trailing bytes after the include argument
+    /// contain a block comment (`/*`) that does NOT close on the same
+    /// physical line.
     /// Per refactor.md §"Trailing comment 的定义": such cross-line block
     /// comments are not trailing comments; the trailing_comment.transform
     /// AND the trailing_comment.append_if_absent paths both no-op for
@@ -538,9 +542,13 @@ impl<'a> Lexer<'a> {
 ///
 /// - All whitespace / empty → empty range, `None`.
 /// - Starts (after whitespace) with `//` → `Line`, range = `[arg_end, eol_end)`.
-/// - Starts with `/*` and closes with `*/` on the same line → `Block`,
-///   range = `[arg_end, eol_end)`.
-/// - Starts with `/*` but no `*/` on the same line → empty range, `None`.
+/// - Starts with `/*` and the first block comment closes on the same line
+///   → `Block`, range = `[arg_end, eol_end)`. Any later same-line bytes
+///   are preserved by action-layer trailing-comment processing. If those
+///   later bytes contain an unterminated block comment, the cross-line flag
+///   is also set so transform/append logic no-ops.
+/// - Starts with `/*` but the first block comment has no `*/` on the same
+///   line → empty range, `None`.
 ///   The block comment continues to be skipped by the main lexer loop on
 ///   the next iteration; we deliberately drop it from `trailing_range` so
 ///   M4's trailing-comment processing leaves it alone.
@@ -571,7 +579,14 @@ fn classify_trailing(
         let mut j = i + 2;
         while j + 1 < slice.len() {
             if slice[j] == b'*' && slice[j + 1] == b'/' {
-                return (arg_end..eol_end, Some(CommentStyle::Block), false);
+                let first_block_end = j + 2;
+                let has_cross_line_block =
+                    suffix_has_unclosed_block_comment(&slice[first_block_end..]);
+                return (
+                    arg_end..eol_end,
+                    Some(CommentStyle::Block),
+                    has_cross_line_block,
+                );
             }
             j += 1;
         }
@@ -580,6 +595,28 @@ fn classify_trailing(
         return (arg_end..arg_end, None, true);
     }
     (arg_end..eol_end, None, false)
+}
+
+fn suffix_has_unclosed_block_comment(slice: &[u8]) -> bool {
+    let mut i = 0usize;
+    'outer: while i < slice.len() {
+        if slice[i] == b'/' && slice.get(i + 1) == Some(&b'/') {
+            return false;
+        }
+        if slice[i] == b'/' && slice.get(i + 1) == Some(&b'*') {
+            let mut j = i + 2;
+            while j + 1 < slice.len() {
+                if slice[j] == b'*' && slice[j + 1] == b'/' {
+                    i = j + 2;
+                    continue 'outer;
+                }
+                j += 1;
+            }
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -772,6 +809,26 @@ mod tests {
         let t = &incs[0].trailing_range;
         assert_eq!(&src[t.clone()], " /* note */");
         assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+    }
+
+    #[test]
+    fn trailing_range_preserves_suffix_after_first_block_comment() {
+        let src = "#include \"foo.h\" /*1st*/ /*2nd*/\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " /*1st*/ /*2nd*/");
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+        assert!(!incs[0].has_cross_line_block_trailing);
+    }
+
+    #[test]
+    fn first_block_comment_with_later_open_block_sets_cross_line_flag() {
+        let src = "#include \"foo.h\" /*1st*/ /* open\n*/\n";
+        let incs = scan(src);
+        let t = &incs[0].trailing_range;
+        assert_eq!(&src[t.clone()], " /*1st*/ /* open");
+        assert_eq!(incs[0].trailing_comment_style, Some(CommentStyle::Block));
+        assert!(incs[0].has_cross_line_block_trailing);
     }
 
     #[test]

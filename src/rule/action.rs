@@ -397,34 +397,40 @@ fn process_trailing(
     source: &str,
     ctx: &TemplateCtx,
 ) -> std::result::Result<String, Outcome> {
-    // Cross-line block comment: per refactor.md §"Trailing comment 的
-    // 定义", such constructs do NOT count as trailing comments. Skip
-    // both `transform` AND `append_if_absent` entirely; the source
-    // bytes between the argument and EOL are empty, and downstream
-    // code preserves whatever follows on the next line.
-    if include.has_cross_line_block_trailing {
-        return Ok(String::new());
-    }
-
     let tc: &ResolvedTrailingComment = &rule.rule.trailing_comment;
     let original_trailing = &source[include.trailing_range.clone()];
 
+    // Cross-line block comment: per refactor.md §"Trailing comment 的
+    // 定义", such constructs do NOT count as trailing comments. Skip
+    // both `transform` AND `append_if_absent` entirely. When the cross-line
+    // block is after a complete same-line comment, `original_trailing`
+    // still contains that same-line prefix and must be preserved.
+    if include.has_cross_line_block_trailing {
+        return Ok(original_trailing.to_string());
+    }
+
     // Has a recognised trailing comment to start with?
     let style = include.trailing_comment_style;
+    let first_comment = style.and_then(|s| split_first_trailing_comment(original_trailing, s));
 
     // Run the transform (if configured) and the style matches.
     if let (Some(transform), Some(content_re)) =
         (&tc.transform, rule.trailing_content_regex.as_ref())
         && let Some(s) = style
         && transform.match_styles.contains(&s)
+        && let Some((first_comment_text, suffix)) = first_comment
     {
-        let body = extract_comment_body(original_trailing, s);
+        let body = extract_comment_body(first_comment_text, s);
         if content_re.is_match(&body) {
             match run_transform_action(rule, &transform.action, s, &body, ctx) {
-                Ok(Some(text)) => return Ok(text),
+                Ok(Some(text)) => return Ok(format!("{text}{suffix}")),
                 Ok(None) => {
-                    // Removed; fall through to append_if_absent.
-                    return apply_append_if_absent(tc, "");
+                    // Removed. If later same-line trailing bytes remain,
+                    // preserve them and do not append a replacement comment.
+                    if suffix.is_empty() {
+                        return apply_append_if_absent(tc, "");
+                    }
+                    return Ok(suffix.to_string());
                 }
                 Err(o) => return Err(o),
             }
@@ -438,6 +444,38 @@ fn process_trailing(
         return Ok(original_trailing.to_string());
     }
     apply_append_if_absent(tc, original_trailing)
+}
+
+fn split_first_trailing_comment(trailing: &str, style: CommentStyle) -> Option<(&str, &str)> {
+    let bytes = trailing.as_bytes();
+    let mut start = 0usize;
+    while start < bytes.len() && (bytes[start] == b' ' || bytes[start] == b'\t') {
+        start += 1;
+    }
+
+    match style {
+        CommentStyle::Line => {
+            if bytes.get(start) == Some(&b'/') && bytes.get(start + 1) == Some(&b'/') {
+                Some((trailing, ""))
+            } else {
+                None
+            }
+        }
+        CommentStyle::Block => {
+            if bytes.get(start) != Some(&b'/') || bytes.get(start + 1) != Some(&b'*') {
+                return None;
+            }
+            let mut end = start + 2;
+            while end + 1 < bytes.len() {
+                if bytes[end] == b'*' && bytes[end + 1] == b'/' {
+                    let first_end = end + 2;
+                    return Some((&trailing[..first_end], &trailing[first_end..]));
+                }
+                end += 1;
+            }
+            None
+        }
+    }
 }
 
 fn extract_comment_body(trailing: &str, style: CommentStyle) -> String {
@@ -847,6 +885,68 @@ mod tests {
     }
 
     #[test]
+    fn trailing_comment_replace_only_touches_first_block_comment() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                transform = {
+                    content_regex = "^1st$",
+                    action = { type = "replace", with = "NEW" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" /*1st*/ /*2nd*/\n");
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  /* NEW */ /*2nd*/");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_replace_preserves_line_comment_suffix_after_block() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                transform = {
+                    content_regex = "^1st$",
+                    action = { type = "replace", with = "NEW" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" /*1st*/ // 2nd\n");
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\"  /* NEW */ // 2nd");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
     fn trailing_comment_remove_drops_comment() {
         let rules = compile_rules(
             r#"
@@ -871,6 +971,38 @@ mod tests {
         match out {
             Outcome::Rewrite { new_text, .. } => {
                 assert_eq!(new_text, "\"foo.h\"");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_comment_remove_first_block_preserves_suffix_without_append() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                append_if_absent = " // generated",
+                transform = {
+                    content_regex = "^drop$",
+                    action = { type = "remove" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" /*drop*/ /*keep*/\n");
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
+        match out {
+            Outcome::Rewrite { new_text, .. } => {
+                assert_eq!(new_text, "\"foo.h\" /*keep*/");
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -929,6 +1061,34 @@ mod tests {
             Path::new("/proj"),
         );
         // Nothing must change on the include line.
+        assert_eq!(out, Outcome::Keep);
+    }
+
+    #[test]
+    fn later_cross_line_block_skips_transform_and_append() {
+        let rules = compile_rules(
+            r#"
+            [[rule]]
+            name = "base"
+            action = { type = "keep" }
+            trailing_comment = {
+                append_if_absent = " // generated",
+                transform = {
+                    content_regex = "^1st$",
+                    action = { type = "replace", with = "NEW" },
+                },
+            }
+            "#,
+        );
+        let (src, inc) = first_include("#include \"foo.h\" /*1st*/ /* open\n*/\n");
+        assert!(inc.has_cross_line_block_trailing);
+        let out = evaluate(
+            &rules[0],
+            &inc,
+            &src,
+            Path::new("src/main.c"),
+            Path::new("/proj"),
+        );
         assert_eq!(out, Outcome::Keep);
     }
 
