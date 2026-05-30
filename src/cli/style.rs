@@ -1,5 +1,23 @@
 use console::{StyledObject, style};
 
+pub const HELP_STYLES: clap::builder::styling::Styles = clap::builder::styling::Styles::styled()
+    .header(clap::builder::styling::AnsiColor::Cyan.on_default().bold())
+    .usage(
+        clap::builder::styling::AnsiColor::Cyan
+            .on_default()
+            .bold()
+            .underline(),
+    )
+    .literal(clap::builder::styling::AnsiColor::Green.on_default().bold())
+    .placeholder(clap::builder::styling::AnsiColor::Yellow.on_default())
+    .error(clap::builder::styling::AnsiColor::Red.on_default().bold())
+    .valid(clap::builder::styling::AnsiColor::Green.on_default())
+    .invalid(
+        clap::builder::styling::AnsiColor::Magenta
+            .on_default()
+            .bold(),
+    );
+
 pub fn success<D>(value: D) -> StyledObject<D> {
     style(value).green().bold()
 }
