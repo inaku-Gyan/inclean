@@ -135,7 +135,8 @@ See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
 `inclean.toml` ships with a JSON Schema for editor completion and
 validation. Editors that understand the `#:schema` directive (VS Code
-with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
+with [Tombi](https://tombi-toml.github.io/tombi/)
+or [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
 Helix, Zed) automatically pick it up:
 
 ```toml
