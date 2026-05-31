@@ -172,6 +172,21 @@ name = "base"
 # trailing_comment = "skip"
 
 
+# The default values for all fields:
+# [[rule]]
+# name = "default"
+#
+# file_paths = ["**/*"]
+# file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
+# include_forms = ["quote"]
+# include_match = ["**"]
+# include_directories = []
+# include_resolved_match = ["**"]
+# include_on_unresolved = "error"
+# include_on_ambiguous = "error"
+# action = "skip"
+# trailing_comment = "skip"
+
 # ----------------------------------------------------------------------------
 # Commented-out examples — uncomment + tailor as needed.
 # ----------------------------------------------------------------------------
@@ -217,9 +232,13 @@ name = "base"
 # [[rule]]
 # name = "iwyu-pragma"
 # copied_from = "base"
-# include_match = ["foo.h", "bar.h"]
+# file_paths = ["include/*"]
+# include_resolved_match = ["include/private/**"]
 # action = "skip"
 # trailing_comment = {
+#     transform = {
+#         action = { type = "replace", with = "IWYU: export" },
+#     },
 #     append_if_absent = "  // IWYU: export",
 # }
 
