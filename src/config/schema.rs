@@ -258,15 +258,21 @@ pub struct RawRule {
     /// no implicit `/**` suffix; no `.gitignore` semantics. When this list is
     /// empty, no directory-resolution policy is applied.
     pub include_directories: Option<Vec<String>>,
+    /// Globset patterns matched against the resolved header path, relative to
+    /// the project root, after `include_directories` probes candidate files.
+    /// Patterns are ordered like `include_match`. Effective default for a rule
+    /// with no parent is `["**"]`. When `include_directories` is empty, this
+    /// field has no effect.
+    pub include_resolved_match: Option<Vec<String>>,
     /// Policy for a matched include when `include_directories` is non-empty
-    /// and no directory contains the include argument. Effective default is
-    /// `error`. `allow` keeps the rule matched for non-`resolve` actions; it
-    /// is rejected with action `resolve`.
+    /// and no resolved candidate remains after `include_resolved_match`
+    /// filtering. Effective default is `error`. `allow` keeps the rule
+    /// matched for non-`resolve` actions; it is rejected with action `resolve`.
     pub include_on_unresolved: Option<IncludeOnUnresolved>,
     /// Policy for a matched include when `include_directories` is non-empty
     /// and more than one directory contains the include argument. Effective
-    /// default is `error`; `first` selects the first matching directory in
-    /// declaration order.
+    /// default is `error`; `first` selects the first matching candidate in
+    /// declaration order after `include_resolved_match` filtering.
     pub include_on_ambiguous: Option<IncludeOnAmbiguous>,
 
     /// Action to run when all match layers pass. If neither this rule nor any
@@ -649,6 +655,7 @@ mod tests {
             include_forms = ["quote"]
             include_match = ["**/foo.h"]
             include_directories = ["src/internal"]
+            include_resolved_match = ["src/internal/**"]
             include_on_unresolved = "skip"
             include_on_ambiguous = "first"
             action = { type = "resolve", relative_to = "include" }
@@ -661,6 +668,10 @@ mod tests {
         assert_eq!(
             r.include_match.as_ref().unwrap(),
             &vec!["**/foo.h".to_string()]
+        );
+        assert_eq!(
+            r.include_resolved_match.as_ref().unwrap(),
+            &vec!["src/internal/**".to_string()]
         );
         assert_eq!(r.include_on_unresolved, Some(IncludeOnUnresolved::Skip));
         assert_eq!(r.include_on_ambiguous, Some(IncludeOnAmbiguous::First));

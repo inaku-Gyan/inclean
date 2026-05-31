@@ -83,10 +83,12 @@ inclean apply               # 就地写入改写
 的行为；`-j N` 指定工作线程数。
 
 规则会先检查 `file_paths`、`file_suffixes`、`include_forms` 和
-`include_match`。glob 是全字符串锚定的，并使用 literal separator
+`include_match`；`include_resolved_match` 稍后匹配解析后的头文件路径。
+glob 是全字符串锚定的，并使用 literal separator
 语义：`foo.h` 只匹配 `foo.h`，`**/foo.h` 才匹配任意深度下的同名文件。
-当设置了 `include_directories`，inclean 会继续探测这些字面目录，并应用
-`include_on_unresolved`（`error` / `skip` / `allow`）和
+当设置了 `include_directories`，inclean 会继续探测这些字面目录，用
+`include_resolved_match`（默认 `["**"]`）过滤解析后的项目相对头文件路径，
+并应用 `include_on_unresolved`（`error` / `skip` / `allow`）和
 `include_on_ambiguous`（`error` / `skip` / `first`）。
 对于 `#include MACRO`，inclean 会静态展开简单的 header-like 宏定义，
 例如 `#define MACRO "foo.h"` 或 `#define MACRO <foo.h>`。这类 include

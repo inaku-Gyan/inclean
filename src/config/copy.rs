@@ -60,6 +60,7 @@ pub struct ResolvedRule {
     pub include_forms: Vec<IncludeForm>,
     pub include_match: Vec<String>,
     pub include_directories: Vec<String>,
+    pub include_resolved_match: Vec<String>,
     pub include_on_unresolved: IncludeOnUnresolved,
     pub include_on_ambiguous: IncludeOnAmbiguous,
 
@@ -154,6 +155,9 @@ fn default_include_forms() -> Vec<IncludeForm> {
     vec![IncludeForm::Quote]
 }
 fn default_include_match() -> Vec<String> {
+    vec!["**".to_string()]
+}
+fn default_include_resolved_match() -> Vec<String> {
     vec!["**".to_string()]
 }
 fn default_action() -> ResolvedAction {
@@ -287,6 +291,15 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         has_parent,
     )?;
 
+    let include_resolved_match = resolve_str_list(
+        raw.include_resolved_match.as_deref(),
+        parent.map(|p| &p.include_resolved_match),
+        default_include_resolved_match,
+        &ctx,
+        "include_resolved_match",
+        has_parent,
+    )?;
+
     let include_on_unresolved = raw
         .include_on_unresolved
         .or_else(|| parent.map(|p| p.include_on_unresolved))
@@ -374,6 +387,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         include_forms,
         include_match,
         include_directories,
+        include_resolved_match,
         include_on_unresolved,
         include_on_ambiguous,
         suppression,
@@ -814,6 +828,7 @@ mod tests {
         assert!(r.file_suffixes.contains(&".cpp".to_string()));
         assert_eq!(r.include_forms, vec![IncludeForm::Quote]);
         assert_eq!(r.include_match, vec!["**"]);
+        assert_eq!(r.include_resolved_match, vec!["**"]);
         assert!(matches!(
             r.include_on_unresolved,
             IncludeOnUnresolved::Error
@@ -832,6 +847,7 @@ mod tests {
             file_paths = ["src/**"]
             include_forms = ["quote", "angle"]
             include_directories = ["src", "src/internal"]
+            include_resolved_match = ["src/internal/**"]
             include_on_unresolved = "skip"
             include_on_ambiguous = "first"
 
@@ -849,6 +865,7 @@ mod tests {
             vec![IncludeForm::Quote, IncludeForm::Angle]
         );
         assert_eq!(child.include_directories, vec!["src", "src/internal"]);
+        assert_eq!(child.include_resolved_match, vec!["src/internal/**"]);
         assert!(matches!(
             child.include_on_unresolved,
             IncludeOnUnresolved::Skip
@@ -868,6 +885,7 @@ mod tests {
             name = "base"
             file_paths = ["src/**"]
             include_forms = ["quote", "angle"]
+            include_resolved_match = ["src/**"]
             include_on_unresolved = "allow"
             include_on_ambiguous = "first"
 
@@ -876,6 +894,7 @@ mod tests {
             copied_from = "base"
             file_paths = ["src/foo/**"]
             include_forms = ["macro"]
+            include_resolved_match = ["src/foo/**"]
             include_on_unresolved = "skip"
             include_on_ambiguous = "skip"
             "#,
@@ -884,6 +903,7 @@ mod tests {
         let narrow = get(&resolved, "narrow");
         assert_eq!(narrow.file_paths, vec!["src/foo/**"]);
         assert_eq!(narrow.include_forms, vec![IncludeForm::Macro]);
+        assert_eq!(narrow.include_resolved_match, vec!["src/foo/**"]);
         assert!(matches!(
             narrow.include_on_unresolved,
             IncludeOnUnresolved::Skip

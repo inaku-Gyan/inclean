@@ -407,6 +407,12 @@ fn collect_duplicate_literal_warnings(cfg: &crate::config::schema::LoadedConfig)
         );
         check_list_dup(
             &raw.name,
+            "include_resolved_match",
+            raw.include_resolved_match.as_deref(),
+            &mut out,
+        );
+        check_list_dup(
+            &raw.name,
             "include_directories",
             raw.include_directories.as_deref(),
             &mut out,
@@ -1848,6 +1854,18 @@ mod tests {
     }
 
     #[test]
+    fn config_mode_compiles_include_resolved_match_globs() {
+        let err = config_compile_error(
+            r#"
+            [[rule]]
+            name = "base"
+            include_resolved_match = ["["]
+            "#,
+        );
+        assert!(err.contains("include_resolved_match glob"), "{err}");
+    }
+
+    #[test]
     fn config_mode_compiles_suppression_regexes() {
         let err = config_compile_error(
             r#"
@@ -2125,6 +2143,53 @@ mod tests {
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn include_resolved_match_filters_candidates_before_ambiguity() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["first", "second"]
+            include_resolved_match = ["second/foo.h"]
+            action = { type = "resolve", relative_to = "." }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("first/foo.h", "");
+        proj.write("second/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        match &summary.files[0].include_results[0].outcome {
+            IncludeOutcome::Rewritten { new_text, .. } => {
+                assert_eq!(new_text, "\"../second/foo.h\"");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn include_resolved_match_can_skip_when_no_candidate_matches() {
+        let rule = r#"
+            [[rule]]
+            name = "base"
+            file_paths = ["src/**/*"]
+            include_directories = ["include"]
+            include_resolved_match = ["vendor/**"]
+            include_on_unresolved = "skip"
+            action = { type = "replace", with = "lib/${original}" }
+        "#;
+        let proj = TmpProject::create_with_rules(rule);
+        proj.write("src/main.c", "#include \"foo.h\"\n");
+        proj.write("include/foo.h", "");
+
+        let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
+        assert!(matches!(
+            summary.files[0].include_results[0].outcome,
+            IncludeOutcome::NoMatch
+        ));
+        assert!(summary.files[0].rewritten.is_none());
     }
 
     #[test]
