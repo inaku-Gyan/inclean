@@ -116,10 +116,10 @@ Valid `${copied}` forms:
 
 ### File Selection
 
-| Field           | Default                                        | Meaning                                                                                                                           |
-| --------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `file_paths`    | `["**/*"]`                                     | Ordered signed [glob list](#glob-syntax) matched against project-root-relative source paths.                                        |
-| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | Literal extensions, including the leading dot. May use [built-in constants](#constants).                                            |
+| Field           | Default                                        | Meaning                                                                                      |
+| --------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `file_paths`    | `["**/*"]`                                     | Ordered signed [glob list](#glob-syntax) matched against project-root-relative source paths. |
+| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | Literal extensions, including the leading dot. May use [built-in constants](#constants).     |
 
 An exact literal `file_paths` match skips `file_suffixes`; a wildcard match
 must also pass `file_suffixes`.
@@ -174,12 +174,12 @@ values, the include is unfixable. Unexpanded macro includes can still match
 
 ### Header Resolution
 
-| Field                    | Default   | Meaning                                                                                                                                                |
-| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `include_directories`    | `[]`      | Literal directory paths under the project root. Not [globs](#glob-syntax), no implicit `/**`, and no `.gitignore` semantics.                           |
+| Field                    | Default   | Meaning                                                                                                                                                                    |
+| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `include_directories`    | `[]`      | Literal directory paths under the project root. Not [globs](#glob-syntax), no implicit `/**`, and no `.gitignore` semantics.                                               |
 | `include_resolved_match` | `["**"]`  | Ordered signed [glob list](#glob-syntax) matched against the resolved header path, project-root relative when possible. Has no effect when `include_directories` is empty. |
-| `include_on_unresolved`  | `"error"` | Policy when no candidate is found after `include_resolved_match`: `"error"`, `"skip"`, or `"allow"`.                                                   |
-| `include_on_ambiguous`   | `"error"` | Policy when multiple include directories resolve the same include argument: `"error"`, `"skip"`, or `"first"`.                                         |
+| `include_on_unresolved`  | `"error"` | Policy when no candidate is found after `include_resolved_match`: `"error"`, `"skip"`, or `"allow"`.                                                                       |
+| `include_on_ambiguous`   | `"error"` | Policy when multiple include directories resolve the same include argument: `"error"`, `"skip"`, or `"first"`.                                                             |
 
 Resolution probes each directory as:
 
@@ -199,9 +199,9 @@ the first matching candidate in `include_directories` order.
 Runtime placeholders are expanded in action and trailing-comment template
 strings after a rule matches:
 
-| Placeholder       | In action templates                                            | In trailing-comment templates                                      |
-| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `${current_file}` | Project-root-relative path of the file being edited.           | Project-root-relative path of the file being edited.               |
+| Placeholder       | In action templates                                               | In trailing-comment templates                                        |
+| ----------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `${current_file}` | Project-root-relative path of the file being edited.              | Project-root-relative path of the file being edited.                 |
 | `${original}`     | Original include argument with quotes or angle brackets stripped. | Original trailing-comment body with delimiters stripped and trimmed. |
 
 Supported action template fields include `action.relative_to`, `action.with`,
