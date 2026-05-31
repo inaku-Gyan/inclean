@@ -10,7 +10,8 @@
 #
 # =============================================================================
 # IMPORTANT — GLOB MATCHING
-# Every glob in this file (file_paths, include_match) is FULL-STRING
+# Every glob in this file (file_paths, include_match, include_resolved_match)
+# is FULL-STRING
 # ANCHORED. "foo.h" matches ONLY the literal "foo.h" — NOT "a/foo.h",
 # NOT "any/dir/foo.h". To match a name at any depth, write "**/foo.h".
 # "*" never crosses "/"; "**" does.
@@ -42,14 +43,16 @@
 #
 # include_directories is NOT a glob — it's a list of literal directory
 # paths under the project root. When non-empty, inclean probes each path
-# after include_forms + include_match pass to find the include's actual
-# header file. Resolution policies:
+# after include_forms + include_match pass, filters the resolved header path
+# with include_resolved_match, and uses that actual header file. The resolved
+# path is project-root relative; include_resolved_match defaults to ["**"].
+# Resolution policies:
 #   include_on_unresolved = "error" | "skip" | "allow"  (default "error")
 #       error: fail the run; skip: this rule does not match; allow: keep
 #       the rule matched for non-resolve actions. allow + resolve is invalid.
 #   include_on_ambiguous = "error" | "skip" | "first"   (default "error")
 #       error: fail the run; skip: this rule does not match; first: use the
-#       first matching include_directories entry in declaration order.
+#       first resolved header candidate in declaration order.
 #
 # suppression_comments_regex (optional) marks off-limits source regions:
 #   { block_start, block_end, line }  — regexes over each line's comment
@@ -162,11 +165,27 @@ name = "base"
 # include_forms = ["quote"]
 # include_match = ["**"]
 # include_directories = ["src", "src/internal"]
+# include_resolved_match = ["**"]
 # include_on_unresolved = "error"
 # include_on_ambiguous = "error"
 # action = { type = "resolve", relative_to = "include", output_form = "quote" }
 # trailing_comment = "skip"
 
+
+# The default values for all fields:
+# [[rule]]
+# name = "default"
+#
+# file_paths = ["**/*"]
+# file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
+# include_forms = ["quote"]
+# include_match = ["**"]
+# include_directories = []
+# include_resolved_match = ["**"]
+# include_on_unresolved = "error"
+# include_on_ambiguous = "error"
+# action = "skip"
+# trailing_comment = "skip"
 
 # ----------------------------------------------------------------------------
 # Commented-out examples — uncomment + tailor as needed.
@@ -213,9 +232,13 @@ name = "base"
 # [[rule]]
 # name = "iwyu-pragma"
 # copied_from = "base"
-# include_match = ["foo.h", "bar.h"]
+# file_paths = ["include/*"]
+# include_resolved_match = ["include/private/**"]
 # action = "skip"
 # trailing_comment = {
+#     transform = {
+#         action = { type = "replace", with = "IWYU: export" },
+#     },
 #     append_if_absent = "  // IWYU: export",
 # }
 

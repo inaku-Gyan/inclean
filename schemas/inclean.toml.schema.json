@@ -121,8 +121,18 @@
             "type": "string"
           }
         },
+        "include_resolved_match": {
+          "description": "Globset patterns matched against the resolved header path, relative to\nthe project root, after `include_directories` probes candidate files.\nPatterns are ordered like `include_match`. Effective default for a rule\nwith no parent is `[\"**\"]`. When `include_directories` is empty, this\nfield has no effect.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "include_on_unresolved": {
-          "description": "Policy for a matched include when `include_directories` is non-empty\nand no directory contains the include argument. Effective default is\n`error`. `allow` keeps the rule matched for non-`resolve` actions; it\nis rejected with action `resolve`.",
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand no resolved candidate remains after `include_resolved_match`\nfiltering. Effective default is `error`. `allow` keeps the rule\nmatched for non-`resolve` actions; it is rejected with action `resolve`.",
           "anyOf": [
             {
               "$ref": "#/$defs/IncludeOnUnresolved"
@@ -133,7 +143,7 @@
           ]
         },
         "include_on_ambiguous": {
-          "description": "Policy for a matched include when `include_directories` is non-empty\nand more than one directory contains the include argument. Effective\ndefault is `error`; `first` selects the first matching directory in\ndeclaration order.",
+          "description": "Policy for a matched include when `include_directories` is non-empty\nand more than one directory contains the include argument. Effective\ndefault is `error`; `first` selects the first matching candidate in\ndeclaration order after `include_resolved_match` filtering.",
           "anyOf": [
             {
               "$ref": "#/$defs/IncludeOnAmbiguous"

@@ -90,14 +90,17 @@ file under the project root. `-c PATH` overrides the upward `inclean.toml`
 walk; `-j N` sets the worker thread count.
 
 Rule matching first checks `file_paths`, `file_suffixes`, `include_forms`,
-and `include_match`. Globs are anchored and use literal separators:
+and `include_match`. `include_resolved_match` applies later to resolved
+header paths. Globs are anchored and use literal separators:
 `foo.h` only matches `foo.h`, while `**/foo.h` matches at any depth.
 Glob lists are ordered: a leading unescaped `!` excludes, and the last
 matching pattern wins. Use TOML single quotes for a literal leading bang,
 for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
 When `include_directories` is set, inclean then probes those literal
-directories and applies `include_on_unresolved` (`error` / `skip` /
-`allow`) and `include_on_ambiguous` (`error` / `skip` / `first`).
+directories, filters resolved project-relative header paths through
+`include_resolved_match` (default `["**"]`), and applies
+`include_on_unresolved` (`error` / `skip` / `allow`) and
+`include_on_ambiguous` (`error` / `skip` / `first`).
 For `#include MACRO`, inclean statically expands simple header-like
 definitions such as `#define MACRO "foo.h"` or `#define MACRO <foo.h>`.
 Path rewrites for these includes update the macro definition value, while
@@ -132,7 +135,8 @@ See [tests/golden_tests/](tests/golden_tests/) for runnable end-to-end examples.
 
 `inclean.toml` ships with a JSON Schema for editor completion and
 validation. Editors that understand the `#:schema` directive (VS Code
-with [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
+with [Tombi](https://tombi-toml.github.io/tombi/)
+or [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
 Helix, Zed) automatically pick it up:
 
 ```toml

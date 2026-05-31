@@ -9,7 +9,8 @@
 //!    (`include.content`), where a leading unescaped `!` negates and the last
 //!    match wins.
 //! 5. If `include_directories` is non-empty, the engine probes those
-//!    directories and applies `include_on_unresolved` /
+//!    directories, filters resolved header paths through
+//!    `include_resolved_match`, then applies `include_on_unresolved` /
 //!    `include_on_ambiguous`.
 //!
 //! `suppression_comments_regex` filters includes out *before* layer
@@ -44,6 +45,7 @@ pub struct CompiledRule<'a> {
     pub rule: &'a ResolvedRule,
     pub path_matcher: PathMatcher,
     pub include_matcher: OrderedGlobMatcher,
+    pub include_resolved_matcher: OrderedGlobMatcher,
     pub suppression: CompiledSuppression,
     pub trailing_content_regex: Option<Regex>,
 }
@@ -69,6 +71,11 @@ impl<'a> CompiledRule<'a> {
         let include_matcher = OrderedGlobMatcher::build(&rule.include_match)
             .with_context(|| format!("rule `{}`: include_match glob compile", rule.name))?;
 
+        let include_resolved_matcher = OrderedGlobMatcher::build(&rule.include_resolved_match)
+            .with_context(|| {
+                format!("rule `{}`: include_resolved_match glob compile", rule.name)
+            })?;
+
         let suppression = compile_suppression(&rule.suppression, &rule.name)?;
         let trailing_content_regex = match &rule.trailing_comment.transform {
             _ if rule.trailing_comment.skip => None,
@@ -85,6 +92,7 @@ impl<'a> CompiledRule<'a> {
             rule,
             path_matcher,
             include_matcher,
+            include_resolved_matcher,
             suppression,
             trailing_content_regex,
         })
@@ -283,6 +291,10 @@ fn resolve_include(
             let resolved = candidate
                 .canonicalize()
                 .unwrap_or_else(|_| candidate.clone());
+            let match_path = resolved_header_match_path(project_root, &candidate, &resolved);
+            if !rule.include_resolved_matcher.is_match(&match_path) {
+                continue;
+            }
             if !hits.iter().any(|(_, seen)| *seen == resolved) {
                 hits.push((dir.clone(), resolved));
             }
@@ -292,7 +304,7 @@ fn resolve_include(
     match hits.len() {
         0 => match rule.rule.include_on_unresolved {
             IncludeOnUnresolved::Error => IncludeResolution::Failed(format!(
-                "no include_directories entry contains '{}'",
+                "no include_directories entry contains '{}' matching include_resolved_match",
                 include.content
             )),
             IncludeOnUnresolved::Skip => IncludeResolution::Skipped,
@@ -314,6 +326,14 @@ fn resolve_include(
             IncludeOnAmbiguous::First => IncludeResolution::Matched(Some(hits.remove(0).1)),
         },
     }
+}
+
+fn resolved_header_match_path(project_root: &Path, candidate: &Path, resolved: &Path) -> PathBuf {
+    resolved
+        .strip_prefix(project_root)
+        .or_else(|_| candidate.strip_prefix(project_root))
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| resolved.to_path_buf())
 }
 
 #[cfg(test)]

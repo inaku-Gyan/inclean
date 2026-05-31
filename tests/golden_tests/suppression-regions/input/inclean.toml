@@ -7,9 +7,5 @@ min_inclean_version = "0.3.0-alpha.3"
 name = "rewrite"
 file_paths = ["src/**/*"]
 include_match = ["**"]
-suppression_comments_regex = {
-    block_start = "^USER CODE BEGIN.*$",
-    block_end = "^USER CODE END.*$",
-    line = "^inclean: skip$",
-}
+suppression_comments_regex = { block_start = "^USER CODE BEGIN.*$", block_end = "^USER CODE END.*$", line = "^inclean: skip$" }
 action = { type = "replace", with = "lib/${original}" }

@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.3.0/schemas/inclean.toml.schema.json
+#:schema ../../../../schemas/inclean.toml.schema.json
 
 [project]
 version = "0.3.0"
@@ -106,7 +106,7 @@ copied_from = "export inner headers"
 
 file_paths = ["Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/**"]
 
-include_match = ["**/cmsis_os2.h"]
+include_resolved_match = ["Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h"]
 
 
 [[rule]]
@@ -115,7 +115,7 @@ copied_from = "export inner headers"
 
 file_paths = ["Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/freertos_os2.h"]
 
-include_match = ["**/stm32f4xx.h"]
+include_resolved_match = ["Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"]
 
 
 [[rule]]
