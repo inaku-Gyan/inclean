@@ -54,6 +54,24 @@ action = { type = "resolve", relative_to = "include", output_form = "quote" }
 5. 如果 `include_directories` 非空，则解析到真实头文件，并用
    `include_resolved_match` 过滤解析后的路径。
 
+几类共享语法集中说明在这里：[glob 语法](#glob-syntax)、
+[placeholders](#placeholders) 和 [内置常量](#constants)。
+
+<a id="glob-syntax"></a>
+
+### Glob 语法
+
+`file_paths`、`include_match` 和 `include_resolved_match` 使用有序 signed
+glob 列表。
+
+- 模式是全字符串锚定的：`foo.h` 只匹配 `foo.h`；任意深度请写 `**/foo.h`。
+- `*` 不跨 `/`；`**` 可以跨 `/`。
+- 未转义的开头 `!` 表示取反。
+- 靠后的匹配会覆盖靠前的匹配。
+- 字面开头感叹号在 TOML 单引号中写 `'\!weird.h'`，在双引号中写
+  `"\\!weird.h"`。
+- `include_directories` 不是 glob 列表，它的元素是项目根下的字面目录。
+
 ### 规则身份和复制
 
 | 字段          | 必填 | 默认值 | 含义                                               |
@@ -87,23 +105,17 @@ action = { type = "resolve", relative_to = "${copied}", output_form = "quote" }
 | 数组元素       | `["${copied}", "!x/**"]`    | 在当前位置展开父规则的整个数组。                                                            |
 | 内层字符串字段 | `relative_to = "${copied}"` | 复制父规则对应的标量字段。复制动作特有字段时，父子 action 必须是同一变体。                  |
 
+`${copied}` 在复制解析阶段求值，和运行时 [placeholders](#placeholders) 是两套机制。
+
 ### 源文件选择
 
 | 字段            | 默认值                                         | 含义                                                                     |
 | --------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `file_paths`    | `["**/*"]`                                     | 有序 signed glob，匹配项目根相对源文件路径。                             |
-| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | 字面扩展名，包含开头的点。仅当命中的 `file_paths` 模式包含通配符时生效。 |
+| `file_paths`    | `["**/*"]`                                     | 有序 signed [glob 列表](#glob-syntax)，匹配项目根相对源文件路径。        |
+| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | 字面扩展名，包含开头的点。可使用 [内置常量](#constants)。               |
 
-Glob 规则：
-
-- 模式是全字符串锚定的：`foo.h` 只匹配 `foo.h`；任意深度请写 `**/foo.h`。
-- `*` 不跨 `/`；`**` 可以跨 `/`。
-- 未转义的开头 `!` 表示取反。
-- 靠后的匹配会覆盖靠前的匹配。
-- 字面开头感叹号在 TOML 单引号中写 `'\!weird.h'`，在双引号中写
-  `"\\!weird.h"`。
-- 精确字面 `file_paths` 匹配会跳过 `file_suffixes`；通配符匹配必须继续通过
-  `file_suffixes`。
+精确字面 `file_paths` 匹配会跳过 `file_suffixes`；通配符匹配必须继续通过
+`file_suffixes`。
 
 ### 抑制区域
 
@@ -125,14 +137,15 @@ suppression_comments_regex = {
 | `block_end`   | 在匹配行结束不可编辑块。省略时，块会持续到文件末尾。 |
 
 匹配时，`inclean` 会在存在 `//` 或同一行 `/* ... */` 分隔符时去掉分隔符，再 trim
-空白，然后把该文本交给正则。非注释行会用 trim 后的原始文本匹配。
+空白，然后把该文本交给正则。非注释行会用 trim 后的原始文本匹配。正则字符串可使用
+[内置常量](#constants)。
 
 ### Include 匹配
 
 | 字段            | 默认值      | 含义                                                                                                                     |
 | --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `include_forms` | `["quote"]` | 规则匹配的 include 形式：`"quote"` 对应 `#include "x.h"`，`"angle"` 对应 `#include <x.h>`，`"macro"` 对应 `#include X`。 |
-| `include_match` | `["**"]`    | 有序 signed glob，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。                                            |
+| `include_match` | `["**"]`    | 有序 signed [glob 列表](#glob-syntax)，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。                       |
 
 `#include MACRO` 有特殊处理。`inclean` 会扫描符合规则文件选择条件的源文件，寻找替换列表
 正好是一个头文件 token 的简单对象宏：
@@ -152,8 +165,8 @@ suppression_comments_regex = {
 
 | 字段                     | 默认值    | 含义                                                                                                             |
 | ------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------- |
-| `include_directories`    | `[]`      | 项目根下的字面目录路径。不是 glob，没有隐式 `/**`，也没有 `.gitignore` 语义。                                    |
-| `include_resolved_match` | `["**"]`  | 有序 signed glob，匹配解析后的头文件路径；能相对项目根时使用项目根相对路径。`include_directories` 为空时无效果。 |
+| `include_directories`    | `[]`      | 项目根下的字面目录路径。不是 [glob](#glob-syntax)，没有隐式 `/**`，也没有 `.gitignore` 语义。                    |
+| `include_resolved_match` | `["**"]`  | 有序 signed [glob 列表](#glob-syntax)，匹配解析后的头文件路径；能相对项目根时使用项目根相对路径。`include_directories` 为空时无效果。 |
 | `include_on_unresolved`  | `"error"` | 找不到候选头文件时的策略：`"error"`、`"skip"` 或 `"allow"`。                                                     |
 | `include_on_ambiguous`   | `"error"` | 多个 include 目录都能解析同一个 include 参数时的策略：`"error"`、`"skip"` 或 `"first"`。                         |
 
@@ -167,6 +180,21 @@ suppression_comments_regex = {
 `resolve` 动作。它不能和 `action = { type = "resolve", ... }` 一起使用。
 `include_on_ambiguous = "first"` 会按 `include_directories` 的声明顺序选第一个匹配项。
 
+<a id="placeholders"></a>
+
+## Placeholders
+
+运行时 placeholders 会在规则匹配之后，在 action 和尾随注释模板字符串中展开：
+
+| Placeholder       | 在 action 模板中                                  | 在尾随注释模板中                                     |
+| ----------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| `${current_file}` | 正在编辑文件的项目根相对路径。                    | 正在编辑文件的项目根相对路径。                       |
+| `${original}`     | 去掉引号或尖括号后的原 include 参数。             | 去掉分隔符并 trim 后的原尾随注释正文。               |
+
+支持的 action 模板字段包括 `action.relative_to`、`action.with` 和
+`action.message`。支持的尾随注释模板字段包括
+`trailing_comment.transform.action.with` 和 `.message`。
+
 ## Actions
 
 `action` 可以是 `"skip"`、`"${copied}"` 或带 `type` 的对象。如果一条规则及其所有父规则
@@ -178,8 +206,7 @@ suppression_comments_regex = {
   `"preserve"`。
 - `message`：各 action 变体都接受的可选字符串。`error` 会把它作为用户可见错误文本；
   其他变体目前不会用它改变改写结果。
-- action 字符串里的占位符：`${original}` 是去掉分隔符后的 include 参数；
-  `${current_file}` 是项目根相对源文件路径。
+- action 字符串可使用 [placeholders](#placeholders) 和 [内置常量](#constants)。
 
 | Action      | 语法                                                                         | 效果                                                                                                                                  |
 | ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -237,9 +264,11 @@ trailing_comment = {
 | error   | `{ type = "error", message = "..." }`                              | 报告不可修复的尾随注释错误。             |
 
 `output_style` 可为 `"//"`、`"/**/"` 或 `"preserve"`，默认 `"preserve"`。
-在尾随注释模板中，`${original}` 是原注释正文，`${current_file}` 是项目根相对源文件路径。
+尾随注释模板字符串可使用 [placeholders](#placeholders) 和 [内置常量](#constants)。
 
-## 常量
+<a id="constants"></a>
+
+## 内置常量
 
 内置常量以 `@std.` 开头。
 

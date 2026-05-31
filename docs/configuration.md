@@ -57,6 +57,26 @@ A rule matches only when all configured layers pass:
 5. If `include_directories` is non-empty, directory resolution selects a real
    header and `include_resolved_match` filters that resolved path.
 
+Shared syntaxes are documented once: [glob syntax](#glob-syntax),
+[placeholders](#placeholders), and [built-in constants](#constants).
+
+<a id="glob-syntax"></a>
+
+### Glob Syntax
+
+`file_paths`, `include_match`, and `include_resolved_match` use ordered signed
+glob lists.
+
+- Patterns are full-string anchored: `foo.h` matches only `foo.h`; use
+  `**/foo.h` for any depth.
+- `*` does not cross `/`; `**` does.
+- A leading unescaped `!` negates a pattern.
+- Later matching patterns override earlier ones.
+- Escape a literal leading bang as `'\!weird.h'` in TOML single quotes, or
+  `"\\!weird.h"` in TOML double quotes.
+- `include_directories` is not a glob list. Its entries are literal
+  directories under the project root.
+
 ### Rule Identity And Copying
 
 | Field         | Required | Default | Meaning                                                                                   |
@@ -91,24 +111,18 @@ Valid `${copied}` forms:
 | Array element      | `["${copied}", "!x/**"]`    | Splice the parent list at that position.                                                                                                 |
 | Inner string field | `relative_to = "${copied}"` | Copy the parent's scalar value for that inner field. The parent action must be the same variant when variant-specific fields are copied. |
 
+`${copied}` is evaluated during copy resolution. It is separate from runtime
+[placeholders](#placeholders).
+
 ### File Selection
 
 | Field           | Default                                        | Meaning                                                                                                                           |
 | --------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `file_paths`    | `["**/*"]`                                     | Ordered signed globs matched against project-root-relative source paths.                                                          |
-| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | Literal extensions, including the leading dot. Used only when the matching `file_paths` pattern contains wildcard metacharacters. |
+| `file_paths`    | `["**/*"]`                                     | Ordered signed [glob list](#glob-syntax) matched against project-root-relative source paths.                                        |
+| `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | Literal extensions, including the leading dot. May use [built-in constants](#constants).                                            |
 
-Glob rules:
-
-- Patterns are full-string anchored: `foo.h` matches only `foo.h`; use
-  `**/foo.h` for any depth.
-- `*` does not cross `/`; `**` does.
-- A leading unescaped `!` negates a pattern.
-- Later matching patterns override earlier ones.
-- Escape a literal leading bang as `'\!weird.h'` in TOML single quotes, or
-  `"\\!weird.h"` in TOML double quotes.
-- An exact literal `file_paths` match skips `file_suffixes`; a wildcard match
-  must also pass `file_suffixes`.
+An exact literal `file_paths` match skips `file_suffixes`; a wildcard match
+must also pass `file_suffixes`.
 
 ### Suppression Regions
 
@@ -131,14 +145,15 @@ suppression_comments_regex = {
 
 For matching, `inclean` strips a leading `//` or same-line `/* ... */`
 delimiter when present, trims whitespace, and applies the regex to that text.
-Non-comment lines are matched as trimmed raw text.
+Non-comment lines are matched as trimmed raw text. Regex strings may use
+[built-in constants](#constants).
 
 ### Include Matching
 
 | Field           | Default     | Meaning                                                                                                                          |
 | --------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `include_forms` | `["quote"]` | Include forms this rule matches: `"quote"` for `#include "x.h"`, `"angle"` for `#include <x.h>`, and `"macro"` for `#include X`. |
-| `include_match` | `["**"]`    | Ordered signed globs over the include argument with delimiters stripped, for example `mylib/foo.h`.                              |
+| `include_match` | `["**"]`    | Ordered signed [glob list](#glob-syntax) over the include argument with delimiters stripped, for example `mylib/foo.h`.          |
 
 `#include MACRO` is handled specially. `inclean` scans rule-eligible source
 files for simple object-like definitions whose replacement is exactly one
@@ -161,8 +176,8 @@ values, the include is unfixable. Unexpanded macro includes can still match
 
 | Field                    | Default   | Meaning                                                                                                                                                |
 | ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `include_directories`    | `[]`      | Literal directory paths under the project root. Not globs, no implicit `/**`, and no `.gitignore` semantics.                                           |
-| `include_resolved_match` | `["**"]`  | Ordered signed globs matched against the resolved header path, project-root relative when possible. Has no effect when `include_directories` is empty. |
+| `include_directories`    | `[]`      | Literal directory paths under the project root. Not [globs](#glob-syntax), no implicit `/**`, and no `.gitignore` semantics.                           |
+| `include_resolved_match` | `["**"]`  | Ordered signed [glob list](#glob-syntax) matched against the resolved header path, project-root relative when possible. Has no effect when `include_directories` is empty. |
 | `include_on_unresolved`  | `"error"` | Policy when no candidate is found after `include_resolved_match`: `"error"`, `"skip"`, or `"allow"`.                                                   |
 | `include_on_ambiguous`   | `"error"` | Policy when multiple include directories resolve the same include argument: `"error"`, `"skip"`, or `"first"`.                                         |
 
@@ -177,6 +192,22 @@ header, which is useful for non-`resolve` actions. It is invalid with
 `action = { type = "resolve", ... }`. `include_on_ambiguous = "first"` selects
 the first matching candidate in `include_directories` order.
 
+<a id="placeholders"></a>
+
+## Placeholders
+
+Runtime placeholders are expanded in action and trailing-comment template
+strings after a rule matches:
+
+| Placeholder       | In action templates                                            | In trailing-comment templates                                      |
+| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `${current_file}` | Project-root-relative path of the file being edited.           | Project-root-relative path of the file being edited.               |
+| `${original}`     | Original include argument with quotes or angle brackets stripped. | Original trailing-comment body with delimiters stripped and trimmed. |
+
+Supported action template fields include `action.relative_to`, `action.with`,
+and `action.message`. Supported trailing-comment template fields include
+`trailing_comment.transform.action.with` and `.message`.
+
 ## Actions
 
 `action` can be `"skip"`, `"${copied}"`, or a tagged object. If neither a rule
@@ -189,8 +220,8 @@ Shared values:
 - `message`: optional string accepted by action variants. `error` uses it as
   the user-facing error text. Other variants currently do not change rewrite
   text with it.
-- Placeholders in action strings: `${original}` is the stripped include
-  argument; `${current_file}` is the project-root-relative source file path.
+- Action strings may use [placeholders](#placeholders) and
+  [built-in constants](#constants).
 
 | Action      | Syntax                                                                       | Effect                                                                                                                                                                   |
 | ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -249,10 +280,12 @@ Trailing-comment actions:
 | error   | `{ type = "error", message = "..." }`                              | Report an unfixable trailing-comment error.               |
 
 `output_style` is `"//"`, `"/**/"`, or `"preserve"`; default is
-`"preserve"`. In trailing-comment templates, `${original}` is the original
-comment body and `${current_file}` is the project-root-relative source path.
+`"preserve"`. Trailing-comment template strings may use
+[placeholders](#placeholders) and [built-in constants](#constants).
 
-## Constants
+<a id="constants"></a>
+
+## Built-in Constants
 
 Built-in constants start with `@std.`.
 
