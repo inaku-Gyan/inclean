@@ -37,11 +37,11 @@ a `keep` action still participates because it contributes an explicit outcome.
 
 ## `[project]`
 
-| Field | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `root` | no | `"."` | Project root, relative to the config file. All rule paths are relative to this resolved root. Must point to an existing directory. |
-| `version` | yes | none | Config schema version written by the CLI that generated the file. |
-| `min_inclean_version` | yes | none | Oldest CLI version expected to parse this config correctly. |
+| Field                 | Required | Default | Meaning                                                                                                                            |
+| --------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `root`                | no       | `"."`   | Project root, relative to the config file. All rule paths are relative to this resolved root. Must point to an existing directory. |
+| `version`             | yes      | none    | Config schema version written by the CLI that generated the file.                                                                  |
+| `min_inclean_version` | yes      | none    | Oldest CLI version expected to parse this config correctly.                                                                        |
 
 `#:schema` is optional and only helps editor tooling. The CLI uses the
 `version` fields above for its own compatibility check.
@@ -59,10 +59,10 @@ A rule matches only when all configured layers pass:
 
 ### Rule Identity And Copying
 
-| Field | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `name` | yes | none | Globally unique rule name used in diagnostics. |
-| `copied_from` | no | none | Name of an earlier rule to inherit from. Forward references and self-copies are rejected. |
+| Field         | Required | Default | Meaning                                                                                   |
+| ------------- | -------- | ------- | ----------------------------------------------------------------------------------------- |
+| `name`        | yes      | none    | Globally unique rule name used in diagnostics.                                            |
+| `copied_from` | no       | none    | Name of an earlier rule to inherit from. Forward references and self-copies are rejected. |
 
 When `copied_from` is set, omitted top-level fields inherit the parent's
 already resolved value. Written top-level fields replace the whole field.
@@ -85,17 +85,17 @@ action = { type = "resolve", relative_to = "${copied}", output_form = "quote" }
 
 Valid `${copied}` forms:
 
-| Location | Syntax | Meaning |
-| --- | --- | --- |
-| Whole object field | `action = "${copied}"` | Copy the whole parent object. Valid for `action`, `trailing_comment`, and `suppression_comments_regex`. |
-| Array element | `["${copied}", "!x/**"]` | Splice the parent list at that position. |
+| Location           | Syntax                      | Meaning                                                                                                                                  |
+| ------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Whole object field | `action = "${copied}"`      | Copy the whole parent object. Valid for `action`, `trailing_comment`, and `suppression_comments_regex`.                                  |
+| Array element      | `["${copied}", "!x/**"]`    | Splice the parent list at that position.                                                                                                 |
 | Inner string field | `relative_to = "${copied}"` | Copy the parent's scalar value for that inner field. The parent action must be the same variant when variant-specific fields are copied. |
 
 ### File Selection
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `file_paths` | `["**/*"]` | Ordered signed globs matched against project-root-relative source paths. |
+| Field           | Default                                        | Meaning                                                                                                                           |
+| --------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `file_paths`    | `["**/*"]`                                     | Ordered signed globs matched against project-root-relative source paths.                                                          |
 | `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | Literal extensions, including the leading dot. Used only when the matching `file_paths` pattern contains wildcard metacharacters. |
 
 Glob rules:
@@ -123,11 +123,11 @@ suppression_comments_regex = {
 }
 ```
 
-| Inner field | Meaning |
-| --- | --- |
-| `line` | Suppresses only lines whose probe text matches the regex. |
-| `block_start` | Starts an off-limits block on the matching line. |
-| `block_end` | Ends the block on the matching line. If omitted, the block continues to end of file. |
+| Inner field   | Meaning                                                                              |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `line`        | Suppresses only lines whose probe text matches the regex.                            |
+| `block_start` | Starts an off-limits block on the matching line.                                     |
+| `block_end`   | Ends the block on the matching line. If omitted, the block continues to end of file. |
 
 For matching, `inclean` strips a leading `//` or same-line `/* ... */`
 delimiter when present, trims whitespace, and applies the regex to that text.
@@ -135,10 +135,10 @@ Non-comment lines are matched as trimmed raw text.
 
 ### Include Matching
 
-| Field | Default | Meaning |
-| --- | --- | --- |
+| Field           | Default     | Meaning                                                                                                                          |
+| --------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `include_forms` | `["quote"]` | Include forms this rule matches: `"quote"` for `#include "x.h"`, `"angle"` for `#include <x.h>`, and `"macro"` for `#include X`. |
-| `include_match` | `["**"]` | Ordered signed globs over the include argument with delimiters stripped, for example `mylib/foo.h`. |
+| `include_match` | `["**"]`    | Ordered signed globs over the include argument with delimiters stripped, for example `mylib/foo.h`.                              |
 
 `#include MACRO` is handled specially. `inclean` scans rule-eligible source
 files for simple object-like definitions whose replacement is exactly one
@@ -159,12 +159,12 @@ values, the include is unfixable. Unexpanded macro includes can still match
 
 ### Header Resolution
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `include_directories` | `[]` | Literal directory paths under the project root. Not globs, no implicit `/**`, and no `.gitignore` semantics. |
-| `include_resolved_match` | `["**"]` | Ordered signed globs matched against the resolved header path, project-root relative when possible. Has no effect when `include_directories` is empty. |
-| `include_on_unresolved` | `"error"` | Policy when no candidate is found after `include_resolved_match`: `"error"`, `"skip"`, or `"allow"`. |
-| `include_on_ambiguous` | `"error"` | Policy when multiple include directories resolve the same include argument: `"error"`, `"skip"`, or `"first"`. |
+| Field                    | Default   | Meaning                                                                                                                                                |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `include_directories`    | `[]`      | Literal directory paths under the project root. Not globs, no implicit `/**`, and no `.gitignore` semantics.                                           |
+| `include_resolved_match` | `["**"]`  | Ordered signed globs matched against the resolved header path, project-root relative when possible. Has no effect when `include_directories` is empty. |
+| `include_on_unresolved`  | `"error"` | Policy when no candidate is found after `include_resolved_match`: `"error"`, `"skip"`, or `"allow"`.                                                   |
+| `include_on_ambiguous`   | `"error"` | Policy when multiple include directories resolve the same include argument: `"error"`, `"skip"`, or `"first"`.                                         |
 
 Resolution probes each directory as:
 
@@ -192,16 +192,16 @@ Shared values:
 - Placeholders in action strings: `${original}` is the stripped include
   argument; `${current_file}` is the project-root-relative source file path.
 
-| Action | Syntax | Effect |
-| --- | --- | --- |
-| skip | `action = "skip"` | Rule may still match and run `trailing_comment`, but contributes no action candidate. |
-| copy | `action = "${copied}"` | Copy the whole parent action. Requires `copied_from`. |
-| resolve | `{ type = "resolve", relative_to = "...", output_form = "quote" }` | Rewrite to the header chosen by `include_directories`, expressed relative to `relative_to`. `relative_to = "${current_file}"` means the current source file's directory. |
-| replace | `{ type = "replace", with = "lib/${original}", output_form = "quote" }` | Replace the include argument with `with`. No header lookup is required. |
-| keep | `{ type = "keep", output_form = "angle" }` | Keep the include argument; optionally change quote/angle form. |
-| remove | `{ type = "remove", keep_blank_line = false, keep_trailing_comment = true }` | Delete the whole include line. By default no blank line is kept and a recognized trailing comment is preserved on its own line. |
-| comment_out | `{ type = "comment_out", style = "//" }` | Comment out the whole include line. `style` is `"//"` or `"/**/"`; default `"//"`. |
-| error | `{ type = "error", message = "..." }` | Report a configured error. |
+| Action      | Syntax                                                                       | Effect                                                                                                                                                                   |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| skip        | `action = "skip"`                                                            | Rule may still match and run `trailing_comment`, but contributes no action candidate.                                                                                    |
+| copy        | `action = "${copied}"`                                                       | Copy the whole parent action. Requires `copied_from`.                                                                                                                    |
+| resolve     | `{ type = "resolve", relative_to = "...", output_form = "quote" }`           | Rewrite to the header chosen by `include_directories`, expressed relative to `relative_to`. `relative_to = "${current_file}"` means the current source file's directory. |
+| replace     | `{ type = "replace", with = "lib/${original}", output_form = "quote" }`      | Replace the include argument with `with`. No header lookup is required.                                                                                                  |
+| keep        | `{ type = "keep", output_form = "angle" }`                                   | Keep the include argument; optionally change quote/angle form.                                                                                                           |
+| remove      | `{ type = "remove", keep_blank_line = false, keep_trailing_comment = true }` | Delete the whole include line. By default no blank line is kept and a recognized trailing comment is preserved on its own line.                                          |
+| comment_out | `{ type = "comment_out", style = "//" }`                                     | Comment out the whole include line. `style` is `"//"` or `"/**/"`; default `"//"`.                                                                                       |
+| error       | `{ type = "error", message = "..." }`                                        | Report a configured error.                                                                                                                                               |
 
 `resolve`, `replace`, and `keep` can be combined with `trailing_comment`.
 `remove`, `comment_out`, and `error` ignore `trailing_comment`.
@@ -226,27 +226,27 @@ Only same-line `// ...` and closed same-line `/* ... */` comments count as
 trailing comments. Cross-line block comments are left alone and do not trigger
 `append_if_absent`.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `transform` | none | Optional transform applied when an existing trailing comment matches. |
-| `append_if_absent` | none | Literal text appended when the action outcome leaves no trailing comment. Include leading whitespace and delimiters yourself. Must be one line. |
+| Field              | Default | Meaning                                                                                                                                         |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transform`        | none    | Optional transform applied when an existing trailing comment matches.                                                                           |
+| `append_if_absent` | none    | Literal text appended when the action outcome leaves no trailing comment. Include leading whitespace and delimiters yourself. Must be one line. |
 
 `transform` fields:
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `match_styles` | `["//", "/**/"]` | Existing comment styles allowed to match. |
-| `content_regex` | `".*"` | Regex matched against the trimmed comment body. |
-| `action` | required | One of the trailing-comment actions below. |
+| Field           | Default          | Meaning                                         |
+| --------------- | ---------------- | ----------------------------------------------- |
+| `match_styles`  | `["//", "/**/"]` | Existing comment styles allowed to match.       |
+| `content_regex` | `".*"`           | Regex matched against the trimmed comment body. |
+| `action`        | required         | One of the trailing-comment actions below.      |
 
 Trailing-comment actions:
 
-| Action | Syntax | Effect |
-| --- | --- | --- |
-| replace | `{ type = "replace", with = "IWYU: export", output_style = "//" }` | Replace the comment body. |
-| keep | `{ type = "keep", output_style = "preserve" }` | Keep the comment body; optionally change delimiter style. |
-| remove | `{ type = "remove" }` | Remove the trailing comment. |
-| error | `{ type = "error", message = "..." }` | Report an unfixable trailing-comment error. |
+| Action  | Syntax                                                             | Effect                                                    |
+| ------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
+| replace | `{ type = "replace", with = "IWYU: export", output_style = "//" }` | Replace the comment body.                                 |
+| keep    | `{ type = "keep", output_style = "preserve" }`                     | Keep the comment body; optionally change delimiter style. |
+| remove  | `{ type = "remove" }`                                              | Remove the trailing comment.                              |
+| error   | `{ type = "error", message = "..." }`                              | Report an unfixable trailing-comment error.               |
 
 `output_style` is `"//"`, `"/**/"`, or `"preserve"`; default is
 `"preserve"`. In trailing-comment templates, `${original}` is the original
@@ -273,17 +273,17 @@ expand `@std.*` constants.
 
 Available list constants:
 
-| Constant | Meaning |
-| --- | --- |
-| `@std.c.header_extensions` | `.h` |
-| `@std.c.source_extensions` | `.c` |
-| `@std.c.extensions` | C header and source extensions. |
-| `@std.cpp.header_extensions` | `.hh`, `.hpp`, `.hxx`, `.h++` |
-| `@std.cpp.source_extensions` | `.cc`, `.cpp`, `.cxx`, `.c++`, `.inl`, `.ipp` |
-| `@std.cpp.extensions` | C++ header and source extensions. |
-| `@std.c89.system_headers`, `@std.c95.system_headers`, `@std.c99.system_headers`, `@std.c11.system_headers`, `@std.c17.system_headers`, `@std.c23.system_headers` | C standard library header sets, cumulative by standard version. |
+| Constant                                                                                                                                                                     | Meaning                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `@std.c.header_extensions`                                                                                                                                                   | `.h`                                                              |
+| `@std.c.source_extensions`                                                                                                                                                   | `.c`                                                              |
+| `@std.c.extensions`                                                                                                                                                          | C header and source extensions.                                   |
+| `@std.cpp.header_extensions`                                                                                                                                                 | `.hh`, `.hpp`, `.hxx`, `.h++`                                     |
+| `@std.cpp.source_extensions`                                                                                                                                                 | `.cc`, `.cpp`, `.cxx`, `.c++`, `.inl`, `.ipp`                     |
+| `@std.cpp.extensions`                                                                                                                                                        | C++ header and source extensions.                                 |
+| `@std.c89.system_headers`, `@std.c95.system_headers`, `@std.c99.system_headers`, `@std.c11.system_headers`, `@std.c17.system_headers`, `@std.c23.system_headers`             | C standard library header sets, cumulative by standard version.   |
 | `@std.cpp98.system_headers`, `@std.cpp11.system_headers`, `@std.cpp14.system_headers`, `@std.cpp17.system_headers`, `@std.cpp20.system_headers`, `@std.cpp23.system_headers` | C++ standard library header sets, cumulative by standard version. |
-| `@std.cpp.c_compat_headers` | C-compatible C++ header names such as `cstdio` and `cstdlib`. |
+| `@std.cpp.c_compat_headers`                                                                                                                                                  | C-compatible C++ header names such as `cstdio` and `cstdlib`.     |
 
 For regex strings, any list constant can also be used as `@name_or` to request
 an alternation explicitly, for example `@std.cpp17.system_headers_or`.

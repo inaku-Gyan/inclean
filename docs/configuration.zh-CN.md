@@ -34,11 +34,11 @@ action = { type = "resolve", relative_to = "include", output_form = "quote" }
 
 ## `[project]`
 
-| 字段 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `root` | 否 | `"."` | 项目根目录，相对配置文件所在目录解析。所有规则路径都相对这个根目录。必须指向已存在的目录。 |
-| `version` | 是 | 无 | 写出这份配置的 CLI 对应的配置 schema 版本。 |
-| `min_inclean_version` | 是 | 无 | 预期能正确解析这份配置的最低 CLI 版本。 |
+| 字段                  | 必填 | 默认值 | 含义                                                                                       |
+| --------------------- | ---- | ------ | ------------------------------------------------------------------------------------------ |
+| `root`                | 否   | `"."`  | 项目根目录，相对配置文件所在目录解析。所有规则路径都相对这个根目录。必须指向已存在的目录。 |
+| `version`             | 是   | 无     | 写出这份配置的 CLI 对应的配置 schema 版本。                                                |
+| `min_inclean_version` | 是   | 无     | 预期能正确解析这份配置的最低 CLI 版本。                                                    |
 
 `#:schema` 是可选的，只服务编辑器补全和校验。CLI 自己会使用上面的 version 字段做
 兼容性检查。
@@ -56,10 +56,10 @@ action = { type = "resolve", relative_to = "include", output_form = "quote" }
 
 ### 规则身份和复制
 
-| 字段 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `name` | 是 | 无 | 全局唯一规则名，用于诊断输出。 |
-| `copied_from` | 否 | 无 | 要继承的前置规则名。不能前向引用，也不能复制自己。 |
+| 字段          | 必填 | 默认值 | 含义                                               |
+| ------------- | ---- | ------ | -------------------------------------------------- |
+| `name`        | 是   | 无     | 全局唯一规则名，用于诊断输出。                     |
+| `copied_from` | 否   | 无     | 要继承的前置规则名。不能前向引用，也不能复制自己。 |
 
 设置 `copied_from` 后，子规则省略的顶层字段会继承父规则已经解析后的值。子规则写出的
 顶层字段会整体替换父规则字段。对于对象字段，如果子规则写了外层对象，省略的内层字段会
@@ -81,17 +81,17 @@ action = { type = "resolve", relative_to = "${copied}", output_form = "quote" }
 
 合法的 `${copied}` 形式：
 
-| 位置 | 语法 | 含义 |
-| --- | --- | --- |
-| 整个对象字段 | `action = "${copied}"` | 复制父规则的整个对象。适用于 `action`、`trailing_comment` 和 `suppression_comments_regex`。 |
-| 数组元素 | `["${copied}", "!x/**"]` | 在当前位置展开父规则的整个数组。 |
-| 内层字符串字段 | `relative_to = "${copied}"` | 复制父规则对应的标量字段。复制动作特有字段时，父子 action 必须是同一变体。 |
+| 位置           | 语法                        | 含义                                                                                        |
+| -------------- | --------------------------- | ------------------------------------------------------------------------------------------- |
+| 整个对象字段   | `action = "${copied}"`      | 复制父规则的整个对象。适用于 `action`、`trailing_comment` 和 `suppression_comments_regex`。 |
+| 数组元素       | `["${copied}", "!x/**"]`    | 在当前位置展开父规则的整个数组。                                                            |
+| 内层字符串字段 | `relative_to = "${copied}"` | 复制父规则对应的标量字段。复制动作特有字段时，父子 action 必须是同一变体。                  |
 
 ### 源文件选择
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `file_paths` | `["**/*"]` | 有序 signed glob，匹配项目根相对源文件路径。 |
+| 字段            | 默认值                                         | 含义                                                                     |
+| --------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `file_paths`    | `["**/*"]`                                     | 有序 signed glob，匹配项目根相对源文件路径。                             |
 | `file_suffixes` | `["@std.c.extensions", "@std.cpp.extensions"]` | 字面扩展名，包含开头的点。仅当命中的 `file_paths` 模式包含通配符时生效。 |
 
 Glob 规则：
@@ -118,21 +118,21 @@ suppression_comments_regex = {
 }
 ```
 
-| 内层字段 | 含义 |
-| --- | --- |
-| `line` | 只抑制 probe 文本匹配该正则的行。 |
-| `block_start` | 从匹配行开始进入不可编辑块。 |
-| `block_end` | 在匹配行结束不可编辑块。省略时，块会持续到文件末尾。 |
+| 内层字段      | 含义                                                 |
+| ------------- | ---------------------------------------------------- |
+| `line`        | 只抑制 probe 文本匹配该正则的行。                    |
+| `block_start` | 从匹配行开始进入不可编辑块。                         |
+| `block_end`   | 在匹配行结束不可编辑块。省略时，块会持续到文件末尾。 |
 
 匹配时，`inclean` 会在存在 `//` 或同一行 `/* ... */` 分隔符时去掉分隔符，再 trim
 空白，然后把该文本交给正则。非注释行会用 trim 后的原始文本匹配。
 
 ### Include 匹配
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
+| 字段            | 默认值      | 含义                                                                                                                     |
+| --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `include_forms` | `["quote"]` | 规则匹配的 include 形式：`"quote"` 对应 `#include "x.h"`，`"angle"` 对应 `#include <x.h>`，`"macro"` 对应 `#include X`。 |
-| `include_match` | `["**"]` | 有序 signed glob，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。 |
+| `include_match` | `["**"]`    | 有序 signed glob，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。                                            |
 
 `#include MACRO` 有特殊处理。`inclean` 会扫描符合规则文件选择条件的源文件，寻找替换列表
 正好是一个头文件 token 的简单对象宏：
@@ -150,12 +150,12 @@ suppression_comments_regex = {
 
 ### 头文件解析
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `include_directories` | `[]` | 项目根下的字面目录路径。不是 glob，没有隐式 `/**`，也没有 `.gitignore` 语义。 |
-| `include_resolved_match` | `["**"]` | 有序 signed glob，匹配解析后的头文件路径；能相对项目根时使用项目根相对路径。`include_directories` 为空时无效果。 |
-| `include_on_unresolved` | `"error"` | 找不到候选头文件时的策略：`"error"`、`"skip"` 或 `"allow"`。 |
-| `include_on_ambiguous` | `"error"` | 多个 include 目录都能解析同一个 include 参数时的策略：`"error"`、`"skip"` 或 `"first"`。 |
+| 字段                     | 默认值    | 含义                                                                                                             |
+| ------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------- |
+| `include_directories`    | `[]`      | 项目根下的字面目录路径。不是 glob，没有隐式 `/**`，也没有 `.gitignore` 语义。                                    |
+| `include_resolved_match` | `["**"]`  | 有序 signed glob，匹配解析后的头文件路径；能相对项目根时使用项目根相对路径。`include_directories` 为空时无效果。 |
+| `include_on_unresolved`  | `"error"` | 找不到候选头文件时的策略：`"error"`、`"skip"` 或 `"allow"`。                                                     |
+| `include_on_ambiguous`   | `"error"` | 多个 include 目录都能解析同一个 include 参数时的策略：`"error"`、`"skip"` 或 `"first"`。                         |
 
 解析时会按如下形式探测每个目录：
 
@@ -181,16 +181,16 @@ suppression_comments_regex = {
 - action 字符串里的占位符：`${original}` 是去掉分隔符后的 include 参数；
   `${current_file}` 是项目根相对源文件路径。
 
-| Action | 语法 | 效果 |
-| --- | --- | --- |
-| skip | `action = "skip"` | 规则仍可匹配并执行 `trailing_comment`，但不贡献 action 候选结果。 |
-| copy | `action = "${copied}"` | 复制父规则的整个 action。要求设置 `copied_from`。 |
-| resolve | `{ type = "resolve", relative_to = "...", output_form = "quote" }` | 改写为 `include_directories` 选中的头文件路径，并让结果相对 `relative_to`。`relative_to = "${current_file}"` 表示当前源文件所在目录。 |
-| replace | `{ type = "replace", with = "lib/${original}", output_form = "quote" }` | 用 `with` 替换 include 参数。不需要头文件解析。 |
-| keep | `{ type = "keep", output_form = "angle" }` | 保留 include 参数；可选择改变 quote/angle 形式。 |
-| remove | `{ type = "remove", keep_blank_line = false, keep_trailing_comment = true }` | 删除整条 include 行。默认不保留空行，并把识别到的尾随注释保留到单独一行。 |
-| comment_out | `{ type = "comment_out", style = "//" }` | 注释掉整条 include 行。`style` 为 `"//"` 或 `"/**/"`，默认 `"//"`。 |
-| error | `{ type = "error", message = "..." }` | 报告一个配置指定的错误。 |
+| Action      | 语法                                                                         | 效果                                                                                                                                  |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| skip        | `action = "skip"`                                                            | 规则仍可匹配并执行 `trailing_comment`，但不贡献 action 候选结果。                                                                     |
+| copy        | `action = "${copied}"`                                                       | 复制父规则的整个 action。要求设置 `copied_from`。                                                                                     |
+| resolve     | `{ type = "resolve", relative_to = "...", output_form = "quote" }`           | 改写为 `include_directories` 选中的头文件路径，并让结果相对 `relative_to`。`relative_to = "${current_file}"` 表示当前源文件所在目录。 |
+| replace     | `{ type = "replace", with = "lib/${original}", output_form = "quote" }`      | 用 `with` 替换 include 参数。不需要头文件解析。                                                                                       |
+| keep        | `{ type = "keep", output_form = "angle" }`                                   | 保留 include 参数；可选择改变 quote/angle 形式。                                                                                      |
+| remove      | `{ type = "remove", keep_blank_line = false, keep_trailing_comment = true }` | 删除整条 include 行。默认不保留空行，并把识别到的尾随注释保留到单独一行。                                                             |
+| comment_out | `{ type = "comment_out", style = "//" }`                                     | 注释掉整条 include 行。`style` 为 `"//"` 或 `"/**/"`，默认 `"//"`。                                                                   |
+| error       | `{ type = "error", message = "..." }`                                        | 报告一个配置指定的错误。                                                                                                              |
 
 `resolve`、`replace` 和 `keep` 可以配合 `trailing_comment` 使用。`remove`、
 `comment_out` 和 `error` 会忽略 `trailing_comment`。
@@ -214,27 +214,27 @@ trailing_comment = {
 只有同一行的 `// ...` 和闭合在同一行的 `/* ... */` 会被视为尾随注释。跨行块注释会原样
 保留，也不会触发 `append_if_absent`。
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `transform` | 无 | 当已有尾随注释匹配时执行的可选转换。 |
-| `append_if_absent` | 无 | 当 action 结果没有尾随注释时追加的字面文本。需要自己包含前导空白和注释分隔符。必须是单行。 |
+| 字段               | 默认值 | 含义                                                                                       |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------ |
+| `transform`        | 无     | 当已有尾随注释匹配时执行的可选转换。                                                       |
+| `append_if_absent` | 无     | 当 action 结果没有尾随注释时追加的字面文本。需要自己包含前导空白和注释分隔符。必须是单行。 |
 
 `transform` 字段：
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `match_styles` | `["//", "/**/"]` | 允许匹配的已有注释风格。 |
-| `content_regex` | `".*"` | 匹配 trim 后注释正文的正则。 |
-| `action` | 必填 | 下列尾随注释 action 之一。 |
+| 字段            | 默认值           | 含义                         |
+| --------------- | ---------------- | ---------------------------- |
+| `match_styles`  | `["//", "/**/"]` | 允许匹配的已有注释风格。     |
+| `content_regex` | `".*"`           | 匹配 trim 后注释正文的正则。 |
+| `action`        | 必填             | 下列尾随注释 action 之一。   |
 
 尾随注释 action：
 
-| Action | 语法 | 效果 |
-| --- | --- | --- |
-| replace | `{ type = "replace", with = "IWYU: export", output_style = "//" }` | 替换注释正文。 |
-| keep | `{ type = "keep", output_style = "preserve" }` | 保留注释正文；可选择改变注释分隔符风格。 |
-| remove | `{ type = "remove" }` | 删除该尾随注释。 |
-| error | `{ type = "error", message = "..." }` | 报告不可修复的尾随注释错误。 |
+| Action  | 语法                                                               | 效果                                     |
+| ------- | ------------------------------------------------------------------ | ---------------------------------------- |
+| replace | `{ type = "replace", with = "IWYU: export", output_style = "//" }` | 替换注释正文。                           |
+| keep    | `{ type = "keep", output_style = "preserve" }`                     | 保留注释正文；可选择改变注释分隔符风格。 |
+| remove  | `{ type = "remove" }`                                              | 删除该尾随注释。                         |
+| error   | `{ type = "error", message = "..." }`                              | 报告不可修复的尾随注释错误。             |
 
 `output_style` 可为 `"//"`、`"/**/"` 或 `"preserve"`，默认 `"preserve"`。
 在尾随注释模板中，`${original}` 是原注释正文，`${current_file}` 是项目根相对源文件路径。
@@ -256,17 +256,17 @@ file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
 
 可用的列表常量：
 
-| 常量 | 含义 |
-| --- | --- |
-| `@std.c.header_extensions` | `.h` |
-| `@std.c.source_extensions` | `.c` |
-| `@std.c.extensions` | C 头文件和源文件扩展名。 |
-| `@std.cpp.header_extensions` | `.hh`、`.hpp`、`.hxx`、`.h++` |
-| `@std.cpp.source_extensions` | `.cc`、`.cpp`、`.cxx`、`.c++`、`.inl`、`.ipp` |
-| `@std.cpp.extensions` | C++ 头文件和源文件扩展名。 |
-| `@std.c89.system_headers`、`@std.c95.system_headers`、`@std.c99.system_headers`、`@std.c11.system_headers`、`@std.c17.system_headers`、`@std.c23.system_headers` | C 标准库头文件集合，按标准版本累积。 |
-| `@std.cpp98.system_headers`、`@std.cpp11.system_headers`、`@std.cpp14.system_headers`、`@std.cpp17.system_headers`、`@std.cpp20.system_headers`、`@std.cpp23.system_headers` | C++ 标准库头文件集合，按标准版本累积。 |
-| `@std.cpp.c_compat_headers` | C 兼容形式的 C++ 头文件名，例如 `cstdio`、`cstdlib`。 |
+| 常量                                                                                                                                                                         | 含义                                                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `@std.c.header_extensions`                                                                                                                                                   | `.h`                                                  |
+| `@std.c.source_extensions`                                                                                                                                                   | `.c`                                                  |
+| `@std.c.extensions`                                                                                                                                                          | C 头文件和源文件扩展名。                              |
+| `@std.cpp.header_extensions`                                                                                                                                                 | `.hh`、`.hpp`、`.hxx`、`.h++`                         |
+| `@std.cpp.source_extensions`                                                                                                                                                 | `.cc`、`.cpp`、`.cxx`、`.c++`、`.inl`、`.ipp`         |
+| `@std.cpp.extensions`                                                                                                                                                        | C++ 头文件和源文件扩展名。                            |
+| `@std.c89.system_headers`、`@std.c95.system_headers`、`@std.c99.system_headers`、`@std.c11.system_headers`、`@std.c17.system_headers`、`@std.c23.system_headers`             | C 标准库头文件集合，按标准版本累积。                  |
+| `@std.cpp98.system_headers`、`@std.cpp11.system_headers`、`@std.cpp14.system_headers`、`@std.cpp17.system_headers`、`@std.cpp20.system_headers`、`@std.cpp23.system_headers` | C++ 标准库头文件集合，按标准版本累积。                |
+| `@std.cpp.c_compat_headers`                                                                                                                                                  | C 兼容形式的 C++ 头文件名，例如 `cstdio`、`cstdlib`。 |
 
 在正则字符串里，任何列表常量也可以写成 `@name_or` 来显式请求 alternation，例如
 `@std.cpp17.system_headers_or`。
