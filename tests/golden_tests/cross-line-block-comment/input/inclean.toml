@@ -8,6 +8,4 @@ name = "rewrite"
 file_paths = ["src/**/*"]
 include_match = ["**"]
 action = { type = "replace", with = "lib/${original}" }
-trailing_comment = {
-    append_if_absent = " // IWYU pragma: export",
-}
+trailing_comment = { append_if_absent = " // IWYU pragma: export" }
