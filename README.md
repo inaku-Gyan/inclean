@@ -111,6 +111,9 @@ side opt out of conflict detection. `keep` still participates in conflict
 checks; `skip` does not. For a rule without `copied_from`, both fields
 default to `skip` when omitted.
 
+For the complete field-by-field syntax, see the
+[configuration reference](docs/configuration.md).
+
 ### Example
 
 A simple `replace`-action config that rewrites `#include "foo.h"` to
@@ -170,8 +173,8 @@ inclean config schema --output inclean.toml.schema.json
 
 ## Documentation
 
-- `inclean init` writes the most complete user-facing configuration
-  reference into the generated `inclean.toml`.
+- **[Configuration reference](docs/configuration.md)** — field meanings,
+  matching syntax, actions, copy semantics, constants, and examples.
 - **[schemas/inclean.toml.schema.json](schemas/inclean.toml.schema.json)** —
   editor schema generated from the Rust config structs.
 - **[tests/golden_tests/](tests/golden_tests/)** — runnable examples for

@@ -99,6 +99,8 @@ glob 是全字符串锚定的，并使用 literal separator
 冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。没有
 `copied_from` 的规则如果省略这两个字段，默认值都是 `skip`。
 
+完整逐字段语法见 [配置语法文档](configuration.zh-CN.md)。
+
 ### 示例
 
 用 `replace` 动作把 `#include "foo.h"` 改写为
@@ -145,7 +147,8 @@ inclean config schema --output inclean.toml.schema.json
 
 ## 文档
 
-- `inclean init` 生成的 `inclean.toml` 模板是当前最完整的用户侧配置参考。
+- **[配置语法文档](configuration.zh-CN.md)** —— 字段含义、匹配语法、
+  actions、复制语义、常量和示例。
 - **[schemas/inclean.toml.schema.json](../schemas/inclean.toml.schema.json)** ——
   由 Rust 配置结构生成的编辑器 schema。
 - **[tests/golden_tests/](../tests/golden_tests/)** —— 可运行的端到端示例，
