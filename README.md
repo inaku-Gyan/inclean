@@ -16,6 +16,28 @@ source file in the library and rewrites each `#include` so it resolves
 cleanly against a small, explicit set of allowed include directories.
 After running `inclean`, consumers only `-I` the allowed directories.
 
+## Why inclean?
+
+When using legacy libraries like `some-old-lib`, consumers often have to leak the library's internal directory structure into their own build configuration. 
+
+**Without inclean:**
+You have to add internal library paths to your own `-I` search paths to compile successfully.
+
+```sh
+gcc main.c -o main -I third_party -I third_party/some-old-lib/internal
+```
+
+![Without inclean](docs/assets/without_inclean.png)
+
+**Using inclean:**
+`inclean` automatically cleans up and standardizes the `#include` paths inside `some-old-lib`. Consumers only need to include the top-level directory.
+
+```sh
+gcc main.c -o main -I third_party
+```
+
+![Using inclean](docs/assets/using_inclean.GIF)
+
 ---
 
 ## Install

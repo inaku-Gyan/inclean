@@ -14,6 +14,24 @@ _[English](README.md) | 简体中文_
 把每条 `#include` 改写成能在一组小而显式的允许 include 目录下
 干净地解析。`inclean` 跑过之后，使用者只需 `-I` 那些允许目录。
 
+## 为什么使用 inclean？
+
+对于某老旧的库 `some-old-lib`，原本用户需要把其内部的目录也纳入用户自己的编译头文件搜索路径：
+
+```sh
+gcc main.c -o main -I third_party -I third_party/some-old-lib/internal
+```
+
+![不使用 inclean 的情况](assets/without_inclean.png)
+
+使用 inclean，就能自动清理规范化 `some-old-lib` 中的 `#include` 路径，使得用户不用再包含其内部目录，只需包含顶层目录即可：
+
+```sh
+gcc main.c -o main -I third_party
+```
+
+![使用 inclean 的效果展示](assets/using_inclean.GIF)
+
 ---
 
 ## 安装
