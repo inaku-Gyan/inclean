@@ -8,7 +8,7 @@ repository = "https://github.com/inaku-Gyan/inclean"
 license = "BSD-3-Clause"
 keywords = ["c", "cli", "cpp", "include", "refactoring"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = [".github/", "schemas/"]
+exclude = [".github/", "schemas/", "tests/"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
