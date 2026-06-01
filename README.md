@@ -16,6 +16,28 @@ source file in the library and rewrites each `#include` so it resolves
 cleanly against a small, explicit set of allowed include directories.
 After running `inclean`, consumers only `-I` the allowed directories.
 
+## Why inclean?
+
+When using legacy libraries like `some-old-lib`, consumers often have to leak the library's internal directory structure into their own build configuration. 
+
+**Without inclean:**
+You have to add internal library paths to your own `-I` search paths to compile successfully.
+
+```sh
+gcc main.c -o main -I third_party -I third_party/some-old-lib/internal
+```
+
+![Without inclean](docs/assets/without_inclean.png)
+
+**Using inclean:**
+`inclean` automatically cleans up and standardizes the `#include` paths inside `some-old-lib`. Consumers only need to include the top-level directory.
+
+```sh
+gcc main.c -o main -I third_party
+```
+
+![Using inclean](docs/assets/using_inclean.GIF)
+
 ---
 
 ## Install
@@ -111,6 +133,9 @@ side opt out of conflict detection. `keep` still participates in conflict
 checks; `skip` does not. For a rule without `copied_from`, both fields
 default to `skip` when omitted.
 
+For the complete field-by-field syntax, see the
+[configuration reference](docs/configuration.md).
+
 ### Example
 
 A simple `replace`-action config that rewrites `#include "foo.h"` to
@@ -170,8 +195,8 @@ inclean config schema --output inclean.toml.schema.json
 
 ## Documentation
 
-- `inclean init` writes the most complete user-facing configuration
-  reference into the generated `inclean.toml`.
+- **[Configuration reference](docs/configuration.md)** — field meanings,
+  matching syntax, actions, copy semantics, constants, and examples.
 - **[schemas/inclean.toml.schema.json](schemas/inclean.toml.schema.json)** —
   editor schema generated from the Rust config structs.
 - **[tests/golden_tests/](tests/golden_tests/)** — runnable examples for

@@ -14,6 +14,24 @@ _[English](README.md) | 简体中文_
 把每条 `#include` 改写成能在一组小而显式的允许 include 目录下
 干净地解析。`inclean` 跑过之后，使用者只需 `-I` 那些允许目录。
 
+## 为什么使用 inclean？
+
+对于某老旧的库 `some-old-lib`，原本用户需要把其内部的目录也纳入用户自己的编译头文件搜索路径：
+
+```sh
+gcc main.c -o main -I third_party -I third_party/some-old-lib/internal
+```
+
+![不使用 inclean 的情况](assets/without_inclean.png)
+
+使用 inclean，就能自动清理规范化 `some-old-lib` 中的 `#include` 路径，使得用户不用再包含其内部目录，只需包含顶层目录即可：
+
+```sh
+gcc main.c -o main -I third_party
+```
+
+![使用 inclean 的效果展示](assets/using_inclean.GIF)
+
 ---
 
 ## 安装
@@ -99,6 +117,8 @@ glob 是全字符串锚定的，并使用 literal separator
 冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。没有
 `copied_from` 的规则如果省略这两个字段，默认值都是 `skip`。
 
+完整逐字段语法见 [配置语法文档](configuration.zh-CN.md)。
+
 ### 示例
 
 用 `replace` 动作把 `#include "foo.h"` 改写为
@@ -145,7 +165,8 @@ inclean config schema --output inclean.toml.schema.json
 
 ## 文档
 
-- `inclean init` 生成的 `inclean.toml` 模板是当前最完整的用户侧配置参考。
+- **[配置语法文档](configuration.zh-CN.md)** —— 字段含义、匹配语法、
+  actions、复制语义、常量和示例。
 - **[schemas/inclean.toml.schema.json](../schemas/inclean.toml.schema.json)** ——
   由 Rust 配置结构生成的编辑器 schema。
 - **[tests/golden_tests/](../tests/golden_tests/)** —— 可运行的端到端示例，
