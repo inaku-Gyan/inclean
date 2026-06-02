@@ -1,4 +1,7 @@
+use std::fmt::Display;
+
 use console::{StyledObject, style};
+use itertools::Itertools;
 
 pub const HELP_STYLES: clap::builder::styling::Styles = clap::builder::styling::Styles::styled()
     .header(clap::builder::styling::AnsiColor::Cyan.on_default().bold())
@@ -42,6 +45,13 @@ pub fn rule<D>(value: D) -> StyledObject<D> {
     style(value).magenta()
 }
 
+pub fn rules<D: Display>(values: &Vec<D>) -> String {
+    values
+        .iter()
+        .map(|v| rule(v))
+        .join(&label(", ").to_string())
+}
+
 pub fn rule_err<D>(value: D) -> StyledObject<D> {
     style(value).for_stderr().magenta()
 }
@@ -63,11 +73,11 @@ pub fn label_err<D>(value: D) -> StyledObject<D> {
 }
 
 pub fn keep(value: &'static str) -> StyledObject<&'static str> {
-    style(value).green().bold()
+    style(value).cyan().bold()
 }
 
 pub fn rewrite(value: &'static str) -> StyledObject<&'static str> {
-    style(value).blue().bold()
+    style(value).green().bold()
 }
 
 pub fn warning<D>(value: D) -> StyledObject<D> {
@@ -99,11 +109,11 @@ pub fn command_err<D>(value: D) -> StyledObject<D> {
 }
 
 pub fn line_tag(line: usize) -> StyledObject<String> {
-    style(format!("L{line:>4}")).blue().bold()
+    style(format!("Ln{line:>3} ")).dim()
 }
 
 pub fn line_tag_err(line: usize) -> StyledObject<String> {
-    style(format!("L{line:>4}")).for_stderr().blue().bold()
+    style(format!("Ln{line:>3} ")).for_stderr().dim()
 }
 
 pub fn warning_line(message: &str) -> String {

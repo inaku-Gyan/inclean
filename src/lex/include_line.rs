@@ -56,6 +56,16 @@ pub struct Include {
     pub has_cross_line_block_trailing: bool,
 }
 
+impl Include {
+    pub fn full_content(&self) -> String {
+        match self.form {
+            IncludeForm::Quote => format!("\"{}\"", self.content),
+            IncludeForm::Angle => format!("<{}>", self.content),
+            IncludeForm::Macro => self.content.clone(),
+        }
+    }
+}
+
 /// Per-line lex notes that downstream callers can surface as warnings.
 /// Each entry is `(1-based line, reason)`.
 #[derive(Debug, Default, Clone)]
