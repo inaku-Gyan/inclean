@@ -29,6 +29,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 console = "0.16.3"
 globset = "0.4.18"
 ignore = "0.4.25"
+itertools = "0.14.0"
 rayon = "1.12.0"
 regex = "1.12.3"
 schemars = { version = "1.0", features = ["preserve_order"] }
