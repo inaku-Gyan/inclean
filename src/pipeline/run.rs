@@ -1433,7 +1433,10 @@ fn collapse_outcomes(
     if action_targets_current_arg {
         let edit_range = argument_and_trailing_range(include);
         let new_text = format!("{}{}", action.new_text, trailing.new_text);
-        let rules = merge_rules(action.rules, trailing.rules);
+        let rules = fallback_to_matched_rules_if_empty(
+            merge_rules(action.rules, trailing.rules),
+            &evaluations,
+        );
         return rewritten_or_keep(source, relpath, edit_range, new_text, rules);
     }
 
@@ -1458,7 +1461,8 @@ fn collapse_outcomes(
         });
     }
 
-    let rules = merge_rules(action.rules, trailing.rules);
+    let rules =
+        fallback_to_matched_rules_if_empty(merge_rules(action.rules, trailing.rules), &evaluations);
     if edits.is_empty() {
         IncludeOutcome::Keep { rules }
     } else {
@@ -1607,7 +1611,8 @@ fn collapse_macro_outcomes(
         });
     }
 
-    let rules = merge_rules(action_rules, trailing.rules);
+    let rules =
+        fallback_to_matched_rules_if_empty(merge_rules(action_rules, trailing.rules), &evaluations);
     if edits.is_empty() {
         IncludeOutcome::Keep { rules }
     } else {
@@ -1860,6 +1865,22 @@ fn merge_rules(left: Vec<String>, right: Vec<String>) -> Vec<String> {
     for rule in left.into_iter().chain(right) {
         if !out.contains(&rule) {
             out.push(rule);
+        }
+    }
+    out
+}
+
+fn fallback_to_matched_rules_if_empty(
+    rules: Vec<String>,
+    evaluations: &[RuleEvaluation],
+) -> Vec<String> {
+    if !rules.is_empty() {
+        return rules;
+    }
+    let mut out = Vec::with_capacity(evaluations.len());
+    for ev in evaluations {
+        if !out.contains(&ev.rule_name) {
+            out.push(ev.rule_name.clone());
         }
     }
     out
@@ -2200,10 +2221,10 @@ mod tests {
 
         let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
-        assert!(matches!(
-            f.include_results[0].outcome,
-            IncludeOutcome::Keep { .. }
-        ));
+        match &f.include_results[0].outcome {
+            IncludeOutcome::Keep { rules } => assert_eq!(rules, &["base"]),
+            other => panic!("unexpected outcome: {other:?}"),
+        }
         assert!(summary.conflicts.is_empty());
         assert!(f.rewritten.is_none());
     }

@@ -4,6 +4,7 @@ use crate::support;
 
 const MATCHED_INCLUDE_OUTPUT: &str = "\"matched.h\"";
 const UNMATCHED_INCLUDE_OUTPUT: &str = "#include \"unmatched.h\"";
+const MATCHED_RULE_OUTPUT: &str = "rules: matched";
 
 #[test]
 fn check_defaults_to_matched_includes_only() {
@@ -16,6 +17,7 @@ fn check_defaults_to_matched_includes_only() {
         render_output(&out)
     );
     assert_stdout_contains(&out, MATCHED_INCLUDE_OUTPUT);
+    assert_stdout_contains(&out, MATCHED_RULE_OUTPUT);
     assert_stdout_not_contains(&out, UNMATCHED_INCLUDE_OUTPUT);
 }
 
@@ -30,6 +32,7 @@ fn check_can_show_unmatched_includes_too() {
         render_output(&out)
     );
     assert_stdout_contains(&out, MATCHED_INCLUDE_OUTPUT);
+    assert_stdout_contains(&out, MATCHED_RULE_OUTPUT);
     assert_stdout_contains(&out, UNMATCHED_INCLUDE_OUTPUT);
 }
 
@@ -87,7 +90,6 @@ min_inclean_version = "{}"
 name = "matched"
 file_paths = ["src/**/*"]
 include_match = ["matched.h"]
-action = {{ type = "keep" }}
 "#,
         inclean::profile::CFG_VERSION,
         inclean::profile::MIN_COMPAT_CLI_VERSION
