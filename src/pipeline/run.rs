@@ -35,7 +35,7 @@
 //! `node_modules`. The only built-in filter is to skip `inclean.toml`
 //! files themselves (they're not source).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -46,7 +46,7 @@ use rayon::prelude::*;
 
 use crate::config::copy::{self, ResolvedAction, ResolvedRule};
 use crate::config::discover;
-use crate::config::schema::IncludeForm;
+use crate::config::schema::{IncludeForm, MacroRewrite};
 use crate::lex::include_line::{self, Include};
 use crate::lex::macro_define::{self, HeaderMacroDefinition};
 use crate::profile::CONFIG_FILENAME;
@@ -914,61 +914,25 @@ fn process_file(
     let mut include_results: Vec<IncludeResult> = Vec::with_capacity(includes.len());
     for include in includes {
         let macro_expansion = macro_index.expand(&include);
-        if let MacroExpansion::AmbiguousValues { message } = &macro_expansion {
-            include_results.push(IncludeResult {
-                include,
-                outcome: IncludeOutcome::EvaluationFailure {
-                    rule: "macro definitions".to_string(),
-                    message: message.clone(),
-                },
-            });
-            continue;
-        }
-
-        let match_include = macro_expansion.match_include(&include);
-        let matched = engine::match_all(rules, relpath, &match_include, &suppressed, project_root);
-
-        if matched.matched.is_empty() && matched.failures.is_empty() {
-            include_results.push(IncludeResult {
-                include,
-                outcome: IncludeOutcome::NoMatch,
-            });
-            continue;
-        }
-
-        // Evaluate every matched rule; action and trailing-comment policy
-        // contribute independent conflict candidates.
-        let mut evaluations: Vec<RuleEvaluation> = matched
-            .failures
-            .iter()
-            .map(|failure| RuleEvaluation {
-                rule_name: failure.rule.rule.name.clone(),
-                action: EvaluatedAction::EvaluationFailure {
-                    message: failure.message.clone(),
-                },
-                trailing: TrailingOutcome::Skip,
-            })
-            .collect();
-
-        evaluations.extend(matched.matched.iter().map(|cm| {
-            let action = evaluate_action_for_match(
-                cm.rule,
-                &include,
-                &macro_expansion,
-                original,
+        let outcome = match macro_expansion {
+            MacroExpansion::Expanded { definitions } => process_expanded_macro_include(
+                rules,
                 relpath,
+                original,
                 project_root,
-                cm.resolved_header.as_deref(),
-            );
-            let trailing = action::evaluate_trailing(cm.rule, &include, original, relpath);
-            RuleEvaluation {
-                rule_name: cm.rule.rule.name.clone(),
-                action,
-                trailing,
-            }
-        }));
-
-        let outcome = collapse_outcomes(&include, original, relpath, evaluations);
+                &suppressed,
+                &include,
+                &definitions,
+            ),
+            MacroExpansion::NotMacro | MacroExpansion::Unresolved => process_direct_include(
+                rules,
+                relpath,
+                original,
+                project_root,
+                &suppressed,
+                &include,
+            ),
+        };
 
         include_results.push(IncludeResult { include, outcome });
     }
@@ -979,6 +943,112 @@ fn process_file(
     }
 }
 
+fn process_direct_include(
+    rules: &[CompiledRule<'_>],
+    relpath: &Path,
+    original: &str,
+    project_root: &Path,
+    suppressed: &BTreeMap<String, HashSet<usize>>,
+    include: &Include,
+) -> IncludeOutcome {
+    let matched = engine::match_all(rules, relpath, include, suppressed, project_root);
+
+    if matched.matched.is_empty() && matched.failures.is_empty() {
+        return IncludeOutcome::NoMatch;
+    }
+
+    let mut evaluations: Vec<RuleEvaluation> = matched
+        .failures
+        .iter()
+        .map(|failure| RuleEvaluation {
+            rule_name: failure.rule.rule.name.clone(),
+            action: EvaluatedAction::EvaluationFailure {
+                message: failure.message.clone(),
+            },
+            trailing: TrailingOutcome::Skip,
+        })
+        .collect();
+
+    evaluations.extend(matched.matched.iter().map(|cm| {
+        let action = evaluate_direct_action(
+            cm.rule,
+            include,
+            original,
+            relpath,
+            project_root,
+            cm.resolved_header.as_deref(),
+        );
+        let trailing = action::evaluate_trailing(cm.rule, include, original, relpath);
+        RuleEvaluation {
+            rule_name: cm.rule.rule.name.clone(),
+            action,
+            trailing,
+        }
+    }));
+
+    collapse_outcomes(include, original, relpath, evaluations)
+}
+
+fn process_expanded_macro_include(
+    rules: &[CompiledRule<'_>],
+    relpath: &Path,
+    original: &str,
+    project_root: &Path,
+    suppressed: &BTreeMap<String, HashSet<usize>>,
+    include: &Include,
+    definitions: &[&MacroDefinition],
+) -> IncludeOutcome {
+    let mut evaluations: Vec<RuleEvaluation> = Vec::new();
+
+    for definition in definitions {
+        let match_include =
+            include_with_expanded_macro(include, definition.form, &definition.content);
+        let matched = engine::match_all(rules, relpath, &match_include, suppressed, project_root);
+
+        evaluations.extend(matched.failures.iter().map(|failure| RuleEvaluation {
+            rule_name: failure.rule.rule.name.clone(),
+            action: EvaluatedAction::EvaluationFailure {
+                message: failure.message.clone(),
+            },
+            trailing: TrailingOutcome::Skip,
+        }));
+
+        evaluations.extend(matched.matched.iter().map(|cm| {
+            let action = match cm.rule.rule.macro_rewrite {
+                MacroRewrite::Definitions => evaluate_macro_definition_action(
+                    cm.rule,
+                    include,
+                    definition,
+                    relpath,
+                    project_root,
+                    cm.resolved_header.as_deref(),
+                ),
+                MacroRewrite::UseSite => evaluate_macro_use_site_action(
+                    cm.rule,
+                    include,
+                    &match_include,
+                    original,
+                    relpath,
+                    project_root,
+                    cm.resolved_header.as_deref(),
+                ),
+            };
+            let trailing = action::evaluate_trailing(cm.rule, include, original, relpath);
+            RuleEvaluation {
+                rule_name: cm.rule.rule.name.clone(),
+                action,
+                trailing,
+            }
+        }));
+    }
+
+    if evaluations.is_empty() {
+        IncludeOutcome::NoMatch
+    } else {
+        collapse_macro_outcomes(include, original, relpath, evaluations)
+    }
+}
+
 #[derive(Debug)]
 struct MacroIndex {
     by_name: BTreeMap<String, Vec<MacroDefinition>>,
@@ -986,7 +1056,6 @@ struct MacroIndex {
 
 #[derive(Debug, Clone)]
 struct MacroDefinition {
-    name: String,
     form: IncludeForm,
     content: String,
     relpath: PathBuf,
@@ -998,14 +1067,8 @@ struct MacroDefinition {
 enum MacroExpansion<'a> {
     NotMacro,
     Unresolved,
-    Unique(&'a MacroDefinition),
-    MultipleSameValue {
-        form: IncludeForm,
-        content: String,
+    Expanded {
         definitions: Vec<&'a MacroDefinition>,
-    },
-    AmbiguousValues {
-        message: String,
     },
 }
 
@@ -1017,64 +1080,8 @@ impl MacroIndex {
         let Some(defs) = self.by_name.get(&include.content) else {
             return MacroExpansion::Unresolved;
         };
-        if defs.len() == 1 {
-            return MacroExpansion::Unique(&defs[0]);
-        }
-
-        let mut values: BTreeSet<(String, String)> = BTreeSet::new();
-        for def in defs {
-            values.insert((include_form_name(def.form).to_string(), def.content.clone()));
-        }
-        if values.len() == 1 {
-            let first = &defs[0];
-            return MacroExpansion::MultipleSameValue {
-                form: first.form,
-                content: first.content.clone(),
-                definitions: defs.iter().collect(),
-            };
-        }
-
-        let values = values
-            .into_iter()
-            .map(|(form, content)| format!("{form} {content}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        MacroExpansion::AmbiguousValues {
-            message: format!(
-                "macro `{}` has multiple header-like definitions with different values: {values}",
-                include.content
-            ),
-        }
-    }
-}
-
-impl<'a> MacroExpansion<'a> {
-    fn match_include(&self, original: &Include) -> Include {
-        match self {
-            MacroExpansion::Unique(def) => {
-                include_with_expanded_macro(original, def.form, &def.content)
-            }
-            MacroExpansion::MultipleSameValue { form, content, .. } => {
-                include_with_expanded_macro(original, *form, content)
-            }
-            MacroExpansion::NotMacro
-            | MacroExpansion::Unresolved
-            | MacroExpansion::AmbiguousValues { .. } => original.clone(),
-        }
-    }
-
-    fn editable_definition(&self) -> std::result::Result<Option<&'a MacroDefinition>, String> {
-        match self {
-            MacroExpansion::Unique(def) => Ok(Some(def)),
-            MacroExpansion::MultipleSameValue { definitions, .. } => Err(format!(
-                "macro `{}` has multiple header-like definitions; cannot choose which definition to edit",
-                definitions
-                    .first()
-                    .map(|d| d.name.as_str())
-                    .unwrap_or("<unknown>")
-            )),
-            MacroExpansion::NotMacro | MacroExpansion::Unresolved => Ok(None),
-            MacroExpansion::AmbiguousValues { message } => Err(message.clone()),
+        MacroExpansion::Expanded {
+            definitions: defs.iter().collect(),
         }
     }
 }
@@ -1115,7 +1122,6 @@ fn build_macro_index(project_root: &Path, relpaths: &[PathBuf]) -> MacroIndex {
 
 fn macro_definition(relpath: &Path, source: &str, raw: HeaderMacroDefinition) -> MacroDefinition {
     MacroDefinition {
-        name: raw.name,
         form: raw.form,
         content: raw.content,
         relpath: relpath.to_path_buf(),
@@ -1125,37 +1131,17 @@ fn macro_definition(relpath: &Path, source: &str, raw: HeaderMacroDefinition) ->
     }
 }
 
-fn include_form_name(form: IncludeForm) -> &'static str {
-    match form {
-        IncludeForm::Quote => "quote",
-        IncludeForm::Angle => "angle",
-        IncludeForm::Macro => "macro",
-    }
-}
-
-fn evaluate_action_for_match(
+fn evaluate_direct_action(
     rule: &CompiledRule<'_>,
-    original_include: &Include,
-    macro_expansion: &MacroExpansion<'_>,
+    include: &Include,
     source: &str,
     file_relpath: &Path,
     project_root: &Path,
     resolved_header: Option<&Path>,
 ) -> EvaluatedAction {
-    if original_include.form == IncludeForm::Macro {
-        return evaluate_macro_action(
-            rule,
-            original_include,
-            macro_expansion,
-            file_relpath,
-            project_root,
-            resolved_header,
-        );
-    }
-
     let out = action::evaluate_action_with_resolution(
         rule,
-        original_include,
+        include,
         source,
         file_relpath,
         project_root,
@@ -1164,10 +1150,10 @@ fn evaluate_action_for_match(
     action_outcome_to_evaluated(out, file_relpath.to_path_buf(), source)
 }
 
-fn evaluate_macro_action(
+fn evaluate_macro_definition_action(
     rule: &CompiledRule<'_>,
     original_include: &Include,
-    macro_expansion: &MacroExpansion<'_>,
+    definition: &MacroDefinition,
     file_relpath: &Path,
     project_root: &Path,
     resolved_header: Option<&Path>,
@@ -1175,24 +1161,6 @@ fn evaluate_macro_action(
     if matches!(rule.rule.action, ResolvedAction::Skip) {
         return EvaluatedAction::Skip;
     }
-
-    let definition = match macro_expansion.editable_definition() {
-        Ok(Some(definition)) => definition,
-        Ok(None) => {
-            let out = action::evaluate_action_with_resolution(
-                rule,
-                original_include,
-                "",
-                file_relpath,
-                project_root,
-                resolved_header,
-            );
-            return action_outcome_to_evaluated(out, file_relpath.to_path_buf(), "");
-        }
-        Err(message) => {
-            return EvaluatedAction::EvaluationFailure { message };
-        }
-    };
 
     if matches!(
         rule.rule.action,
@@ -1225,6 +1193,37 @@ fn evaluate_macro_action(
         resolved_header,
     );
     action_outcome_to_evaluated(out, definition.relpath.clone(), &definition.source)
+}
+
+fn evaluate_macro_use_site_action(
+    rule: &CompiledRule<'_>,
+    original_include: &Include,
+    match_include: &Include,
+    source: &str,
+    file_relpath: &Path,
+    project_root: &Path,
+    resolved_header: Option<&Path>,
+) -> EvaluatedAction {
+    if matches!(rule.rule.action, ResolvedAction::Skip) {
+        return EvaluatedAction::Skip;
+    }
+    let virtual_include = Include {
+        form: match_include.form,
+        content: match_include.content.clone(),
+        line: original_include.line,
+        argument_range: original_include.argument_range.clone(),
+        trailing_range: original_include.trailing_range.clone(),
+        trailing_comment_style: original_include.trailing_comment_style,
+        has_cross_line_block_trailing: original_include.has_cross_line_block_trailing,
+    };
+    evaluate_direct_action(
+        rule,
+        &virtual_include,
+        source,
+        file_relpath,
+        project_root,
+        resolved_header,
+    )
 }
 
 fn action_outcome_to_evaluated(
@@ -1282,6 +1281,24 @@ enum EvaluatedAction {
     EvaluationFailure {
         message: String,
     },
+}
+
+#[derive(Debug, Clone)]
+struct ActionCandidate {
+    rule_name: String,
+    target: EditTarget,
+    edit_range: Range<usize>,
+    new_text: String,
+    original_text: String,
+}
+
+#[derive(Debug, Clone)]
+struct ActionGroup {
+    target: EditTarget,
+    edit_range: Range<usize>,
+    new_text: String,
+    original_text: String,
+    rules: Vec<String>,
 }
 
 struct CollapsedAction {
@@ -1452,6 +1469,257 @@ fn collapse_outcomes(
             edits,
         }
     }
+}
+
+fn collapse_macro_outcomes(
+    include: &Include,
+    source: &str,
+    relpath: &Path,
+    evaluations: Vec<RuleEvaluation>,
+) -> IncludeOutcome {
+    for ev in &evaluations {
+        if let EvaluatedAction::Error { message } = &ev.action {
+            return IncludeOutcome::Error {
+                rule: ev.rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
+    for ev in &evaluations {
+        if let TrailingOutcome::Error { message } = &ev.trailing {
+            return IncludeOutcome::TrailingCommentError {
+                rule: ev.rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
+    for ev in &evaluations {
+        if let EvaluatedAction::EvaluationFailure { message } = &ev.action {
+            return IncludeOutcome::EvaluationFailure {
+                rule: ev.rule_name.clone(),
+                message: message.clone(),
+            };
+        }
+    }
+
+    let mut action_candidates: Vec<ActionCandidate> = Vec::new();
+    let mut trailing_candidates: Vec<(String, String)> = Vec::new();
+    for ev in &evaluations {
+        match &ev.action {
+            EvaluatedAction::Apply {
+                target,
+                edit_range,
+                new_text,
+                original_text,
+            } => action_candidates.push(ActionCandidate {
+                rule_name: ev.rule_name.clone(),
+                target: target.clone(),
+                edit_range: edit_range.clone(),
+                new_text: new_text.clone(),
+                original_text: original_text.clone(),
+            }),
+            EvaluatedAction::Skip
+            | EvaluatedAction::Error { .. }
+            | EvaluatedAction::EvaluationFailure { .. } => {}
+        }
+        match &ev.trailing {
+            TrailingOutcome::Apply { new_text } => {
+                trailing_candidates.push((ev.rule_name.clone(), new_text.clone()));
+            }
+            TrailingOutcome::Skip | TrailingOutcome::Error { .. } => {}
+        }
+    }
+
+    let current_target = EditTarget::File(relpath.to_path_buf());
+    let action_groups =
+        match collapse_macro_action_candidates(include, source, &current_target, action_candidates)
+        {
+            Ok(groups) => groups,
+            Err(conflict) => return conflict,
+        };
+
+    let original_arg = &source[include.argument_range.clone()];
+    let current_arg_group = action_groups
+        .iter()
+        .find(|group| group.target == current_target && group.edit_range == include.argument_range);
+    let action_arg = current_arg_group
+        .map(|group| group.new_text.as_str())
+        .unwrap_or(original_arg);
+    let trailing = match collapse_macro_trailing_candidates(
+        include,
+        source,
+        action_arg,
+        trailing_candidates,
+    ) {
+        Ok(trailing) => trailing,
+        Err(conflict) => return conflict,
+    };
+
+    let original_trailing = &source[include.trailing_range.clone()];
+    let current_non_arg_group = action_groups
+        .iter()
+        .find(|group| group.target == current_target && group.edit_range != include.argument_range);
+    if let Some(group) = current_non_arg_group
+        && !trailing.rules.is_empty()
+        && trailing.new_text != original_trailing
+    {
+        let mut rule_outputs: Vec<(String, String)> = group
+            .rules
+            .iter()
+            .map(|rule| (rule.clone(), group.new_text.clone()))
+            .collect();
+        rule_outputs.extend(
+            trailing
+                .rules
+                .iter()
+                .map(|rule| (rule.clone(), trailing.new_text.clone())),
+        );
+        return IncludeOutcome::Conflict {
+            rule_outputs,
+            differing_aspects: vec![DiffAspect::TrailingComment],
+        };
+    }
+
+    let mut edits = Vec::new();
+    let mut action_rules = Vec::new();
+    for group in &action_groups {
+        action_rules = merge_rules(action_rules, group.rules.clone());
+        if group.target == current_target && group.edit_range == include.argument_range {
+            continue;
+        }
+        if group.new_text != group.original_text {
+            let EditTarget::File(target_relpath) = &group.target;
+            edits.push(PlannedEdit {
+                relpath: target_relpath.clone(),
+                edit_range: group.edit_range.clone(),
+                new_text: group.new_text.clone(),
+            });
+        }
+    }
+
+    let edit_range = argument_and_trailing_range(include);
+    let use_site_text = format!("{action_arg}{}", trailing.new_text);
+    if current_non_arg_group.is_none() && use_site_text != source[edit_range.clone()] {
+        edits.push(PlannedEdit {
+            relpath: relpath.to_path_buf(),
+            edit_range: edit_range.clone(),
+            new_text: use_site_text.clone(),
+        });
+    }
+
+    let rules = merge_rules(action_rules, trailing.rules);
+    if edits.is_empty() {
+        IncludeOutcome::Keep { rules }
+    } else {
+        IncludeOutcome::Rewritten {
+            rules,
+            edit_range,
+            new_text: use_site_text,
+            edits,
+        }
+    }
+}
+
+fn collapse_macro_action_candidates(
+    include: &Include,
+    source: &str,
+    current_target: &EditTarget,
+    candidates: Vec<ActionCandidate>,
+) -> std::result::Result<Vec<ActionGroup>, IncludeOutcome> {
+    let mut groups: BTreeMap<(EditTarget, usize, usize), ActionGroup> = BTreeMap::new();
+    for candidate in candidates {
+        let key = (
+            candidate.target.clone(),
+            candidate.edit_range.start,
+            candidate.edit_range.end,
+        );
+        if let Some(group) = groups.get_mut(&key) {
+            if group.new_text != candidate.new_text {
+                let rule_outputs = vec![
+                    (
+                        group.rules.join(", "),
+                        action_candidate_display(
+                            include,
+                            source,
+                            current_target,
+                            &group.target,
+                            &group.edit_range,
+                            &group.new_text,
+                        ),
+                    ),
+                    (
+                        candidate.rule_name,
+                        action_candidate_display(
+                            include,
+                            source,
+                            current_target,
+                            &candidate.target,
+                            &candidate.edit_range,
+                            &candidate.new_text,
+                        ),
+                    ),
+                ];
+                let mut differing_aspects = compute_differing_aspects(
+                    &rule_outputs
+                        .iter()
+                        .map(|(_, t)| t.as_str())
+                        .collect::<Vec<_>>(),
+                );
+                if differing_aspects.is_empty() {
+                    differing_aspects.push(DiffAspect::IncludePath);
+                }
+                return Err(IncludeOutcome::Conflict {
+                    rule_outputs,
+                    differing_aspects,
+                });
+            }
+            if !group.rules.contains(&candidate.rule_name) {
+                group.rules.push(candidate.rule_name);
+            }
+        } else {
+            groups.insert(
+                key,
+                ActionGroup {
+                    target: candidate.target,
+                    edit_range: candidate.edit_range,
+                    new_text: candidate.new_text,
+                    original_text: candidate.original_text,
+                    rules: vec![candidate.rule_name],
+                },
+            );
+        }
+    }
+    Ok(groups.into_values().collect())
+}
+
+fn collapse_macro_trailing_candidates(
+    include: &Include,
+    source: &str,
+    action_arg: &str,
+    candidates: Vec<(String, String)>,
+) -> std::result::Result<CollapsedTrailing, IncludeOutcome> {
+    if candidates.is_empty() {
+        return Ok(CollapsedTrailing {
+            new_text: source[include.trailing_range.clone()].to_string(),
+            rules: Vec::new(),
+        });
+    }
+    let first_text = candidates[0].1.clone();
+    if candidates.iter().all(|(_, t)| *t == first_text) {
+        return Ok(CollapsedTrailing {
+            new_text: first_text,
+            rules: candidates.into_iter().map(|(n, _)| n).collect(),
+        });
+    }
+
+    let rule_outputs: Vec<(String, String)> = candidates
+        .into_iter()
+        .map(|(name, trailing)| (name, format!("{action_arg}{trailing}")))
+        .collect();
+    Err(IncludeOutcome::Conflict {
+        rule_outputs,
+        differing_aspects: vec![DiffAspect::TrailingComment],
+    })
 }
 
 fn collapse_action_candidates(
