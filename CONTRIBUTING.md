@@ -37,6 +37,9 @@ Run it locally with Python 3.11+:
 
 ```sh
 python3 .github/scripts/check-config-compat.py
+
+# Or use uv:
+uv run -s --no-project .github/scripts/check-config-compat.py
 ```
 
 Local runs use `tempdir/config-compat-test/...` and install the old CLI
