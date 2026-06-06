@@ -100,26 +100,21 @@ inclean apply               # 就地写入改写
 未传时考虑项目根下所有源文件。`-c PATH` 覆盖向上查找 `inclean.toml`
 的行为；`-j N` 指定工作线程数。
 
-规则会先检查 `file_paths`、`file_suffixes`、`include_forms` 和
-`include_match`；`include_resolved_match` 稍后匹配解析后的头文件路径。
-glob 是全字符串锚定的，并使用 literal separator
-语义：`foo.h` 只匹配 `foo.h`，`**/foo.h` 才匹配任意深度下的同名文件。
-当设置了 `include_directories`，inclean 会继续探测这些字面目录，用
-`include_resolved_match`（默认 `["**"]`）过滤解析后的项目相对头文件路径，
-并应用 `include_on_unresolved`（`error` / `skip` / `allow`）和
-`include_on_ambiguous`（`error` / `skip` / `first`）。
-对于 `#include MACRO`，inclean 会静态展开简单的 header-like 宏定义，
-例如 `#define MACRO "foo.h"` 或 `#define MACRO <foo.h>`。这类 include
-会把每个匹配到的定义当作一个可能分支，并使用 `#include MACRO` 所在位置的
-上下文。默认路径改写会落到匹配的 `#define` 值上，trailing comment 仍保留在
-使用点。设置 `macro_rewrite = "use_site"` 时会改写 `#include MACRO` 本身；
-所有匹配分支必须得到同一个最终 include 参数。
-如果一条规则只想参与某一侧的改写，可以把整个字段写成
-`action = "skip"` 或 `trailing_comment = "skip"`，让这一侧不参与
-冲突检查。`keep` 仍会参与冲突检查；`skip` 不参与。没有
-`copied_from` 的规则如果省略这两个字段，默认值都是 `skip`。
+### 配置概览
 
-完整逐字段语法见 [配置语法文档](configuration.zh-CN.md)。
+每个 `[[rule]]` 先缩小自己负责的 include 范围，再决定如何处理它们。
+
+- `file_paths` 和 `file_suffixes` 选择源文件。
+- `include_forms` 和 `include_match` 选择 include 行。
+- `include_directories` 开启头文件解析；`include_resolved_match`
+  过滤解析后的头文件路径。
+- `action` 负责改写、删除、注释掉、保留或报错；`trailing_comment`
+  处理同一行的尾随注释。
+
+多数项目只需要 `include_match` 加一个 `action`。需要统一路径时再配置
+`include_directories`；需要处理宏 include 时再看 `macro_rewrite`。glob
+规则、宏 include 行为、冲突检查、复制语义和完整字段说明见
+[配置语法文档](configuration.zh-CN.md)。
 
 ### 示例
 
@@ -149,15 +144,15 @@ action = { type = "replace", with = "lib/${original}" }
 双向兼容性检查。
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "1.2.3"
-min_inclean_version = "1.1.0"
+version = "0.4.0"
+min_inclean_version = "0.4.0-alpha.3"
 ```
 
-（以上版本号仅作示例）
+（以上版本号是这个发布线的示例）
 
 也可以导出一份本地 schema：
 

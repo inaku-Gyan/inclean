@@ -41,7 +41,10 @@ enum Command {
 // ---- Check ---------------------------------------------------------------
 
 #[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct CheckArgs {
+    #[command(flatten)]
+    pub run: CheckRunArgs,
     #[command(subcommand)]
     pub command: Option<CheckSub>,
 }
@@ -52,9 +55,8 @@ pub enum CheckSub {
     Config(CheckConfigArgs),
     /// Full pipeline; print only unfixable violations (errors, evaluation
     /// failures, conflicts).
-    Unfixable(CheckRunArgs),
-    /// Full pipeline; print every per-include outcome. This is what bare
-    /// `inclean check` runs.
+    Unfixable(CheckScanArgs),
+    /// Full pipeline; print matched per-include outcomes by default.
     All(CheckRunArgs),
 }
 
@@ -67,7 +69,7 @@ pub struct CheckConfigArgs {
 }
 
 #[derive(Args, Debug, Default)]
-pub struct CheckRunArgs {
+pub struct CheckScanArgs {
     /// Path to inclean.toml. When omitted, the CLI walks upward from the
     /// current directory to find one.
     #[arg(short, long)]
@@ -78,6 +80,24 @@ pub struct CheckRunArgs {
     /// Optional file/directory restrictions. When given, only source files
     /// rooted at one of these paths are processed.
     pub paths: Vec<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct CheckRunArgs {
+    #[command(flatten)]
+    pub scan: CheckScanArgs,
+    /// Also print #include directives that did not match any rule.
+    #[arg(long, conflicts_with_all = ["only_unmatched", "only_skipped"])]
+    pub show_unmatched: bool,
+    /// Print only #include directives that did not match any rule.
+    #[arg(long, conflicts_with_all = ["show_unmatched", "show_skipped", "only_skipped"])]
+    pub only_unmatched: bool,
+    /// Also print #include directives that matched only skipped rule fields.
+    #[arg(long, conflicts_with_all = ["only_unmatched", "only_skipped"])]
+    pub show_skipped: bool,
+    /// Print only #include directives that matched only skipped rule fields.
+    #[arg(long, conflicts_with_all = ["show_unmatched", "only_unmatched", "show_skipped"])]
+    pub only_skipped: bool,
 }
 
 // ---- Apply / Diff --------------------------------------------------------
@@ -139,8 +159,8 @@ pub fn run() -> ExitCode {
         Command::Check(args) => match args.command {
             Some(CheckSub::Config(c)) => check::run_config(c.config),
             Some(CheckSub::Unfixable(r)) => check::run_full(r, check::ReportFilter::UnfixableOnly),
-            Some(CheckSub::All(r)) => check::run_full(r, check::ReportFilter::All),
-            None => check::run_full(CheckRunArgs::default(), check::ReportFilter::All),
+            Some(CheckSub::All(r)) => check::run_check(r),
+            None => check::run_check(args.run),
         },
         Command::Apply(args) => apply::run(args),
         Command::Diff(args) => diff::run(args),

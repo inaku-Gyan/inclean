@@ -1,6 +1,6 @@
 [package]
 name = "inclean"
-version = "0.4.0-alpha.3"
+version = "0.4.0"
 edition = "2024"
 description = "A C/C++ #include path normalizer that rewrites includes to resolve cleanly against a minimal -I set."
 readme = "README.md"

@@ -7,12 +7,12 @@ upward from the current directory to find it; `-c PATH` selects a specific
 file. Unknown fields are rejected.
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "1.2.3"
-min_inclean_version = "1.1.0"
+version = "0.4.0"
+min_inclean_version = "0.4.0-alpha.3"
 
 [[rule]]
 name = "rewrite-public-headers"
