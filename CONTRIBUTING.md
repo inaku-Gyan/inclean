@@ -18,6 +18,35 @@ cargo build --release
 cargo install --path .
 ```
 
+## Config compatibility tests
+
+Normal `cargo test` runs the current CLI against all golden and pipeline
+fixtures. Historical config compatibility is checked separately by
+`.github/scripts/check-config-compat.py`.
+
+The compatibility runner installs the oldest CLI declared by
+`MIN_COMPAT_CLI_VERSION` and reruns the `tests/golden_tests` and
+`tests/pipeline_cases` fixtures whose own
+`[project].min_inclean_version` allows that CLI. Golden cases are
+validated by `inclean apply` plus tree comparison; pipeline cases check
+the CLI exit code from `case.toml` and, when `apply = true`, compare the
+resulting tree. Rust API-only `summary` / `unfixable` assertions remain
+covered by the normal current-CLI test harness.
+
+Run it locally with Python 3.11+:
+
+```sh
+python3 .github/scripts/check-config-compat.py
+```
+
+Local runs use `tempdir/config-compat-test/...` and install the old CLI
+there only. They prefer `cargo binstall` when available and fall back to
+`cargo install --root ...`, so they do not write to `~/.cargo/bin`.
+For manual debugging, set `INCLEAN_COMPAT_BIN=/path/to/inclean` to use a
+specific binary. In CI, the job sets `INCLEAN_COMPAT_SOURCE=github-release`
+and downloads the Linux x86_64 binary from GitHub Releases without a
+fallback.
+
 ## Changing the config file policy
 
 If you make changes to `inclean.toml` configuration policy
