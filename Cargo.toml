@@ -23,6 +23,11 @@ harness = false
 name = "golden"
 path = "tests/run_golden_tests.rs"
 
+[[test]]
+harness = false
+name = "pipeline"
+path = "tests/run_pipeline_cases.rs"
+
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
