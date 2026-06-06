@@ -1,0 +1,11 @@
+[project]
+root = "."
+version = "0.4.0-alpha.3"
+min_inclean_version = "0.4.0-alpha.3"
+
+[[rule]]
+name = "remove macro definition branch"
+file_paths = ["src/**/*", "config/**/*"]
+include_forms = ["quote"]
+include_match = ["foo.h"]
+action = { type = "remove" }

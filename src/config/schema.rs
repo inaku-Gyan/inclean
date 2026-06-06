@@ -244,6 +244,13 @@ pub struct RawRule {
     /// `#include FOO` token.
     pub include_forms: Option<Vec<IncludeForm>>,
 
+    // ---- Macro include rewrite target --------------------------------------
+    /// Where action rewrites for statically-expanded macro includes are written.
+    /// Effective default for a rule with no parent is `"definitions"`, which
+    /// edits the matching `#define` header token(s). `"use_site"` edits the
+    /// `#include MACRO` use site only.
+    pub macro_rewrite: Option<MacroRewrite>,
+
     // ---- Layer 4: glob on the stripped include argument ------------------
     /// Globset patterns matched against the include argument with quotes or
     /// angle brackets stripped, for example `mylib/foo.h`. Patterns are
@@ -315,6 +322,16 @@ pub enum IncludeForm {
     /// `#include MY_HEADER` (macro-defined). Simple header-like macro
     /// definitions are expanded before rule matching when possible.
     Macro,
+}
+
+/// Where a matched expanded macro include is rewritten.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroRewrite {
+    /// Rewrite each matched header-like `#define` value.
+    Definitions,
+    /// Rewrite the `#include MACRO` use site.
+    UseSite,
 }
 
 /// Policy when `include_directories` is configured but no directory contains
@@ -653,6 +670,7 @@ mod tests {
             file_paths = ["src/**", "include/**"]
             file_suffixes = ["@std.c.extensions"]
             include_forms = ["quote"]
+            macro_rewrite = "use_site"
             include_match = ["**/foo.h"]
             include_directories = ["src/internal"]
             include_resolved_match = ["src/internal/**"]
@@ -665,6 +683,7 @@ mod tests {
         let r = &cfg.rules[0];
         assert_eq!(r.file_paths.as_ref().unwrap().len(), 2);
         assert_eq!(r.include_forms.as_ref().unwrap(), &vec![IncludeForm::Quote]);
+        assert_eq!(r.macro_rewrite, Some(MacroRewrite::UseSite));
         assert_eq!(
             r.include_match.as_ref().unwrap(),
             &vec!["**/foo.h".to_string()]

@@ -101,6 +101,17 @@
             "$ref": "#/$defs/IncludeForm"
           }
         },
+        "macro_rewrite": {
+          "description": "Where action rewrites for statically-expanded macro includes are written.\nEffective default for a rule with no parent is `\"definitions\"`, which\nedits the matching `#define` header token(s). `\"use_site\"` edits the\n`#include MACRO` use site only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MacroRewrite"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "include_match": {
           "description": "Globset patterns matched against the include argument with quotes or\nangle brackets stripped, for example `mylib/foo.h`. Patterns are\nordered: a leading unescaped `!` negates, and the last matching pattern\nwins. Use `\\!` for a literal leading `!`. `*` does not cross `/`; `**`\ndoes. Effective default for a rule with no parent is `[\"**\"]`.",
           "type": [
@@ -235,6 +246,21 @@
           "description": "`#include MY_HEADER` (macro-defined). Simple header-like macro\ndefinitions are expanded before rule matching when possible.",
           "type": "string",
           "const": "macro"
+        }
+      ]
+    },
+    "MacroRewrite": {
+      "description": "Where a matched expanded macro include is rewritten.",
+      "oneOf": [
+        {
+          "description": "Rewrite each matched header-like `#define` value.",
+          "type": "string",
+          "const": "definitions"
+        },
+        {
+          "description": "Rewrite the `#include MACRO` use site.",
+          "type": "string",
+          "const": "use_site"
         }
       ]
     },

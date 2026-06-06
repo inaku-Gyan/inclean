@@ -1,0 +1,12 @@
+[project]
+root = "."
+version = "0.4.0-alpha.3"
+min_inclean_version = "0.4.0-alpha.3"
+
+[[rule]]
+name = "definition rewrite can conflict across use sites"
+file_paths = ["**/*"]
+include_forms = ["quote"]
+include_match = ["foo.h"]
+include_directories = ["include"]
+action = { type = "resolve", relative_to = "${current_file}" }

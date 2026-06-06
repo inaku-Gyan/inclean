@@ -1,0 +1,12 @@
+[project]
+root = "."
+version = "0.4.0-alpha.3"
+min_inclean_version = "0.4.0-alpha.3"
+
+[[rule]]
+name = "divergent use-site rewrite"
+file_paths = ["src/**/*", "config/**/*"]
+macro_rewrite = "use_site"
+include_forms = ["quote"]
+include_match = ["private_*.h"]
+action = { type = "replace", with = "normalized/${original}", output_form = "quote" }

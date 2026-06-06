@@ -33,7 +33,7 @@ use anyhow::{Context, Result, bail};
 
 use super::constants;
 use super::schema::{
-    CommentStyle, IncludeForm, IncludeOnAmbiguous, IncludeOnUnresolved, LoadedConfig,
+    CommentStyle, IncludeForm, IncludeOnAmbiguous, IncludeOnUnresolved, LoadedConfig, MacroRewrite,
     MaybeCopiedObject, MaybeCopiedOrSkipObject, OutputCommentStyle, OutputForm, RawAction, RawRule,
     RawSuppression, RawTrailingAction, RawTrailingComment, RawTrailingTransform, RuleLocator,
 };
@@ -58,6 +58,7 @@ pub struct ResolvedRule {
     pub file_paths: Vec<String>,
     pub file_suffixes: Vec<String>,
     pub include_forms: Vec<IncludeForm>,
+    pub macro_rewrite: MacroRewrite,
     pub include_match: Vec<String>,
     pub include_directories: Vec<String>,
     pub include_resolved_match: Vec<String>,
@@ -153,6 +154,9 @@ fn default_file_suffixes() -> Vec<String> {
 }
 fn default_include_forms() -> Vec<IncludeForm> {
     vec![IncludeForm::Quote]
+}
+fn default_macro_rewrite() -> MacroRewrite {
+    MacroRewrite::Definitions
 }
 fn default_include_match() -> Vec<String> {
     vec!["**".to_string()]
@@ -273,6 +277,11 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
             .unwrap_or_else(default_include_forms),
     };
 
+    let macro_rewrite = raw
+        .macro_rewrite
+        .or_else(|| parent.map(|p| p.macro_rewrite))
+        .unwrap_or_else(default_macro_rewrite);
+
     let include_match = resolve_str_list(
         raw.include_match.as_deref(),
         parent.map(|p| &p.include_match),
@@ -385,6 +394,7 @@ fn build(locator: &RuleLocator<'_>, parent: Option<&ResolvedRule>) -> Result<Res
         file_paths,
         file_suffixes,
         include_forms,
+        macro_rewrite,
         include_match,
         include_directories,
         include_resolved_match,
@@ -827,6 +837,7 @@ mod tests {
         assert!(r.file_suffixes.contains(&".h".to_string()));
         assert!(r.file_suffixes.contains(&".cpp".to_string()));
         assert_eq!(r.include_forms, vec![IncludeForm::Quote]);
+        assert_eq!(r.macro_rewrite, MacroRewrite::Definitions);
         assert_eq!(r.include_match, vec!["**"]);
         assert_eq!(r.include_resolved_match, vec!["**"]);
         assert!(matches!(
@@ -846,6 +857,7 @@ mod tests {
             name = "base"
             file_paths = ["src/**"]
             include_forms = ["quote", "angle"]
+            macro_rewrite = "use_site"
             include_directories = ["src", "src/internal"]
             include_resolved_match = ["src/internal/**"]
             include_on_unresolved = "skip"
@@ -864,6 +876,7 @@ mod tests {
             child.include_forms,
             vec![IncludeForm::Quote, IncludeForm::Angle]
         );
+        assert_eq!(child.macro_rewrite, MacroRewrite::UseSite);
         assert_eq!(child.include_directories, vec!["src", "src/internal"]);
         assert_eq!(child.include_resolved_match, vec!["src/internal/**"]);
         assert!(matches!(
@@ -885,6 +898,7 @@ mod tests {
             name = "base"
             file_paths = ["src/**"]
             include_forms = ["quote", "angle"]
+            macro_rewrite = "use_site"
             include_resolved_match = ["src/**"]
             include_on_unresolved = "allow"
             include_on_ambiguous = "first"
@@ -894,6 +908,7 @@ mod tests {
             copied_from = "base"
             file_paths = ["src/foo/**"]
             include_forms = ["macro"]
+            macro_rewrite = "definitions"
             include_resolved_match = ["src/foo/**"]
             include_on_unresolved = "skip"
             include_on_ambiguous = "skip"
@@ -903,6 +918,7 @@ mod tests {
         let narrow = get(&resolved, "narrow");
         assert_eq!(narrow.file_paths, vec!["src/foo/**"]);
         assert_eq!(narrow.include_forms, vec![IncludeForm::Macro]);
+        assert_eq!(narrow.macro_rewrite, MacroRewrite::Definitions);
         assert_eq!(narrow.include_resolved_match, vec!["src/foo/**"]);
         assert!(matches!(
             narrow.include_on_unresolved,

@@ -90,13 +90,13 @@ fn print_config_report(
             .map(|p| {
                 format!(
                     " {} `{}`",
-                    cli_style::label("copied_from"),
+                    cli_style::label("copied from"),
                     cli_style::rule(p)
                 )
             })
             .unwrap_or_default();
         println!(
-            "  {}   `{}`{copied}  ({} :: #{})",
+            "  {} `{}`{copied}  ({} :: #{})",
             cli_style::label("rule:"),
             cli_style::rule(name),
             cli_style::path(rule.origin.config_path.display()),
@@ -131,38 +131,38 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
             match &r.outcome {
                 IncludeOutcome::NoMatch => {}
                 IncludeOutcome::Keep { rules } => println!(
-                    "  {} {}    \"{}\"   ({} {})",
+                    "  {} {}    {}   ({} {})",
                     cli_style::line_tag(r.include.line),
                     cli_style::keep("keep"),
-                    cli_style::include(&r.include.content),
+                    cli_style::include(&r.include.full_content()),
                     cli_style::label("rules:"),
-                    cli_style::rule(rules.join(", "))
+                    cli_style::rules(rules)
                 ),
                 IncludeOutcome::Rewritten {
                     rules, new_text, ..
                 } => println!(
-                    "  {} {} \"{}\"  {}  {}   ({} {})",
+                    "  {} {} {}  {}  {}   ({} {})",
                     cli_style::line_tag(r.include.line),
                     cli_style::rewrite("rewrite"),
-                    cli_style::include(&r.include.content),
+                    cli_style::include(&r.include.full_content()),
                     cli_style::label("->"),
                     cli_style::include(new_text),
                     cli_style::label("rules:"),
-                    cli_style::rule(rules.join(", "))
+                    cli_style::rules(rules)
                 ),
                 IncludeOutcome::Error { rule, message } => eprintln!(
-                    "  {} {}   \"{}\"   ({} {}): {message}",
+                    "  {} {}   {}   ({} {}): {message}",
                     cli_style::line_tag_err(r.include.line),
                     cli_style::error("error"),
-                    cli_style::include_err(&r.include.content),
+                    cli_style::include_err(&r.include.full_content()),
                     cli_style::label_err("rule:"),
                     cli_style::rule_err(rule)
                 ),
                 IncludeOutcome::EvaluationFailure { rule, message } => eprintln!(
-                    "  {} {}    \"{}\"   ({} {}): {message}",
+                    "  {} {}    {}   ({} {}): {message}",
                     cli_style::line_tag_err(r.include.line),
                     cli_style::failure("fail"),
-                    cli_style::include_err(&r.include.content),
+                    cli_style::include_err(&r.include.full_content()),
                     cli_style::label_err("rule:"),
                     cli_style::rule_err(rule)
                 ),
@@ -171,10 +171,10 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     differing_aspects,
                 } => {
                     eprintln!(
-                        "  {} {} \"{}\":",
+                        "  {} {} {}:",
                         cli_style::line_tag_err(r.include.line),
                         cli_style::conflict("conflict"),
-                        cli_style::include_err(&r.include.content)
+                        cli_style::include_err(&r.include.full_content())
                     );
                     for (rule, text) in rule_outputs {
                         eprintln!(
@@ -204,10 +204,10 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     }
                 }
                 IncludeOutcome::TrailingCommentError { rule, message } => eprintln!(
-                    "  {} {} \"{}\"   ({} {}): {message}",
+                    "  {} {} {}   ({} {}): {message}",
                     cli_style::line_tag_err(r.include.line),
                     cli_style::error("trailing-comment error"),
-                    cli_style::include_err(&r.include.content),
+                    cli_style::include_err(&r.include.full_content()),
                     cli_style::label_err("rule:"),
                     cli_style::rule_err(rule)
                 ),

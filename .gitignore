@@ -14,3 +14,7 @@ Thumbs.db
 ### Build artifacts
 /target
 /tempdir
+
+### Python artifacts
+__pycache__/
+*.py[cod]
