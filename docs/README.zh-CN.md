@@ -144,15 +144,15 @@ action = { type = "replace", with = "lib/${original}" }
 双向兼容性检查。
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0-beta.1/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "1.2.3"
-min_inclean_version = "1.1.0"
+version = "0.4.0-beta.1"
+min_inclean_version = "0.4.0-alpha.3"
 ```
 
-（以上版本号仅作示例）
+（以上版本号是这个发布线的示例）
 
 也可以导出一份本地 schema：
 

@@ -158,15 +158,15 @@ or [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasf
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v1.2.3/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0-beta.1/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "1.2.3"
-min_inclean_version = "1.1.0"
+version = "0.4.0-beta.1"
+min_inclean_version = "0.4.0-alpha.3"
 ```
 
-(The above version numbers are just examples.)
+(The above version numbers are examples for this release line.)
 
 `inclean init` writes both the `#:schema` line (for the editor) and the
 `[project].version` + `[project].min_inclean_version` fields, each
