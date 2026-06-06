@@ -6,11 +6,11 @@ _[English](configuration.md) | 简体中文_
 会从当前目录向上查找该文件；也可以用 `-c PATH` 指定具体文件。未知字段会被拒绝。
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0-beta.1/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.4.0-beta.1"
+version = "0.4.0"
 min_inclean_version = "0.4.0-alpha.3"
 
 [[rule]]

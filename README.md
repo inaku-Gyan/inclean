@@ -158,19 +158,20 @@ or [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasf
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0-beta.1/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.4.0-beta.1"
+version = "0.4.0"
 min_inclean_version = "0.4.0-alpha.3"
 ```
 
 (The above version numbers are examples for this release line.)
 
 `inclean init` writes both the `#:schema` line (for the editor) and the
-`[project].version` + `[project].min_inclean_version` fields, each
-pinned to the CLI version that generated the file. To upgrade schema
+`[project].version` + `[project].min_inclean_version` fields. `version`
+tracks the CLI that generated the file; `min_inclean_version` tracks the
+oldest CLI expected to parse that generated config. To upgrade schema
 validation, edit the version segment in the URL to a newer release tag.
 
 **`#:schema` and the `[project]` version fields are independent.** The

@@ -144,11 +144,11 @@ action = { type = "replace", with = "lib/${original}" }
 双向兼容性检查。
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0-beta.1/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.4.0-beta.1"
+version = "0.4.0"
 min_inclean_version = "0.4.0-alpha.3"
 ```
 
