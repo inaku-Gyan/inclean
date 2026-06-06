@@ -1,0 +1,13 @@
+[project]
+root = "."
+version = "0.4.0-alpha.2"
+min_inclean_version = "0.4.0-alpha.2"
+
+[[rule]]
+name = "resolve macro definition branches"
+file_paths = ["src/**/*", "config/**/*"]
+include_forms = ["quote"]
+include_match = ["private_*.h"]
+include_directories = ["include/path1/to", "include/path2/to"]
+include_on_unresolved = "skip"
+action = { type = "resolve", relative_to = "." }

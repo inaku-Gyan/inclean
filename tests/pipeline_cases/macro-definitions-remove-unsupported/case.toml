@@ -1,0 +1,13 @@
+exit_code = 3
+apply = false
+
+[summary]
+conflicts = 0
+unfixable = 1
+rewritten_files = 0
+
+[[unfixable]]
+path = "src/main.c"
+line = 1
+kind = "evaluation_failure"
+message_contains = ["action is not supported for macro-form include"]

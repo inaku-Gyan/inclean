@@ -1,0 +1,19 @@
+exit_code = 3
+apply = false
+
+[summary]
+conflicts = 2
+unfixable = 2
+rewritten_files = 0
+
+[[unfixable]]
+path = "src/deep/main.c"
+line = 1
+kind = "conflict"
+differs_in = ["include path"]
+
+[[unfixable]]
+path = "src/main.c"
+line = 1
+kind = "conflict"
+differs_in = ["include path"]

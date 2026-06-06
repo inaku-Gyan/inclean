@@ -1,0 +1,13 @@
+exit_code = 3
+apply = false
+
+[summary]
+conflicts = 1
+unfixable = 1
+rewritten_files = 0
+
+[[unfixable]]
+path = "src/main.c"
+line = 1
+kind = "conflict"
+differs_in = ["include path"]

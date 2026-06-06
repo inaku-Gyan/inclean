@@ -1,0 +1,13 @@
+[project]
+root = "."
+version = "0.4.0-alpha.2"
+min_inclean_version = "0.4.0-alpha.2"
+
+[[rule]]
+name = "rewrite macro use site"
+file_paths = ["src/**/*", "config/**/*"]
+macro_rewrite = "use_site"
+include_forms = ["quote"]
+include_match = ["foo.h"]
+include_directories = ["include"]
+action = { type = "resolve", relative_to = "${current_file}" }

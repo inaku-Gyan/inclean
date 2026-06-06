@@ -1,0 +1,7 @@
+exit_code = 0
+apply = true
+
+[summary]
+conflicts = 0
+unfixable = 0
+rewritten_files = 1
