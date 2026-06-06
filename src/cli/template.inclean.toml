@@ -38,6 +38,7 @@ name = "base"
 # file_paths = ["src/**/*", "include/**/*"]
 # file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
 # include_forms = ["quote"]
+# macro_rewrite = "definitions"
 # include_match = ["**"]
 
 # Optional header resolution. Directories are literal, not globs.
@@ -58,6 +59,7 @@ name = "base"
 # file_paths = ["**/*"]
 # file_suffixes = ["@std.c.extensions", "@std.cpp.extensions"]
 # include_forms = ["quote"]
+# macro_rewrite = "definitions"
 # include_match = ["**"]
 # include_directories = []
 # include_resolved_match = ["**"]

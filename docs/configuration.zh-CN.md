@@ -142,10 +142,11 @@ suppression_comments_regex = {
 
 ### Include 匹配
 
-| 字段            | 默认值      | 含义                                                                                                                     |
-| --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `include_forms` | `["quote"]` | 规则匹配的 include 形式：`"quote"` 对应 `#include "x.h"`，`"angle"` 对应 `#include <x.h>`，`"macro"` 对应 `#include X`。 |
-| `include_match` | `["**"]`    | 有序 signed [glob 列表](#glob-syntax)，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。                       |
+| 字段            | 默认值          | 含义                                                                                                                                   |
+| --------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `include_forms` | `["quote"]`     | 规则匹配的 include 形式：`"quote"` 对应 `#include "x.h"` 或 `#define X "x.h"`，`"angle"` 对应 `<x.h>`，`"macro"` 对应未展开的 `#include X`。 |
+| `macro_rewrite` | `"definitions"` | 展开宏 include 的改写目标：`"definitions"` 改写匹配到的 `#define` 头文件 token；`"use_site"` 改写 `#include MACRO` 参数且要求所有分支结果一致。 |
+| `include_match` | `["**"]`        | 有序 signed [glob 列表](#glob-syntax)，匹配去掉引号或尖括号后的 include 参数，例如 `mylib/foo.h`。                                     |
 
 `#include MACRO` 有特殊处理。`inclean` 会扫描符合规则文件选择条件的源文件，寻找替换列表
 正好是一个头文件 token 的简单对象宏：
@@ -155,10 +156,11 @@ suppression_comments_regex = {
 #define SYS_HEADER <foo.h>
 ```
 
-如果某个宏只有一个唯一的 header-like 定义，规则匹配会使用展开后的形式，路径改写会写到
-`#define` 的值上。尾随注释策略仍然应用在 `#include MACRO` 使用点。如果多个定义的值相同，
-匹配可以使用该值，但路径改写是不可修复的，因为无法选择唯一要编辑的定义。如果多个定义的值
-不同，该 include 不可修复。未展开的宏 include 仍可通过 `include_forms = ["macro"]`
+同名的每个 header-like 定义都会被当作一个可能分支。匹配和 `${current_file}` 使用
+`#include MACRO` 的使用点上下文；定义只提供有效的 quote/angle 形式、路径和可编辑范围。
+默认 `macro_rewrite = "definitions"` 会分别改写每个匹配分支的 `#define` 值。
+`macro_rewrite = "use_site"` 会改写 `#include MACRO` 参数本身，并要求所有匹配分支得到
+同一个最终 include 参数。未展开的宏 include 仍可通过 `include_forms = ["macro"]`
 匹配，但非 `skip` 的 action 会报告错误。
 
 ### 头文件解析

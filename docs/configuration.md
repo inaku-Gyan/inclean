@@ -150,10 +150,11 @@ Non-comment lines are matched as trimmed raw text. Regex strings may use
 
 ### Include Matching
 
-| Field           | Default     | Meaning                                                                                                                          |
-| --------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `include_forms` | `["quote"]` | Include forms this rule matches: `"quote"` for `#include "x.h"`, `"angle"` for `#include <x.h>`, and `"macro"` for `#include X`. |
-| `include_match` | `["**"]`    | Ordered signed [glob list](#glob-syntax) over the include argument with delimiters stripped, for example `mylib/foo.h`.          |
+| Field           | Default         | Meaning                                                                                                                                                                        |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `include_forms` | `["quote"]`     | Include forms this rule matches: `"quote"` for `#include "x.h"` or `#define X "x.h"`, `"angle"` for `<x.h>`, and `"macro"` for unexpanded `#include X`.                       |
+| `macro_rewrite` | `"definitions"` | Expanded macro rewrite target: `"definitions"` edits matching `#define` header tokens; `"use_site"` edits the `#include MACRO` argument and requires all branches to agree.    |
+| `include_match` | `["**"]`        | Ordered signed [glob list](#glob-syntax) over the include argument with delimiters stripped, for example `mylib/foo.h`.                                                        |
 
 `#include MACRO` is handled specially. `inclean` scans rule-eligible source
 files for simple object-like definitions whose replacement is exactly one
@@ -164,13 +165,14 @@ header token:
 #define SYS_HEADER <foo.h>
 ```
 
-When a macro has one unique header-like definition, matching uses the expanded
-form and path edits are written to the `#define` value. The trailing-comment
-policy still applies at the `#include MACRO` use site. If multiple definitions
-have the same value, matching can use that value but path edits are unfixable
-because there is no single definition to edit. If definitions have different
-values, the include is unfixable. Unexpanded macro includes can still match
-`include_forms = ["macro"]`, but non-`skip` actions report an error.
+Every header-like definition with the same macro name is treated as a possible
+branch. Matching and `${current_file}` use the `#include MACRO` use-site
+context; the definition provides only the effective quote/angle form, path, and
+editable range. With the default `macro_rewrite = "definitions"`, each matched
+branch writes its own `#define` value. With `macro_rewrite = "use_site"`, the
+`#include MACRO` argument is rewritten instead, and all matched branches must
+produce the same final include argument. Unexpanded macro includes can still
+match `include_forms = ["macro"]`, but non-`skip` actions report an error.
 
 ### Header Resolution
 
