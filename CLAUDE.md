@@ -73,6 +73,7 @@ cargo run --locked -- config schema --check -o schemas/inclean.toml.schema.json
 cargo test --all-features --locked
 cargo fmt
 cargo lint
+uv run -s --no-project .github/scripts/check-config-compat.py
 ```
 
 6. Commit the release prep.
