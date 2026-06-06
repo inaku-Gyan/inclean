@@ -45,11 +45,8 @@ pub fn rule<D>(value: D) -> StyledObject<D> {
     style(value).magenta()
 }
 
-pub fn rules<D: Display>(values: &Vec<D>) -> String {
-    values
-        .iter()
-        .map(|v| rule(v))
-        .join(&label(", ").to_string())
+pub fn rules<D: Display>(values: &[D]) -> String {
+    values.iter().map(rule).join(&label(", ").to_string())
 }
 
 pub fn rule_err<D>(value: D) -> StyledObject<D> {
