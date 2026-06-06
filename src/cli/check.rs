@@ -3,14 +3,14 @@
 //! - `config`: parse / validate / run copy resolution only.
 //! - `unfixable`: full pipeline; only print errors / evaluation failures
 //!   / conflicts (everything fixable is silenced).
-//! - `all` (default for bare `inclean check`): full pipeline; print every
-//!   per-include outcome.
+//! - `all` (default for bare `inclean check`): full pipeline; print matched
+//!   per-include outcomes by default.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::{CheckRunArgs, report, style as cli_style};
+use super::{CheckRunArgs, CheckScanArgs, report, style as cli_style};
 use crate::pipeline::run::{self, CheckMode, IncludeOutcome, Summary};
 
 /// `inclean check config` / `inclean config check`. Validates the
@@ -25,7 +25,7 @@ pub fn run_config(config: Option<PathBuf>) -> Result<u8> {
 
 /// `inclean check unfixable` / `inclean check all`. Runs the full
 /// pipeline; the `filter` controls which outcomes are printed.
-pub fn run_full(args: CheckRunArgs, filter: ReportFilter) -> Result<u8> {
+pub fn run_full(args: CheckScanArgs, filter: ReportFilter) -> Result<u8> {
     let start_dir = start_dir_for(args.config.as_deref(), &args.paths);
     let summary = run::run(
         args.config.as_deref(),
@@ -37,6 +37,17 @@ pub fn run_full(args: CheckRunArgs, filter: ReportFilter) -> Result<u8> {
     print_full_report(&summary, filter);
     report::print_warnings(&summary.warnings);
     Ok(run::summary_exit_code(&summary))
+}
+
+pub fn run_check(args: CheckRunArgs) -> Result<u8> {
+    let filter = if args.only_unmatched {
+        ReportFilter::UnmatchedOnly
+    } else if args.show_unmatched {
+        ReportFilter::MatchedAndUnmatched
+    } else {
+        ReportFilter::Matched
+    };
+    run_full(args.scan, filter)
 }
 
 /// Pick a starting directory for config discovery. Prefers the config
@@ -108,7 +119,9 @@ fn print_config_report(
 
 #[derive(Copy, Clone)]
 pub enum ReportFilter {
-    All,
+    Matched,
+    MatchedAndUnmatched,
+    UnmatchedOnly,
     UnfixableOnly,
 }
 
@@ -129,7 +142,12 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                 continue;
             }
             match &r.outcome {
-                IncludeOutcome::NoMatch => {}
+                IncludeOutcome::NoMatch => println!(
+                    "  {} {} #include {}",
+                    cli_style::line_tag(r.include.line),
+                    cli_style::status("no-match"),
+                    cli_style::include(&r.include.full_content())
+                ),
                 IncludeOutcome::Keep { rules } => println!(
                     "  {} {}    {}   ({} {})",
                     cli_style::line_tag(r.include.line),
@@ -220,7 +238,12 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
     }
     if interesting == 0 && summary.conflicts.is_empty() {
         match filter {
-            ReportFilter::All => println!("{}", cli_style::success("no changes proposed")),
+            ReportFilter::Matched | ReportFilter::MatchedAndUnmatched => {
+                println!("{}", cli_style::success("no changes proposed"))
+            }
+            ReportFilter::UnmatchedOnly => {
+                println!("{}", cli_style::success("no unmatched includes"))
+            }
             ReportFilter::UnfixableOnly => {
                 println!("{}", cli_style::success("no unfixable violations"))
             }
@@ -230,7 +253,9 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
 
 fn should_print(outcome: &IncludeOutcome, filter: ReportFilter) -> bool {
     match filter {
-        ReportFilter::All => !matches!(outcome, IncludeOutcome::NoMatch),
+        ReportFilter::Matched => !matches!(outcome, IncludeOutcome::NoMatch),
+        ReportFilter::MatchedAndUnmatched => true,
+        ReportFilter::UnmatchedOnly => matches!(outcome, IncludeOutcome::NoMatch),
         ReportFilter::UnfixableOnly => matches!(
             outcome,
             IncludeOutcome::Error { .. }
