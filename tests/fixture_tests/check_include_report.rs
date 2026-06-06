@@ -74,6 +74,49 @@ fn check_hides_skipped_includes() {
 }
 
 #[test]
+fn check_can_show_skipped_includes_too() {
+    let project = create_skip_project();
+    let out = run_check(project.path(), &["--show-skipped"]);
+
+    assert!(
+        out.status.success(),
+        "check failed: {}",
+        render_output(&out)
+    );
+    assert_stdout_contains(&out, SKIPPED_INCLUDE_OUTPUT);
+    assert_stdout_contains(&out, "rules: skipped");
+    assert_stdout_not_contains(&out, UNMATCHED_INCLUDE_OUTPUT);
+}
+
+#[test]
+fn check_can_show_only_skipped_includes() {
+    let project = create_skip_project();
+    let out = run_check(project.path(), &["--only-skipped"]);
+
+    assert!(
+        out.status.success(),
+        "check failed: {}",
+        render_output(&out)
+    );
+    assert_stdout_contains(&out, SKIPPED_INCLUDE_OUTPUT);
+    assert_stdout_not_contains(&out, UNMATCHED_INCLUDE_OUTPUT);
+}
+
+#[test]
+fn check_can_show_skipped_and_unmatched_includes_together() {
+    let project = create_skip_project();
+    let out = run_check(project.path(), &["--show-skipped", "--show-unmatched"]);
+
+    assert!(
+        out.status.success(),
+        "check failed: {}",
+        render_output(&out)
+    );
+    assert_stdout_contains(&out, SKIPPED_INCLUDE_OUTPUT);
+    assert_stdout_contains(&out, UNMATCHED_INCLUDE_OUTPUT);
+}
+
+#[test]
 fn check_all_can_show_unmatched_includes_too() {
     let project = create_project();
     let bare = run_check(project.path(), &["--show-unmatched"]);
@@ -100,6 +143,16 @@ fn check_unfixable_does_not_accept_unmatched_include_flags() {
     assert!(!out.status.success(), "check unexpectedly passed");
     assert_stderr_contains(&out, "unexpected argument");
     assert_stderr_contains(&out, "--show-unmatched");
+}
+
+#[test]
+fn check_unfixable_does_not_accept_skipped_include_flags() {
+    let project = create_skip_project();
+    let out = run_check(project.path(), &["unfixable", "--show-skipped"]);
+
+    assert!(!out.status.success(), "check unexpectedly passed");
+    assert_stderr_contains(&out, "unexpected argument");
+    assert_stderr_contains(&out, "--show-skipped");
 }
 
 fn create_project() -> support::fs::TmpProject {

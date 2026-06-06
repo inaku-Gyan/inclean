@@ -40,13 +40,7 @@ pub fn run_full(args: CheckScanArgs, filter: ReportFilter) -> Result<u8> {
 }
 
 pub fn run_check(args: CheckRunArgs) -> Result<u8> {
-    let filter = if args.only_unmatched {
-        ReportFilter::UnmatchedOnly
-    } else if args.show_unmatched {
-        ReportFilter::MatchedAndUnmatched
-    } else {
-        ReportFilter::Matched
-    };
+    let filter = ReportFilter::from_args(&args);
     run_full(args.scan, filter)
 }
 
@@ -119,10 +113,28 @@ fn print_config_report(
 
 #[derive(Copy, Clone)]
 pub enum ReportFilter {
-    Matched,
-    MatchedAndUnmatched,
+    Run {
+        show_unmatched: bool,
+        show_skipped: bool,
+    },
     UnmatchedOnly,
+    SkippedOnly,
     UnfixableOnly,
+}
+
+impl ReportFilter {
+    fn from_args(args: &CheckRunArgs) -> Self {
+        if args.only_unmatched {
+            return Self::UnmatchedOnly;
+        }
+        if args.only_skipped {
+            return Self::SkippedOnly;
+        }
+        Self::Run {
+            show_unmatched: args.show_unmatched,
+            show_skipped: args.show_skipped,
+        }
+    }
 }
 
 fn print_full_report(summary: &Summary, filter: ReportFilter) {
@@ -148,7 +160,14 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     cli_style::status("no-match"),
                     cli_style::include(&r.include.full_content())
                 ),
-                IncludeOutcome::Skipped { .. } => {}
+                IncludeOutcome::Skipped { rules } => println!(
+                    "  {} {}      {}   ({} {})",
+                    cli_style::line_tag(r.include.line),
+                    cli_style::status("skip"),
+                    cli_style::include(&r.include.full_content()),
+                    cli_style::label("rules:"),
+                    cli_style::rules(rules)
+                ),
                 IncludeOutcome::Keep { rules } => println!(
                     "  {} {}    {}   ({} {})",
                     cli_style::line_tag(r.include.line),
@@ -239,12 +258,11 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
     }
     if interesting == 0 && summary.conflicts.is_empty() {
         match filter {
-            ReportFilter::Matched | ReportFilter::MatchedAndUnmatched => {
-                println!("{}", cli_style::success("no changes proposed"))
-            }
+            ReportFilter::Run { .. } => println!("{}", cli_style::success("no changes proposed")),
             ReportFilter::UnmatchedOnly => {
                 println!("{}", cli_style::success("no unmatched includes"))
             }
+            ReportFilter::SkippedOnly => println!("{}", cli_style::success("no skipped includes")),
             ReportFilter::UnfixableOnly => {
                 println!("{}", cli_style::success("no unfixable violations"))
             }
@@ -254,12 +272,16 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
 
 fn should_print(outcome: &IncludeOutcome, filter: ReportFilter) -> bool {
     match filter {
-        ReportFilter::Matched => !matches!(
-            outcome,
-            IncludeOutcome::NoMatch | IncludeOutcome::Skipped { .. }
-        ),
-        ReportFilter::MatchedAndUnmatched => !matches!(outcome, IncludeOutcome::Skipped { .. }),
+        ReportFilter::Run {
+            show_unmatched,
+            show_skipped,
+        } => match outcome {
+            IncludeOutcome::NoMatch => show_unmatched,
+            IncludeOutcome::Skipped { .. } => show_skipped,
+            _ => true,
+        },
         ReportFilter::UnmatchedOnly => matches!(outcome, IncludeOutcome::NoMatch),
+        ReportFilter::SkippedOnly => matches!(outcome, IncludeOutcome::Skipped { .. }),
         ReportFilter::UnfixableOnly => matches!(
             outcome,
             IncludeOutcome::Error { .. }

@@ -87,11 +87,17 @@ pub struct CheckRunArgs {
     #[command(flatten)]
     pub scan: CheckScanArgs,
     /// Also print #include directives that did not match any rule.
-    #[arg(long, conflicts_with = "only_unmatched")]
+    #[arg(long, conflicts_with_all = ["only_unmatched", "only_skipped"])]
     pub show_unmatched: bool,
     /// Print only #include directives that did not match any rule.
-    #[arg(long, conflicts_with = "show_unmatched")]
+    #[arg(long, conflicts_with_all = ["show_unmatched", "show_skipped", "only_skipped"])]
     pub only_unmatched: bool,
+    /// Also print #include directives that matched only skipped rule fields.
+    #[arg(long, conflicts_with_all = ["only_unmatched", "only_skipped"])]
+    pub show_skipped: bool,
+    /// Print only #include directives that matched only skipped rule fields.
+    #[arg(long, conflicts_with_all = ["show_unmatched", "only_unmatched", "show_skipped"])]
+    pub only_skipped: bool,
 }
 
 // ---- Apply / Diff --------------------------------------------------------
