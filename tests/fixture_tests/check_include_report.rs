@@ -5,6 +5,7 @@ use crate::support;
 const MATCHED_INCLUDE_OUTPUT: &str = "\"matched.h\"";
 const UNMATCHED_INCLUDE_OUTPUT: &str = "#include \"unmatched.h\"";
 const MATCHED_RULE_OUTPUT: &str = "rules: matched";
+const SKIPPED_INCLUDE_OUTPUT: &str = "\"skipped.h\"";
 
 #[test]
 fn check_defaults_to_matched_includes_only() {
@@ -51,6 +52,28 @@ fn check_can_show_only_unmatched_includes() {
 }
 
 #[test]
+fn check_hides_skipped_includes() {
+    let project = create_skip_project();
+    let default = run_check(project.path(), &[]);
+    let show_unmatched = run_check(project.path(), &["--show-unmatched"]);
+
+    assert!(
+        default.status.success(),
+        "default check failed: {}",
+        render_output(&default)
+    );
+    assert!(
+        show_unmatched.status.success(),
+        "show unmatched check failed: {}",
+        render_output(&show_unmatched)
+    );
+    assert_stdout_not_contains(&default, SKIPPED_INCLUDE_OUTPUT);
+    assert_stdout_not_contains(&default, UNMATCHED_INCLUDE_OUTPUT);
+    assert_stdout_not_contains(&show_unmatched, SKIPPED_INCLUDE_OUTPUT);
+    assert_stdout_contains(&show_unmatched, UNMATCHED_INCLUDE_OUTPUT);
+}
+
+#[test]
 fn check_all_can_show_unmatched_includes_too() {
     let project = create_project();
     let bare = run_check(project.path(), &["--show-unmatched"]);
@@ -90,6 +113,7 @@ min_inclean_version = "{}"
 name = "matched"
 file_paths = ["src/**/*"]
 include_match = ["matched.h"]
+action = {{ type = "keep" }}
 "#,
         inclean::profile::CFG_VERSION,
         inclean::profile::MIN_COMPAT_CLI_VERSION
@@ -98,6 +122,29 @@ include_match = ["matched.h"]
     project.write(
         "src/main.c",
         "#include \"matched.h\"\n#include \"unmatched.h\"\nint main(void) { return 0; }\n",
+    );
+    project
+}
+
+fn create_skip_project() -> support::fs::TmpProject {
+    let config = format!(
+        r#"[project]
+root = "."
+version = "{}"
+min_inclean_version = "{}"
+
+[[rule]]
+name = "skipped"
+file_paths = ["src/**/*"]
+include_match = ["skipped.h"]
+"#,
+        inclean::profile::CFG_VERSION,
+        inclean::profile::MIN_COMPAT_CLI_VERSION
+    );
+    let project = support::fs::TmpProject::create_with_config(config);
+    project.write(
+        "src/main.c",
+        "#include \"skipped.h\"\n#include \"unmatched.h\"\nint main(void) { return 0; }\n",
     );
     project
 }

@@ -112,6 +112,9 @@ pub struct IncludeResult {
 pub enum IncludeOutcome {
     /// No rule matched this include.
     NoMatch,
+    /// One or more rules matched this include, but all matched fields chose
+    /// `skip`, so the include intentionally has no reportable outcome.
+    Skipped { rules: Vec<String> },
     /// All matched rules agreed on `Keep` — no edit.
     Keep { rules: Vec<String> },
     /// All matched rules agreed on the same rewrite text.
@@ -822,7 +825,7 @@ pub fn render_diff(summary: &Summary) -> String {
 }
 
 /// Highest-severity outcome across the whole summary:
-///   0 = clean / only NoMatch+Keep+Rewritten
+///   0 = clean / only NoMatch+Skipped+Keep+Rewritten
 ///   2 = any `action.type = "error"` matched
 ///   3 = any Conflict / EvaluationFailure
 pub fn summary_exit_code(summary: &Summary) -> u8 {
@@ -1382,6 +1385,11 @@ fn collapse_outcomes(
             TrailingOutcome::Skip | TrailingOutcome::Error { .. } => {}
         }
     }
+    if action_candidates.is_empty() && trailing_candidates.is_empty() {
+        return IncludeOutcome::Skipped {
+            rules: matched_rule_names(&evaluations),
+        };
+    }
 
     let current_target = EditTarget::File(relpath.to_path_buf());
     let action =
@@ -1433,10 +1441,7 @@ fn collapse_outcomes(
     if action_targets_current_arg {
         let edit_range = argument_and_trailing_range(include);
         let new_text = format!("{}{}", action.new_text, trailing.new_text);
-        let rules = fallback_to_matched_rules_if_empty(
-            merge_rules(action.rules, trailing.rules),
-            &evaluations,
-        );
+        let rules = merge_rules(action.rules, trailing.rules);
         return rewritten_or_keep(source, relpath, edit_range, new_text, rules);
     }
 
@@ -1461,8 +1466,7 @@ fn collapse_outcomes(
         });
     }
 
-    let rules =
-        fallback_to_matched_rules_if_empty(merge_rules(action.rules, trailing.rules), &evaluations);
+    let rules = merge_rules(action.rules, trailing.rules);
     if edits.is_empty() {
         IncludeOutcome::Keep { rules }
     } else {
@@ -1532,6 +1536,11 @@ fn collapse_macro_outcomes(
             }
             TrailingOutcome::Skip | TrailingOutcome::Error { .. } => {}
         }
+    }
+    if action_candidates.is_empty() && trailing_candidates.is_empty() {
+        return IncludeOutcome::Skipped {
+            rules: matched_rule_names(&evaluations),
+        };
     }
 
     let current_target = EditTarget::File(relpath.to_path_buf());
@@ -1611,8 +1620,7 @@ fn collapse_macro_outcomes(
         });
     }
 
-    let rules =
-        fallback_to_matched_rules_if_empty(merge_rules(action_rules, trailing.rules), &evaluations);
+    let rules = merge_rules(action_rules, trailing.rules);
     if edits.is_empty() {
         IncludeOutcome::Keep { rules }
     } else {
@@ -1870,13 +1878,7 @@ fn merge_rules(left: Vec<String>, right: Vec<String>) -> Vec<String> {
     out
 }
 
-fn fallback_to_matched_rules_if_empty(
-    rules: Vec<String>,
-    evaluations: &[RuleEvaluation],
-) -> Vec<String> {
-    if !rules.is_empty() {
-        return rules;
-    }
+fn matched_rule_names(evaluations: &[RuleEvaluation]) -> Vec<String> {
     let mut out = Vec::with_capacity(evaluations.len());
     for ev in evaluations {
         if !out.contains(&ev.rule_name) {
@@ -2222,7 +2224,7 @@ mod tests {
         let summary = run(None, proj.path(), &[], None, CheckMode::Run).unwrap();
         let f = &summary.files[0];
         match &f.include_results[0].outcome {
-            IncludeOutcome::Keep { rules } => assert_eq!(rules, &["base"]),
+            IncludeOutcome::Skipped { rules } => assert_eq!(rules, &["base"]),
             other => panic!("unexpected outcome: {other:?}"),
         }
         assert!(summary.conflicts.is_empty());

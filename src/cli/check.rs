@@ -148,6 +148,7 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
                     cli_style::status("no-match"),
                     cli_style::include(&r.include.full_content())
                 ),
+                IncludeOutcome::Skipped { .. } => {}
                 IncludeOutcome::Keep { rules } => println!(
                     "  {} {}    {}   ({} {})",
                     cli_style::line_tag(r.include.line),
@@ -253,8 +254,11 @@ fn print_full_report(summary: &Summary, filter: ReportFilter) {
 
 fn should_print(outcome: &IncludeOutcome, filter: ReportFilter) -> bool {
     match filter {
-        ReportFilter::Matched => !matches!(outcome, IncludeOutcome::NoMatch),
-        ReportFilter::MatchedAndUnmatched => true,
+        ReportFilter::Matched => !matches!(
+            outcome,
+            IncludeOutcome::NoMatch | IncludeOutcome::Skipped { .. }
+        ),
+        ReportFilter::MatchedAndUnmatched => !matches!(outcome, IncludeOutcome::Skipped { .. }),
         ReportFilter::UnmatchedOnly => matches!(outcome, IncludeOutcome::NoMatch),
         ReportFilter::UnfixableOnly => matches!(
             outcome,
