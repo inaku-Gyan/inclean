@@ -18,7 +18,7 @@ After running `inclean`, consumers only `-I` the allowed directories.
 
 ## Why inclean?
 
-When using legacy libraries like `some-old-lib`, consumers often have to leak the library's internal directory structure into their own build configuration. 
+When using legacy libraries like `some-old-lib`, consumers often have to leak the library's internal directory structure into their own build configuration.
 
 **Without inclean:**
 You have to add internal library paths to your own `-I` search paths to compile successfully.
@@ -111,32 +111,22 @@ which files are processed; with no paths they consider every source
 file under the project root. `-c PATH` overrides the upward `inclean.toml`
 walk; `-j N` sets the worker thread count.
 
-Rule matching first checks `file_paths`, `file_suffixes`, `include_forms`,
-and `include_match`. `include_resolved_match` applies later to resolved
-header paths. Globs are anchored and use literal separators:
-`foo.h` only matches `foo.h`, while `**/foo.h` matches at any depth.
-Glob lists are ordered: a leading unescaped `!` excludes, and the last
-matching pattern wins. Use TOML single quotes for a literal leading bang,
-for example `'\!weird.h'`; in double quotes, write `"\\!weird.h"`.
-When `include_directories` is set, inclean then probes those literal
-directories, filters resolved project-relative header paths through
-`include_resolved_match` (default `["**"]`), and applies
-`include_on_unresolved` (`error` / `skip` / `allow`) and
-`include_on_ambiguous` (`error` / `skip` / `first`).
-For `#include MACRO`, inclean statically expands simple header-like
-definitions such as `#define MACRO "foo.h"` or `#define MACRO <foo.h>`.
-Each matching definition is treated as a possible branch using the
-`#include MACRO` use-site context. By default path rewrites update the
-matching `#define` value(s), while trailing comments stay on the use site.
-Set `macro_rewrite = "use_site"` to rewrite `#include MACRO` itself; all
-matching definition branches must agree on the same final include argument.
-For rules that are meant to affect only one side of a rewrite, the whole
-field values `action = "skip"` and `trailing_comment = "skip"` make that
-side opt out of conflict detection. `keep` still participates in conflict
-checks; `skip` does not. For a rule without `copied_from`, both fields
-default to `skip` when omitted.
+### Configuration at a glance
 
-For the complete field-by-field syntax, see the
+Each `[[rule]]` narrows down the includes it owns, then chooses what to do
+with them.
+
+- `file_paths` and `file_suffixes` select source files.
+- `include_forms` and `include_match` select include lines.
+- `include_directories` enables header lookup; `include_resolved_match`
+  filters the resolved header path.
+- `action` rewrites, removes, comments out, keeps, or reports an error;
+  `trailing_comment` handles same-line comments.
+
+Most projects only need `include_match` plus one `action`. Use
+`include_directories` for path normalization, and look at `macro_rewrite` only
+when you need to edit macro-based includes. For glob rules, macro include
+behavior, conflict handling, copy semantics, and all fields, see the
 [configuration reference](docs/configuration.md).
 
 ### Example
