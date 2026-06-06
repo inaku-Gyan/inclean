@@ -64,23 +64,27 @@ For a release such as `v0.4.0`:
    - `docs/README.zh-CN.md`
    - `docs/configuration.md`
    - `docs/configuration.zh-CN.md`
-4. Keep `MIN_COMPAT_CLI_VERSION` unchanged unless generated configs now need a
-   newer CLI to parse or execute them.
+4. Update `src/profile.rs` compatibility constants if necessary.
 5. Run:
 
 ```sh
 rg 'old-version-or-prerelease-string'
 cargo run --locked -- config schema --check -o schemas/inclean.toml.schema.json
 cargo test --all-features --locked
+cargo fmt
+cargo lint
 ```
 
 6. Commit the release prep.
-7. Tag the commit with `vX.Y.Z`; the tag version must match `Cargo.toml`.
-8. Push the tag. If the workflow fails before publication, delete the local and
-   remote tag, fix, and tag again. Do not force-push over a published tag.
 
 Do not run `cargo package` just to check networking; CI handles publish-time
 packaging.
+
+Let the developer do the following steps to trigger the release workflow:
+
+1. Tag the commit with `vX.Y.Z`; the tag version must match `Cargo.toml`.
+2. Push the tag. If the workflow fails before publication, delete the local and
+   remote tag, fix, and tag again. Do not force-push over a published tag.
 
 ## Avoid
 
