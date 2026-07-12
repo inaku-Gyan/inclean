@@ -712,7 +712,7 @@ mod tests {
         let err = parse(
             &format!(
                 "{}{}",
-                &*crate::utils::testing::config::MIN_PROJECT_BLOCK,
+                *crate::utils::testing::config::MIN_PROJECT_BLOCK,
                 r#"
                 [[rule]]
                 name = "base"
