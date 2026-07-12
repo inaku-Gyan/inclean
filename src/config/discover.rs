@@ -63,7 +63,7 @@ fn check_version_compatibility(config_path: &Path, project: &RawProject) -> Resu
         format!(
             "{}: [project].version = \"{}\" is not valid semver",
             config_path.display(),
-            &project.version,
+            project.version,
         )
     })?;
 
@@ -71,7 +71,7 @@ fn check_version_compatibility(config_path: &Path, project: &RawProject) -> Resu
         format!(
             "{}: [project].min_inclean_version = \"{}\" is not valid semver",
             config_path.display(),
-            &project.min_inclean_version,
+            project.min_inclean_version,
         )
     })?;
 

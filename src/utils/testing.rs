@@ -36,7 +36,7 @@ pub mod config {
     pub fn load_rules(body: &str) -> LoadedConfig {
         use crate::config::schema::parse;
         let path = PathBuf::from("tmp_test_config.inclean.toml");
-        let raw = parse(&format!("{}{}", &*MIN_PROJECT_BLOCK, body), &path).unwrap();
+        let raw = parse(&format!("{}{}", *MIN_PROJECT_BLOCK, body), &path).unwrap();
         LoadedConfig { path, raw }
     }
 }
@@ -209,7 +209,7 @@ pub mod fs {
         }
 
         pub fn create_with_rules(rules: &str) -> Self {
-            Self::create_with_config(format!("{}{}", &*MIN_PROJECT_BLOCK, rules))
+            Self::create_with_config(format!("{}{}", *MIN_PROJECT_BLOCK, rules))
         }
 
         pub fn read_to_string(&self, relpath: impl AsRef<Path>) -> String {
