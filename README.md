@@ -158,11 +158,11 @@ or [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasf
 Helix, Zed) automatically pick it up:
 
 ```toml
-#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.0/schemas/inclean.toml.schema.json
+#:schema https://raw.githubusercontent.com/inaku-Gyan/inclean/v0.4.1/schemas/inclean.toml.schema.json
 
 [project]
 root = "."
-version = "0.4.0"
+version = "0.4.1"
 min_inclean_version = "0.4.0-alpha.3"
 ```
 
