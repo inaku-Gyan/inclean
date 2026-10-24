@@ -313,6 +313,10 @@
               "description": "Rewrite the include using the header path selected by\n`include_directories`, relative to `relative_to`. `${current_file}`\nmeans the directory of the file being edited. Default `output_form`\nis `preserve`; default `message` is empty.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "resolve"
+                },
                 "relative_to": {
                   "description": "Base path for the rewritten include. Use `${current_file}` for the\ncurrent source file's directory.",
                   "type": "string"
@@ -335,10 +339,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "resolve"
                 }
               },
               "additionalProperties": false,
@@ -351,6 +351,10 @@
               "description": "Replace the include argument with `with`. Default `output_form` is\n`preserve`; default `message` is empty.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "replace"
+                },
                 "with": {
                   "description": "Replacement include argument. Supports `${original}` and\n`${current_file}` placeholders.",
                   "type": "string"
@@ -373,10 +377,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "replace"
                 }
               },
               "additionalProperties": false,
@@ -389,6 +389,10 @@
               "description": "Leave the include's argument alone (the form may still change via\n`output_form`). Default `output_form` is `preserve`; default `message`\nis empty.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "keep"
+                },
                 "output_form": {
                   "description": "Output delimiter form. Defaults to `preserve`.",
                   "anyOf": [
@@ -407,10 +411,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "keep"
                 }
               },
               "additionalProperties": false,
@@ -422,6 +422,10 @@
               "description": "Delete the entire `#include` line. By default no blank line is kept and\na same-line trailing comment is kept on its own line.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "remove"
+                },
                 "keep_blank_line": {
                   "description": "Keep the line terminator as a blank line. Defaults to `false`.",
                   "type": [
@@ -445,10 +449,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "remove"
                 }
               },
               "additionalProperties": false,
@@ -460,6 +460,10 @@
               "description": "Wrap the include line in `//` (default) or `/* */` delimiters. Default\n`message` is empty.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "comment_out"
+                },
                 "style": {
                   "description": "Comment delimiter style. Defaults to `//`.",
                   "anyOf": [
@@ -478,10 +482,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "comment_out"
                 }
               },
               "additionalProperties": false,
@@ -493,6 +493,10 @@
               "description": "Report a user-facing error for the matched include. Exit code 2.",
               "type": "object",
               "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "error"
+                },
                 "message": {
                   "description": "Error message. Supports `${original}` and `${current_file}`.\nDefaults to an empty string.",
                   "type": [
@@ -500,10 +504,6 @@
                     "null"
                   ],
                   "default": null
-                },
-                "type": {
-                  "type": "string",
-                  "const": "error"
                 }
               },
               "additionalProperties": false,
@@ -637,6 +637,10 @@
           "description": "Replace the comment body with `with`. Default `output_style` is\n`preserve`; default `message` is empty.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "replace"
+            },
             "with": {
               "description": "Replacement comment body. Supports `${original}` and\n`${current_file}` placeholders.",
               "type": "string"
@@ -659,10 +663,6 @@
                 "null"
               ],
               "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "replace"
             }
           },
           "additionalProperties": false,
@@ -675,6 +675,10 @@
           "description": "Keep the comment body; only `output_style` may change. Default\n`output_style` is `preserve`; default `message` is empty.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "keep"
+            },
             "output_style": {
               "description": "Output comment delimiter style. Defaults to `preserve`.",
               "anyOf": [
@@ -693,10 +697,6 @@
                 "null"
               ],
               "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "keep"
             }
           },
           "additionalProperties": false,
@@ -708,6 +708,10 @@
           "description": "Remove the trailing comment entirely. Default `message` is empty.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "remove"
+            },
             "message": {
               "description": "Optional diagnostic message string.",
               "type": [
@@ -715,10 +719,6 @@
                 "null"
               ],
               "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "remove"
             }
           },
           "additionalProperties": false,
@@ -730,6 +730,10 @@
           "description": "Report a user-facing error when the transform matches.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "error"
+            },
             "message": {
               "description": "Error message. Supports `${original}` for the original comment body\nand `${current_file}` for the edited source path.",
               "type": [
@@ -737,10 +741,6 @@
                 "null"
               ],
               "default": null
-            },
-            "type": {
-              "type": "string",
-              "const": "error"
             }
           },
           "additionalProperties": false,
