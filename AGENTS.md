@@ -1,4 +1,4 @@
-# CLAUDE.md - agent notes
+# Agent Notes
 
 ## Project Shape
 
